@@ -1,0 +1,10 @@
+# Git ignore rules
+__pycache__/
+*.pyc
+*.pyo
+
+# Audio build caches and outputs
+chapters/*/audio_cache/*.wav
+chapters/*/output/*.mp3
+chapters/*/output/*.wav
+chapters/*/output/*.srt

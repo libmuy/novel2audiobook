@@ -1,0 +1,18 @@
+{
+  "roles": {
+    "narrator": {
+      "name": "旁白",
+      "gender": "male",
+      "config_path": "roles/narrator/config.json",
+      "reference_audio": "roles/narrator/reference.wav",
+      "description": "稳重、沉着的小说旁白音"
+    },
+    "lin_dong": {
+      "name": "林动",
+      "gender": "male",
+      "config_path": "roles/lin_dong/config.json",
+      "reference_audio": "roles/lin_dong/reference.wav",
+      "description": "热血少年主角音色"
+    }
+  }
+}

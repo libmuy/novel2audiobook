@@ -1,0 +1,42 @@
+{
+  "chapter_id": "ch_0001",
+  "total_duration_ms": 11400.0,
+  "items": [
+    {
+      "seg_id": 1,
+      "speaker": "narrator",
+      "text": "林动紧握双拳，冷冷地看着前方的黑衣人。",
+      "emotion": "neutral",
+      "audio_path": "audio_cache/d1a9ed19ce38ceed7301429a1e1a5fd7.wav",
+      "start_time_ms": 0.0,
+      "duration_ms": 3800.0,
+      "sfx": null,
+      "bgm": null,
+      "cached": false
+    },
+    {
+      "seg_id": 2,
+      "speaker": "lin_dong",
+      "text": "今日之辱，来日必定加倍奉还！他厉声道。",
+      "emotion": "angry",
+      "audio_path": "audio_cache/9df321df0d26e61fa865754d321d3611.wav",
+      "start_time_ms": 4000.0,
+      "duration_ms": 3800.0,
+      "sfx": "sword_clash",
+      "bgm": "rain_heavy",
+      "cached": false
+    },
+    {
+      "seg_id": 3,
+      "speaker": "narrator",
+      "text": "风声萧萧，天地间弥漫着肃杀之气。",
+      "emotion": "neutral",
+      "audio_path": "audio_cache/36d8c65a5628e1c6c621d04145e4bfc4.wav",
+      "start_time_ms": 8000.0,
+      "duration_ms": 3200.0,
+      "sfx": null,
+      "bgm": "rain_heavy",
+      "cached": false
+    }
+  ]
+}
