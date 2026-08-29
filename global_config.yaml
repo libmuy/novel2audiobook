@@ -1,0 +1,18 @@
+llm:
+  model_name: "Qwen3-8B"
+  api_base: "http://localhost:8000/v1"
+  temperature: 0.7
+  max_tokens: 2048
+
+tts:
+  engine: "Index-TTS-2.5"
+  sample_rate: 24000
+  channels: 1
+  format: "wav"
+
+mixing:
+  ducking_threshold: -20.0  # dBFS RMS 阈值
+  ducking_volume_ratio: 0.3 # BGM 闪避时降低到的音量比例 (30%)
+  ducking_fade_ms: 300      # 渐变过渡毫秒数
+  output_format: "mp3"
+  bitrate: "192k"
