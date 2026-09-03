@@ -8,3 +8,4 @@ chapters/*/audio_cache/*.wav
 chapters/*/output/*.mp3
 chapters/*/output/*.wav
 chapters/*/output/*.srt
+.venv/

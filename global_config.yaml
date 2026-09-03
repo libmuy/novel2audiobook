@@ -1,18 +1,27 @@
 llm:
-  model_name: "Qwen3-8B"
-  api_base: "http://localhost:8000/v1"
-  temperature: 0.7
+  model_name: "/srv/unsafe/models/llm/unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_M.gguf"
+  api_base: "http://localhost:8080/v1"  # 本机 llama-server（ai llm serve qwen3.8-27b-unsloth）实际监听端口
+  temperature: 0.3  # 结构化 JSON 抽取任务，取偏低温度保证输出稳定可解析
   max_tokens: 2048
+  request_timeout_sec: 60
+  connect_check_timeout_sec: 3
 
 tts:
   engine: "Index-TTS-2.5"
   sample_rate: 24000
   channels: 1
   format: "wav"
+  index_tts:
+    python_bin: "tools/indextts_env/bin/python"       # 独立 venv（ROCm torch），见 docs/indextts_setup.md
+    infer_script: "tools/indextts_infer.py"
+    checkpoints_dir: "/srv/unsafe/models/tts/IndexTTS-2.5"
+    timeout_sec: 120
 
 mixing:
   ducking_threshold: -20.0  # dBFS RMS 阈值
   ducking_volume_ratio: 0.3 # BGM 闪避时降低到的音量比例 (30%)
   ducking_fade_ms: 300      # 渐变过渡毫秒数
+  ambience_gain_db: -18.0   # 环境音基础电平（相对满幅 dBFS），避免盖过人声
+  sfx_limit_dbfs: -3.0      # 音效峰值限幅，防止叠加人声后爆音
   output_format: "mp3"
   bitrate: "192k"
