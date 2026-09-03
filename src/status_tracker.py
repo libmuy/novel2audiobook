@@ -24,6 +24,32 @@ def _is_stale(path: str) -> bool:
     return False
 
 
+def _derive_status(path: str, has_draft: bool, has_final: bool, has_timeline: bool,
+                    has_mp3: bool, mp3_mtime: float, stored_tag: str) -> str:
+    """
+    在信任 .status.json 存储标签的基础上，用产物实际存在情况纠正两类已知的失真：
+    1. 标签是 "completed" 但根本没有 mp3（原有检查）；
+    2. 标签落后于产物真实进度——最典型的是 mix 成功后又单独重跑一次 tts
+       （哪怕只是验证增量缓存、没有产生新内容），.status.json 会被覆盖回
+       "tts_completed"，但此时应检测出 mp3 其实已经比 timeline 旧，需要重新 mix
+       （而不是简单地把过时标签当真）。
+    其余情况按 .status.json 里的标签原样展示。
+    """
+    if stored_tag == "completed" and not has_mp3:
+        return "STALE(no mp3)"
+
+    if _is_stale(path):
+        return f"STALE({stored_tag})"
+
+    if has_timeline and has_mp3:
+        timeline_mtime = os.path.getmtime(os.path.join(path, "timeline.json"))
+        if timeline_mtime > mp3_mtime:
+            return "STALE(需要重新 mix)"
+        return "completed"
+
+    return stored_tag
+
+
 def get_all_chapters_status(chapters_dir: str = "chapters") -> list:
     """获取所有章节的状态概览表"""
     if not os.path.exists(chapters_dir):
@@ -44,9 +70,12 @@ def get_all_chapters_status(chapters_dir: str = "chapters") -> list:
 
         output_dir = os.path.join(path, "output")
         has_mp3 = False
+        mp3_mtime = None
         if os.path.exists(output_dir):
             mp3_files = [f for f in os.listdir(output_dir) if f.endswith(".mp3")]
             has_mp3 = len(mp3_files) > 0
+            if has_mp3:
+                mp3_mtime = max(os.path.getmtime(os.path.join(output_dir, f)) for f in mp3_files)
 
         audio_cache_dir = os.path.join(path, "audio_cache")
         cache_count = 0
@@ -63,11 +92,7 @@ def get_all_chapters_status(chapters_dir: str = "chapters") -> list:
             except Exception:
                 pass
 
-        # completed 状态必须有真实存在的 mp3 产物，否则视为陈旧/失真状态
-        if status_tag == "completed" and not has_mp3:
-            status_tag = "STALE(no mp3)"
-        elif _is_stale(path):
-            status_tag = f"STALE({status_tag})"
+        status_tag = _derive_status(path, has_draft, has_final, has_timeline, has_mp3, mp3_mtime, status_tag)
 
         results.append({
             "chapter_id": folder,
