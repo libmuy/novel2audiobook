@@ -223,7 +223,9 @@ class TestProcessChapterTts:
         with open(final_path, "w", encoding="utf-8") as f:
             json.dump(sample_script_json, f)
 
-        timeline_path = tts_engine.process_chapter_tts(tmp_chapter_dir, roles_dir=tmp_roles_dir)
+        timeline_path = tts_engine.process_chapter_tts(
+            tmp_chapter_dir, roles_dir=tmp_roles_dir, backend=tts_engine.MockTTSBackend()
+        )
 
         assert os.path.exists(timeline_path)
         assert timeline_path.endswith("timeline.json")
@@ -239,7 +241,9 @@ class TestProcessChapterTts:
         with open(final_path, "w", encoding="utf-8") as f:
             json.dump(sample_script_json, f)
 
-        timeline_path = tts_engine.process_chapter_tts(tmp_chapter_dir, roles_dir=tmp_roles_dir)
+        timeline_path = tts_engine.process_chapter_tts(
+            tmp_chapter_dir, roles_dir=tmp_roles_dir, backend=tts_engine.MockTTSBackend()
+        )
 
         with open(timeline_path, "r", encoding="utf-8") as f:
             timeline_data = json.load(f)

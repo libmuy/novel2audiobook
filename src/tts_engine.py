@@ -293,9 +293,13 @@ def generate_tts_incremental(chapter_dir: str, script_final_data: list, sample_r
     return timeline_data
 
 
-def process_chapter_tts(chapter_dir: str, roles_dir: str = None) -> str:
+def process_chapter_tts(chapter_dir: str, roles_dir: str = None, backend=None) -> str:
     """
     基于 script_final.json 执行哈希增量 TTS，如果 script_final.json 不存在则抛出错误。
+
+    backend 默认为 None——生产路径下由 generate_tts_incremental 按
+    global_config.yaml 的配置选择真实引擎；测试/自检必须显式传入
+    backend=MockTTSBackend()，避免意外触发真实 GPU 推理。
     """
     script_final_path = os.path.join(chapter_dir, "script_final.json")
     if not os.path.exists(script_final_path):
@@ -307,5 +311,5 @@ def process_chapter_tts(chapter_dir: str, roles_dir: str = None) -> str:
     with open(script_final_path, "r", encoding="utf-8") as f:
         script_final_data = json.load(f)
 
-    generate_tts_incremental(chapter_dir, script_final_data, roles_dir=roles_dir)
+    generate_tts_incremental(chapter_dir, script_final_data, backend=backend, roles_dir=roles_dir)
     return os.path.join(chapter_dir, "timeline.json")

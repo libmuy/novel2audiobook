@@ -9,6 +9,7 @@ IndexTTS-2.5（tts 阶段依赖）共用，两者常规配置下无法同时装�
 供 src/tts_engine.IndexTTSBackend 在 synthesize_batch() 前后调用；
 也可独立以脚本方式运行：`python tools/gpu_arbiter.py {status|stop|start}`。
 """
+import os
 import subprocess
 import sys
 import time
@@ -106,6 +107,9 @@ class LlmSuspendedForTts:
 
 
 if __name__ == "__main__":
+    # 允许直接 `python tools/gpu_arbiter.py` 运行（而非 `python -m tools.gpu_arbiter`），
+    # 需手动把项目根目录加入 sys.path 才能找到 src 包。
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from src.utils import load_global_config  # noqa: E402
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
