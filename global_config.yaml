@@ -1,10 +1,13 @@
 llm:
   model_name: "/srv/unsafe/models/llm/unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_M.gguf"
   api_base: "http://localhost:8080/v1"  # 本机 llama-server（ai llm serve qwen3.8-27b-unsloth）实际监听端口
+  serve_port: 8080
+  serve_model_registry_name: "qwen3.8-27b-unsloth"  # `ai llm serve <name>` 使用的注册表名（与 api_base 端口对应）
   temperature: 0.3  # 结构化 JSON 抽取任务，取偏低温度保证输出稳定可解析
   max_tokens: 2048
   request_timeout_sec: 60
   connect_check_timeout_sec: 3
+  server_start_timeout_sec: 180  # gpu_arbiter 拉起 llama-server 后等待其就绪的超时
 
 tts:
   engine: "Index-TTS-2.5"
@@ -14,8 +17,9 @@ tts:
   index_tts:
     python_bin: "tools/indextts_env/bin/python"       # 独立 venv（ROCm torch），见 docs/indextts_setup.md
     infer_script: "tools/indextts_infer.py"
+    repo_dir: "tools/indextts_repo"                   # index-tts 官方源码仓库
     checkpoints_dir: "/srv/unsafe/models/tts/IndexTTS-2.5"
-    timeout_sec: 120
+    timeout_sec: 1800  # 批量合成一整章（含模型加载），按句段数量可能需要较长时间
 
 mixing:
   ducking_threshold: -20.0  # dBFS RMS 阈值

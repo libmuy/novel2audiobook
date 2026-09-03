@@ -137,11 +137,9 @@ def _build_scene_bgm_track(items: list, total_duration_ms: int, chapter_dir: str
     if cur_bgm is not None:
         scenes.append((cur_start, cur_end, cur_bgm))
 
-    # 2) 逐场景铺连续环境音，场景间用 crossfade 过渡
-    prev_scene_end = None
+    # 2) 逐场景铺连续环境音，每段独立 fade in/out 起到场景切换处的 crossfade 效果
     for start_ms, end_ms, bgm_name in scenes:
         if bgm_name is None:
-            prev_scene_end = None
             continue
         bgm_file = resolve_path(os.path.join("assets", "ambience", f"{bgm_name}.wav"))
         if not os.path.exists(bgm_file):
@@ -159,7 +157,6 @@ def _build_scene_bgm_track(items: list, total_duration_ms: int, chapter_dir: str
             scene_audio = scene_audio.fade_in(fade).fade_out(fade)
 
         bgm_track = bgm_track.overlay(scene_audio, position=int(start_ms))
-        prev_scene_end = end_ms
 
     return bgm_track
 

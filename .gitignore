@@ -9,3 +9,8 @@ chapters/*/output/*.mp3
 chapters/*/output/*.wav
 chapters/*/output/*.srt
 .venv/
+
+# IndexTTS-2.5 独立推理环境：官方源码仓库（自行 git clone，见 docs/indextts_setup.md）
+# 与 ROCm venv，均为本机专属大体积产物，不随代码分发
+tools/indextts_repo/
+tools/indextts_env/
