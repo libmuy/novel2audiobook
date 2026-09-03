@@ -134,11 +134,15 @@ class IndexTTSBackend:
             infer_jobs.append({
                 "id": job["id"],
                 "text": job["text"],
-                "ref_audio": role_cfg["reference_audio"],
+                # indextts_infer.py 子进程会 os.chdir() 到 repo 目录（IndexTTS2 内部把
+                # HF_HUB_CACHE 硬编码为相对路径，见 docs/indextts_setup.md），因此这里
+                # 传给子进程的路径必须先转绝对路径，否则 ref_audio/out 会被错误解析到
+                # repo 目录下
+                "ref_audio": os.path.abspath(role_cfg["reference_audio"]),
                 "lang": "ZH",
                 "emo_vector": EMOTION_TO_VECTOR.get(job["emotion"], EMOTION_TO_VECTOR["neutral"]),
                 "duration_factor": speed_to_duration_factor(role_cfg.get("speed", 1.0)),
-                "out": job["out"],
+                "out": os.path.abspath(job["out"]),
             })
 
         with tempfile.TemporaryDirectory(prefix="indextts_batch_") as tmp_dir:

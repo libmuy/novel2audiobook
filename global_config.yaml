@@ -19,7 +19,8 @@ tts:
     infer_script: "tools/indextts_infer.py"
     repo_dir: "tools/indextts_repo"                   # index-tts 官方源码仓库
     checkpoints_dir: "/srv/unsafe/models/tts/IndexTTS-2.5"
-    timeout_sec: 1800  # 批量合成一整章（含模型加载），按句段数量可能需要较长时间
+    timeout_sec: 10800  # 批量合成一整章（含模型加载）；实测本机 RTF ~6-9x，
+                         # 121 句/3757 字约需 65-70 分钟，此处留足余量
 
 mixing:
   ducking_threshold: -20.0  # dBFS RMS 阈值
