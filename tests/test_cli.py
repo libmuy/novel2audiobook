@@ -49,7 +49,14 @@ class TestRunTestModule:
         except Exception as e:
             pytest.fail(f"干运行测试失败: {e}")
 
-    @pytest.mark.parametrize("module", ["llm", "tts", "audio", "all", "dry-run"])
+    def test_run_test_module_assets(self):
+        """运行素材库生成测试模块（Mock 引擎，隔离目录，与章节流水线正交）"""
+        try:
+            run_test_module("assets")
+        except Exception as e:
+            pytest.fail(f"assets 测试模块失败: {e}")
+
+    @pytest.mark.parametrize("module", ["llm", "tts", "audio", "assets", "all", "dry-run"])
     def test_run_test_module_parametrized(self, module):
         """参数化测试各个模块"""
         try:
@@ -89,6 +96,31 @@ class TestRunTestModule:
         for ch in new_chapters:
             if ch.startswith("ch_"):
                 pytest.fail(f"测试污染了真实章节: {ch}")
+
+    def test_run_test_module_assets_does_not_pollute_real_assets_dir(self):
+        """assets 自检模块只写隔离临时目录，不应在真实 assets/ 下新增任何文件"""
+        from src.utils import get_project_root
+
+        root = get_project_root()
+        assets_dir = os.path.join(root, "assets")
+        before = set()
+        for kind_dir in ("ambience", "sfx"):
+            kind_path = os.path.join(assets_dir, kind_dir)
+            if os.path.isdir(kind_path):
+                before.add((kind_dir, tuple(sorted(os.listdir(kind_path)))))
+
+        try:
+            run_test_module("assets")
+        except Exception:
+            pass
+
+        after = set()
+        for kind_dir in ("ambience", "sfx"):
+            kind_path = os.path.join(assets_dir, kind_dir)
+            if os.path.isdir(kind_path):
+                after.add((kind_dir, tuple(sorted(os.listdir(kind_path)))))
+
+        assert before == after, "assets 自检污染了真实 assets/ 目录"
 
     def test_run_test_module_creates_temp_workspace(self):
         """测试模块创建临时工作区"""

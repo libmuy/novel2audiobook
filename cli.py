@@ -13,6 +13,10 @@ from src.status_tracker import print_status_table
 from src.llm_parser import process_chapter_parse, HeuristicBackend
 from src.tts_engine import process_chapter_tts, generate_tts_incremental, MockTTSBackend
 from src.audio_mixer import mix_chapter
+from src.asset_gen import (
+    generate_assets, load_asset_specs, print_asset_status_table,
+    MockAudioGenBackend, VALID_KINDS,
+)
 
 
 def _make_isolated_test_workspace() -> tuple:
@@ -39,22 +43,28 @@ def _make_isolated_test_workspace() -> tuple:
 def run_test_module(module_name: str):
     """
     自检脚本路由。为保证自检快速、可重复、不依赖外部服务（LLM API / GPU），
-    统一在隔离临时工作区中运行，使用启发式解析器 + Mock TTS 后端。
-    真实 Qwen/IndexTTS 链路的验证见 `python cli.py parse|tts|mix`。
+    统一在隔离临时工作区中运行，使用启发式解析器 + Mock TTS/素材生成后端。
+    真实 Qwen/IndexTTS/ACE-Step/Stable Audio 链路的验证见
+    `python cli.py parse|tts|mix|assets`。
     """
     print(f"--> 开始运行自检模块: [{module_name}]（隔离临时工作区，Mock 引擎）")
     chapter_dir, roles_dir, tmp_root = _make_isolated_test_workspace()
 
     # 单模块自检语义为“跑通到该阶段为止”：因为每次自检都在全新隔离工作区中进行，
     # 单独测 tts/audio 时需要自动补跑其前置阶段，否则会因缺少上游产物而报错。
+    # assets（素材库生成）与章节流水线正交，不依赖也不参与这条前置链。
     stage_order = ["llm", "tts", "audio"]
     if module_name in ("all", "dry-run"):
-        run_llm, run_tts, run_audio = True, True, True
+        run_llm, run_tts, run_audio, run_assets = True, True, True, True
+    elif module_name == "assets":
+        run_llm = run_tts = run_audio = False
+        run_assets = True
     else:
         target_idx = stage_order.index(module_name)
         run_llm = target_idx >= 0
         run_tts = target_idx >= 1
         run_audio = target_idx >= 2
+        run_assets = False
 
     try:
         if run_llm:
@@ -101,6 +111,28 @@ def run_test_module(module_name: str):
             assert os.path.exists(out_mp3), "混音未生成成品文件"
             print(f"  ✓ 导出混合音频: {out_mp3}")
 
+        if run_assets:
+            print("[Test Assets] 生成音效/背景音素材库（Mock 引擎，隔离目录）...")
+            specs = load_asset_specs()  # 读取真实项目的 asset_specs.yaml（只读，不写入）
+            isolated_assets_dir = os.path.join(tmp_root, "assets")
+            mock = MockAudioGenBackend()
+            summary = generate_assets(
+                specs=specs, assets_dir=isolated_assets_dir,
+                backend_map={"ambience": mock, "sfx": mock},
+            )
+            assert not summary["error"], f"素材生成出现错误: {summary['error']}"
+            total = len(summary["generated"]) + len(summary["fallback"])
+            assert total > 0, "未生成任何素材（assets/asset_specs.yaml 是否为空？）"
+            print(f"  ✓ 生成素材库：{total} 条（隔离目录，不影响真实 assets/）")
+
+            # 增量性回归：同一份 spec 第二次生成应全部命中缓存
+            summary_2 = generate_assets(
+                specs=specs, assets_dir=isolated_assets_dir,
+                backend_map={"ambience": mock, "sfx": mock},
+            )
+            assert len(summary_2["skipped"]) == total, "二次生成未能全部命中 spec_hash 缓存"
+            print("  ✓ 增量缓存回归通过（二次生成全部命中缓存）")
+
         print("--> 自检完成，全部指标正常！")
     finally:
         shutil.rmtree(tmp_root, ignore_errors=True)
@@ -127,8 +159,17 @@ def main():
 
     # 5. test
     parser_test = subparsers.add_parser("test", help="内置自检脚本")
-    parser_test.add_argument("--module", choices=["llm", "tts", "audio", "all", "dry-run"], default="dry-run", help="要测试的子模块")
+    parser_test.add_argument("--module", choices=["llm", "tts", "audio", "assets", "all", "dry-run"], default="dry-run", help="要测试的子模块")
     parser_test.add_argument("--all", action="store_true", help="同 --module all")
+
+    # 6. assets
+    parser_assets = subparsers.add_parser("assets", help="管理/生成音效与背景音素材库（本地模型批量生成）")
+    parser_assets.add_argument("action", nargs="?", choices=["list", "gen"], default="list",
+                                help="list=查看素材库状态（默认）；gen=按 asset_specs.yaml 增量生成")
+    parser_assets.add_argument("--kind", choices=list(VALID_KINDS), help="仅处理 ambience（BGM）或 sfx 一类")
+    parser_assets.add_argument("--only", help="逗号分隔的素材名列表，仅生成/刷新指定几条")
+    parser_assets.add_argument("--force", action="store_true", help="忽略增量缓存，全部重新生成")
+    parser_assets.add_argument("--backend", choices=["mock"], help="强制使用指定后端（目前仅支持 mock，用于离线自检/占位铺库）")
 
     args = parser.parse_args()
 
@@ -173,6 +214,30 @@ def main():
         except Exception as e:
             print(f"自检错误: {e}")
             sys.exit(1)
+
+    elif args.command == "assets":
+        if args.action == "list":
+            print_asset_status_table()
+        else:  # gen
+            kinds = [args.kind] if args.kind else None
+            only = set(args.only.split(",")) if args.only else None
+            backend_map = None
+            if args.backend == "mock":
+                mock = MockAudioGenBackend()
+                backend_map = {"ambience": mock, "sfx": mock}
+            try:
+                summary = generate_assets(kinds=kinds, only=only, force=args.force, backend_map=backend_map)
+                print(
+                    f"生成完成：新生成 {len(summary['generated'])} 条，"
+                    f"Mock 占位 {len(summary['fallback'])} 条，"
+                    f"跳过（已缓存）{len(summary['skipped'])} 条，"
+                    f"失败 {len(summary['error'])} 条"
+                )
+                if summary["error"]:
+                    sys.exit(1)
+            except Exception as e:
+                print(f"错误: {e}")
+                sys.exit(1)
 
 
 if __name__ == "__main__":

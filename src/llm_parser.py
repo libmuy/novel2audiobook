@@ -144,6 +144,15 @@ _SYSTEM_PROMPT_TEMPLATE = """你是小说转有声书的剧本解析器。将给
 """
 
 
+def _render_asset_list(names: list, descriptions: dict) -> str:
+    """渲染素材词表为「名字（中文描述）」，方便 LLM 按语义选材；描述缺失时退化为裸名字"""
+    parts = []
+    for name in names:
+        desc = descriptions.get(name)
+        parts.append(f"{name}（{desc}）" if desc else name)
+    return "、".join(parts)
+
+
 class QwenLLMBackend:
     """通过本地 llama-server 的 OpenAI 兼容接口调用 Qwen 模型"""
 
@@ -167,8 +176,18 @@ class QwenLLMBackend:
 
     def _build_system_prompt(self, manifest: dict, assets: dict) -> str:
         role_names = "、".join(name for _, name in roles_mod.list_role_names(manifest)) or "（暂无）"
-        sfx_list = "、".join(assets.get("sfx", [])) or "（无可用音效，一律填 null）"
-        bgm_list = "、".join(assets.get("bgm", [])) or "（无可用环境音，一律填 null）"
+
+        try:
+            from src.asset_gen import get_asset_descriptions
+            descriptions = get_asset_descriptions()
+        except Exception as e:  # noqa: BLE001 - spec 文件缺失/格式错误不应影响解析主流程
+            logger.warning("加载素材中文描述失败，词表退化为裸名字: %s", e)
+            descriptions = {"sfx": {}, "bgm": {}}
+
+        sfx_list = _render_asset_list(assets.get("sfx", []), descriptions.get("sfx", {})) \
+            or "（无可用音效，一律填 null）"
+        bgm_list = _render_asset_list(assets.get("bgm", []), descriptions.get("bgm", {})) \
+            or "（无可用环境音，一律填 null）"
         return _SYSTEM_PROMPT_TEMPLATE.format(
             role_names=role_names,
             emotions="、".join(sorted(VALID_EMOTIONS)),

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
 GPU 显存仲裁：RX 7900XTX 由 llama-server（Qwen3.8，本项目 parse 阶段依赖）与
-IndexTTS-2.5（tts 阶段依赖）共用，两者常规配置下无法同时装入显存，
-因此本模块保证两者互斥：tts 批量合成前暂停 llama-server 腾出显存，
-合成结束后（无论成功与否）恢复其运行，使系统回到用户预期的默认状态
-（llama-server 常驻服务于其他用途）。
+GPU 密集型批处理阶段——IndexTTS-2.5（tts）、ACE-Step/Stable Audio（assets，见
+src/asset_gen.py）——共用，这些阶段常规配置下都无法与 llama-server 同时装入显存，
+因此本模块保证互斥：批量任务前暂停 llama-server 腾出显存，任务结束后（无论成功
+与否）恢复其运行，使系统回到用户预期的默认状态（llama-server 常驻服务于其他用途）。
 
-供 src/tts_engine.IndexTTSBackend 在 synthesize_batch() 前后调用；
-也可独立以脚本方式运行：`python tools/gpu_arbiter.py {status|stop|start}`。
+供 src/tts_engine.IndexTTSBackend、src/asset_gen.SubprocessAudioGenBackend 在各自
+批量任务前后调用；也可独立以脚本方式运行：`python tools/gpu_arbiter.py {status|stop|start}`。
 """
 import os
 import subprocess
@@ -80,10 +80,11 @@ def start_llama_server(model_registry_name: str, port: int, api_base: str, start
     return False
 
 
-class LlmSuspendedForTts:
+class LlmSuspendedForGpu:
     """
     上下文管理器：进入时若 llama-server 正在运行则停止，退出时恢复
     （无论 with 代码块是否抛出异常，均尝试恢复，避免影响其他用途）。
+    命名不再局限于 "Tts"——tts/assets 等任何需要独占显存的批处理阶段都可复用。
     """
 
     def __init__(self, config: dict):
@@ -104,6 +105,10 @@ class LlmSuspendedForTts:
         if self._was_running and self.model_registry_name:
             start_llama_server(self.model_registry_name, self.port, self.api_base, self.startup_timeout)
         return False  # 不吞异常
+
+
+# 向后兼容别名：src/tts_engine.py 沿用旧名字导入，行为完全一致
+LlmSuspendedForTts = LlmSuspendedForGpu
 
 
 if __name__ == "__main__":

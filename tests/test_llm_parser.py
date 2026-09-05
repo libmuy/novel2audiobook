@@ -4,7 +4,7 @@
 import os
 import json
 import pytest
-from src import llm_parser, roles as roles_mod, utils
+from src import llm_parser, roles as roles_mod, utils, asset_gen
 
 
 class TestSplitParagraphs:
@@ -292,3 +292,47 @@ class TestProcessChapterParse:
         assert isinstance(result, str)
         assert os.path.exists(result)
         assert "script_draft.json" in result
+
+
+class TestRenderAssetList:
+    """素材词表渲染功能测试（名字 -> "名字（中文描述）"）"""
+
+    def test_render_with_descriptions(self):
+        result = llm_parser._render_asset_list(["rain_heavy", "sword_clash"], {"rain_heavy": "大雨环境"})
+        assert result == "rain_heavy（大雨环境）、sword_clash"
+
+    def test_render_without_any_descriptions(self):
+        result = llm_parser._render_asset_list(["a", "b"], {})
+        assert result == "a、b"
+
+    def test_render_empty_names(self):
+        assert llm_parser._render_asset_list([], {"a": "desc"}) == ""
+
+
+class TestBuildSystemPromptAssetDescriptions:
+    """QwenLLMBackend 系统提示词是否正确带上素材中文描述"""
+
+    def test_prompt_includes_descriptions(self, monkeypatch):
+        monkeypatch.setattr(
+            asset_gen, "get_asset_descriptions",
+            lambda *a, **kw: {"sfx": {"sword_clash": "兵器相交声"}, "bgm": {"rain_heavy": "雨夜环境"}},
+        )
+        backend = llm_parser.QwenLLMBackend({})
+        prompt = backend._build_system_prompt(
+            manifest={"roles": {}},
+            assets={"sfx": ["sword_clash"], "bgm": ["rain_heavy"]},
+        )
+        assert "sword_clash（兵器相交声）" in prompt
+        assert "rain_heavy（雨夜环境）" in prompt
+
+    def test_prompt_degrades_gracefully_when_asset_gen_unavailable(self, monkeypatch):
+        def _boom(*a, **kw):
+            raise RuntimeError("spec 文件损坏")
+
+        monkeypatch.setattr(asset_gen, "get_asset_descriptions", _boom)
+        backend = llm_parser.QwenLLMBackend({})
+        prompt = backend._build_system_prompt(
+            manifest={"roles": {}},
+            assets={"sfx": ["sword_clash"], "bgm": []},
+        )
+        assert "sword_clash" in prompt  # 退化为裸名字，不应抛异常中断解析

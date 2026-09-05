@@ -22,6 +22,26 @@ tts:
     timeout_sec: 10800  # 批量合成一整章（含模型加载）；实测本机 RTF ~6-9x，
                          # 121 句/3757 字约需 65-70 分钟，此处留足余量
 
+asset_gen:
+  spec_file: "assets/asset_specs.yaml"
+  target_sample_rate: 24000          # 与 audio_mixer.MIX_SAMPLE_RATE 对齐
+  ambience_loop_crossfade_ms: 2000   # ambience 素材首尾等功率交叉淡化时长，用于无缝循环
+  ambience_target_dbfs: -20.0        # ambience 素材归一化的平均响度（dBFS）
+  sfx_target_dbfs: -6.0              # sfx 素材归一化的峰值响度（dBFS）
+  ambience_engine: "ACE-Step-1.5"        # 仅用于日志展示；实际选型见下方 ace_step 配置段
+  sfx_engine: "Stable-Audio-3-Small-SFX" # 仅用于日志展示；实际选型见下方 stable_audio 配置段
+  ace_step:
+    python_bin: "tools/acestep_env/bin/python"       # 独立 venv（ROCm torch），见 docs/audiogen_setup.md
+    infer_script: "tools/acestep_infer.py"
+    repo_dir: "tools/acestep_repo"                   # ACE-Step 官方源码仓库
+    checkpoints_dir: "/srv/unsafe/models/audiogen/ACE-Step-1.5"
+    timeout_sec: 3600
+  stable_audio:
+    python_bin: "tools/stableaudio_env/bin/python"   # 独立 venv（ROCm torch + Flash-Attention 2），见 docs/audiogen_setup.md
+    infer_script: "tools/stableaudio_infer.py"
+    checkpoints_dir: "/srv/unsafe/models/audiogen/stable-audio-3-small-sfx"
+    timeout_sec: 1800
+
 mixing:
   ducking_threshold: -20.0  # dBFS RMS 阈值
   ducking_volume_ratio: 0.3 # BGM 闪避时降低到的音量比例 (30%)

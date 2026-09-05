@@ -1,0 +1,102 @@
+# 音效/背景音素材库唯一真相源。
+#
+# 每条素材经本地模型批量生成后落到 assets/ambience/<name>.wav 或
+# assets/sfx/<name>.wav（供 src/audio_mixer.py 直接使用），生成方式见
+# `python cli.py assets gen`（实现见 src/asset_gen.py）。
+#
+# 字段说明：
+#   description       中文，会进入 Qwen 解析提示词的素材词表，帮助模型按语义选材
+#   prompt            喂给生成模型的文本条件（英文通常效果更稳定）
+#   negative_prompt   反向提示词，可选
+#   duration_sec      生成时长（ambience 会在后处理时按 ambience_loop_crossfade_ms
+#                     裁掉首尾做无缝循环，实际落盘时长会略短于此值）
+#   seed              固定随机种子，保证同一份 prompt 复现同一段素材
+#
+# 改动 prompt/negative_prompt/duration_sec/seed 会使该条素材的增量缓存失效，
+# 下次 `python cli.py assets gen` 会重新生成；只改 description 不会触发重新生成。
+
+ambience:
+  rain_heavy:
+    description: 大雨滂沱、屋檐滴水的雨夜环境
+    prompt: "heavy rainstorm ambience, steady downpour, water dripping from eaves, distant rolling thunder, no music, no melody, no vocals, seamless loop"
+    negative_prompt: "music, melody, drums, vocals, speech, singing"
+    duration_sec: 60
+    seed: 1001
+
+  mine_tunnel:
+    description: 矿井坑道内的幽闭环境，滴水与风声在岩壁间回响
+    prompt: "deep mine tunnel ambience, distant dripping water, faint wind echoing through rock walls, low rumble, claustrophobic underground atmosphere, no music, seamless loop"
+    negative_prompt: "music, melody, drums, vocals, speech"
+    duration_sec: 60
+    seed: 1002
+
+  night_wind:
+    description: 荒野夜晚的风声，空旷清冷
+    prompt: "cold night wind blowing across open wilderness, occasional gust, distant rustling grass, desolate and quiet atmosphere, no music, seamless loop"
+    negative_prompt: "music, melody, drums, vocals, speech"
+    duration_sec: 60
+    seed: 1003
+
+  village_day:
+    description: 白天村落的日常环境音，远处人声嘈杂但不清晰
+    prompt: "daytime village ambience, distant indistinct chatter, occasional rooster, wooden carts, wind through trees, rural everyday atmosphere, no music, seamless loop"
+    negative_prompt: "music, melody, drums, clear vocals, singing"
+    duration_sec: 60
+    seed: 1004
+
+  tense_low_drone:
+    description: 低沉的紧张氛围底噪，用于危机/对峙场景
+    prompt: "dark tense atmospheric drone, low ominous sustained tone, subtle rising tension, cinematic underscore texture, no percussion, no melody, no vocals, seamless loop"
+    negative_prompt: "melody, drums, vocals, upbeat, happy"
+    duration_sec: 45
+    seed: 1005
+
+  mourning_strings:
+    description: 哀伤压抑的氛围底乐，用于病重/悲痛场景
+    prompt: "somber melancholic ambient drone, sparse sustained low strings, sorrowful and restrained, funeral-like atmosphere, no percussion, no vocals, seamless loop"
+    negative_prompt: "drums, vocals, upbeat, happy, fast tempo"
+    duration_sec: 45
+    seed: 1006
+
+sfx:
+  sword_clash:
+    description: 兵器相交的一声脆响
+    prompt: "two steel swords clashing once, sharp metallic ring, short decay, dry recording, single hit"
+    negative_prompt: "music, reverb hall, vocals"
+    duration_sec: 3
+    seed: 2001
+
+  door_creak:
+    description: 木门缓慢打开时的吱呀声
+    prompt: "old wooden door slowly creaking open, single long creak, dry recording"
+    negative_prompt: "music, vocals"
+    duration_sec: 3
+    seed: 2002
+
+  footsteps_gravel:
+    description: 在碎石/矿区路面上行走的脚步声
+    prompt: "footsteps walking on loose gravel and rocky ground, a few steps, dry recording, no reverb"
+    negative_prompt: "music, vocals"
+    duration_sec: 4
+    seed: 2003
+
+  thunder_crack:
+    description: 近处炸响的一声惊雷
+    prompt: "single close thunder crack, sharp loud impact followed by rolling rumble, no rain, dry recording"
+    negative_prompt: "music, vocals, rain"
+    duration_sec: 4
+    seed: 2004
+
+  coin_purse:
+    description: 铜钱/银钱袋碰撞抖动的声音
+    prompt: "coins jingling and clinking inside a small pouch, a few shakes, dry recording"
+    negative_prompt: "music, vocals"
+    duration_sec: 3
+    seed: 2005
+
+  cough_fit:
+    description: 病弱之人的一阵咳嗽声（非真人录音，供占位/氛围使用）
+    prompt: "a short muffled coughing fit sound effect, weak and labored, non-vocal foley style"
+    negative_prompt: "music, clear speech, singing"
+    duration_sec: 3
+    seed: 2006
