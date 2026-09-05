@@ -1,0 +1,13 @@
+{
+  "name": "footsteps_gravel",
+  "kind": "sfx",
+  "prompt": "footsteps walking on loose gravel and rocky ground, a few steps, dry recording, no reverb",
+  "negative_prompt": "music, vocals",
+  "seed": 2003,
+  "duration_sec": 4.0,
+  "engine": "tangoflux",
+  "spec_hash": "ea56098ea3e4c2059c35461f939a6e91",
+  "used_fallback": false,
+  "generated_at": "2026-09-05 18:24:30",
+  "duration_ms": 4000
+}

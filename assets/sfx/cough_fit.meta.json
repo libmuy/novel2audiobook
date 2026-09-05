@@ -1,0 +1,13 @@
+{
+  "name": "cough_fit",
+  "kind": "sfx",
+  "prompt": "a short muffled coughing fit sound effect, weak and labored, non-vocal foley style",
+  "negative_prompt": "music, clear speech, singing",
+  "seed": 2006,
+  "duration_sec": 3.0,
+  "engine": "tangoflux",
+  "spec_hash": "519920ec1420a96864ac6cb2a1c2d2b6",
+  "used_fallback": false,
+  "generated_at": "2026-09-05 18:24:31",
+  "duration_ms": 935
+}

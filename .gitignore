@@ -21,3 +21,6 @@ tools/acestep_env/
 
 # ACE-Step 运行时自校准缓存（扩散步数耗时估算），机器相关，不随代码分发
 .cache/acestep/
+
+# TangoFlux 独立推理环境：见 docs/audiogen_setup.md
+tools/tangoflux_env/

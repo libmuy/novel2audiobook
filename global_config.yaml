@@ -28,18 +28,20 @@ asset_gen:
   ambience_loop_crossfade_ms: 2000   # ambience 素材首尾等功率交叉淡化时长，用于无缝循环
   ambience_target_dbfs: -20.0        # ambience 素材归一化的平均响度（dBFS）
   sfx_target_dbfs: -6.0              # sfx 素材归一化的峰值响度（dBFS）
-  ambience_engine: "ACE-Step-1.5"        # 仅用于日志展示；实际选型见下方 ace_step 配置段
-  sfx_engine: "Stable-Audio-3-Small-SFX" # 仅用于日志展示；实际选型见下方 stable_audio 配置段
+  ambience_engine: "ACE-Step-1.5"  # 仅用于日志展示；实际选型见下方 ace_step 配置段
+  sfx_engine: "TangoFlux"          # 仅用于日志展示；实际选型见下方 tangoflux 配置段
+                                   # （原计划用 Stable Audio 3 Small SFX，但它是 HuggingFace
+                                   # gated repo 且审批不顺畅，改用公开、无需申请的 TangoFlux）
   ace_step:
     python_bin: "tools/acestep_env/bin/python"       # 独立 venv（ROCm torch），见 docs/audiogen_setup.md
     infer_script: "tools/acestep_infer.py"
     repo_dir: "tools/acestep_repo"                   # ACE-Step 官方源码仓库
     checkpoints_dir: "/srv/unsafe/models/audiogen/ACE-Step-1.5"
     timeout_sec: 3600
-  stable_audio:
-    python_bin: "tools/stableaudio_env/bin/python"   # 独立 venv（ROCm torch + Flash-Attention 2），见 docs/audiogen_setup.md
-    infer_script: "tools/stableaudio_infer.py"
-    checkpoints_dir: "/srv/unsafe/models/audiogen/stable-audio-3-small-sfx"
+  tangoflux:
+    python_bin: "tools/tangoflux_env/bin/python"     # 独立 venv（CPU torch），见 docs/audiogen_setup.md
+    infer_script: "tools/tangoflux_infer.py"
+    checkpoints_dir: "/srv/unsafe/models/audiogen/tangoflux"  # HF_HOME 缓存根目录，非直接模型路径
     timeout_sec: 1800
 
 mixing:

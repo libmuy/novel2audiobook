@@ -3,10 +3,14 @@
 
 架构：与 src/tts_engine.py 同构——
 - MockAudioGenBackend：程序化占位音频，无外部依赖，供 `cli.py test` 与无 GPU 环境使用。
-- AceStepBackend（ambience/BGM）、StableAudioSfxBackend（sfx）：通过子进程调用独立
-  部署的推理环境（各自独立 venv + jobs.json -> result.json 协议，见
-  tools/indextts_infer.py 的先例），GPU 显存与 llama-server 互斥占用，通过
-  tools/gpu_arbiter.LlmSuspendedForGpu 上下文管理器自动换卡。
+- AceStepBackend（ambience/BGM，GPU）、TangoFluxBackend（sfx，CPU）：通过子进程
+  调用独立部署的推理环境（各自独立 venv + jobs.json -> result.json 协议，见
+  tools/indextts_infer.py 的先例）。ACE-Step 走 GPU，与 llama-server 显存互斥，
+  通过 tools/gpu_arbiter.LlmSuspendedForGpu 上下文管理器自动换卡；TangoFlux 跑在
+  CPU 上（模型选型见 tools/tangoflux_infer.py 顶部说明——原计划用 Stable Audio 3
+  Small SFX，但它是 HuggingFace gated repo 且审批不顺畅，改用公开、无需申请的
+  TangoFlux），不占显存，可以和前两者同时跑，但仍统一走同一套 subprocess 协议
+  （多余的换卡暂停/恢复只是几秒钟开销，不值得为此分叉逻辑）。
 
 素材以 assets/asset_specs.yaml 为唯一真相源（prompt/负向提示/时长/种子），按影响
 生成结果的字段计算 spec_hash 做增量生成缓存；结果落到 assets/ambience/、assets/sfx/
@@ -307,10 +311,10 @@ class AceStepBackend(SubprocessAudioGenBackend):
     config_key = "ace_step"
 
 
-class StableAudioSfxBackend(SubprocessAudioGenBackend):
-    """Stable Audio 3 Small SFX：音效生成，见 docs/audiogen_setup.md"""
-    name = "stable_audio_sfx"
-    config_key = "stable_audio"
+class TangoFluxBackend(SubprocessAudioGenBackend):
+    """TangoFlux：音效生成（CPU），见 docs/audiogen_setup.md"""
+    name = "tangoflux"
+    config_key = "tangoflux"
 
 
 def build_asset_gen_backend(kind: str, config: dict = None):
@@ -320,7 +324,7 @@ def build_asset_gen_backend(kind: str, config: dict = None):
     gen_cfg = config.get("asset_gen", {})
     engine_name = gen_cfg.get("ambience_engine" if kind == "ambience" else "sfx_engine", "")
 
-    backend_cls = AceStepBackend if kind == "ambience" else StableAudioSfxBackend
+    backend_cls = AceStepBackend if kind == "ambience" else TangoFluxBackend
     backend = backend_cls(config)
     if backend.is_available():
         return backend

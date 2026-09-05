@@ -1,0 +1,13 @@
+{
+  "name": "sword_clash",
+  "kind": "sfx",
+  "prompt": "two steel swords clashing once, sharp metallic ring, short decay, dry recording, single hit",
+  "negative_prompt": "music, reverb hall, vocals",
+  "seed": 2001,
+  "duration_sec": 3.0,
+  "engine": "tangoflux",
+  "spec_hash": "bae48c67d02ed5b2cf070614a7a81e04",
+  "used_fallback": false,
+  "generated_at": "2026-09-05 18:12:53",
+  "duration_ms": 3000
+}

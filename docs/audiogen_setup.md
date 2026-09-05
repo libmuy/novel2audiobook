@@ -9,21 +9,35 @@
 
 | 素材类型 | 模型 | 状态 |
 |---|---|---|
-| ambience（BGM/环境音） | [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5) | 本文档已覆盖 |
-| sfx（音效） | Stable Audio 3 Small SFX（如 ROCm 上 Flash-Attention 2 装不通则退到 TangoFlux） | 见 Phase 3，待补 |
+| ambience（BGM/环境音） | [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5)，GPU | 本文档已覆盖 |
+| sfx（音效） | [TangoFlux](https://github.com/declare-lab/TangoFlux)，CPU | 本文档已覆盖 |
+
+原计划音效用 Stable Audio 3 Small SFX（官方明确该档位专为 CPU 设计，不需要
+Flash-Attention 2——那只是 Medium/Large 档位的要求，最初调研时的 ROCm+FA2
+风险评估其实不成立）。真正卡住的是另一件事：`stabilityai/stable-audio-3-small-sfx`
+是 HuggingFace 上的 **gated repo**，申请访问要审批，实测账号点了"同意条款"后
+还是拿到 `403 Forbidden`（不在 authorized list 里），流程不确定要等多久。
+个人使用没必要死磕这个，改用 **TangoFlux**——公开仓库、无需任何申请、纯
+PyTorch（同样是 CPU 友好档位），许可是 non-commercial research，符合本项目
+"个人自用/研究"的既定前提。
 
 ## 目录结构
 
 ```
 tools/
-├── acestep_repo/       # 官方仓库克隆（ace-step/ACE-Step-1.5）
-├── acestep_env/        # 独立 venv（Python 3.11 + ROCm torch），uv 创建
-├── acestep_infer.py    # 批量推理脚本，被 src/asset_gen.AceStepBackend 子进程调用
-└── gpu_arbiter.py       # llama-server ⇄ 生成模型 显存互斥调度（LlmSuspendedForGpu）
+├── acestep_repo/        # ACE-Step 官方仓库克隆
+├── acestep_env/         # 独立 venv（Python 3.11 + ROCm torch），uv 创建
+├── acestep_infer.py     # 批量推理脚本，被 src/asset_gen.AceStepBackend 子进程调用
+├── tangoflux_env/       # 独立 venv（Python 3.11 + CPU torch），uv 创建
+│                        # （TangoFlux 直接 `pip install git+...` 装包，不需要单独 clone 仓库）
+├── tangoflux_infer.py   # 批量推理脚本，被 src/asset_gen.TangoFluxBackend 子进程调用
+└── gpu_arbiter.py       # llama-server ⇄ ACE-Step 显存互斥调度（LlmSuspendedForGpu）
+                         # TangoFlux 跑 CPU，不参与这套换卡机制
 ```
 
-权重目录：`/srv/unsafe/models/audiogen/ACE-Step-1.5`（在项目 git 仓库之外，沿用
-`/srv/unsafe/models/{llm,tts}` 的既有惯例——体积大、是本机专属产物，不随代码分发）。
+权重目录：`/srv/unsafe/models/audiogen/{ACE-Step-1.5,tangoflux}`（在项目 git
+仓库之外，沿用 `/srv/unsafe/models/{llm,tts}` 的既有惯例——体积大、是本机专属
+产物，不随代码分发）。
 
 ## 从零搭建步骤
 
@@ -155,18 +169,20 @@ tokenizer+约束解码器+权重约 1 分钟——这部分是子进程启动后
 解码时间预计等比更长——`global_config.yaml:asset_gen.ace_step.timeout_sec`
 （3600 秒）留的余量对付批量跑几条是够的，如果一次性生成条目很多可以按需调大。
 
-## GPU 显存互斥（llama-server ⇄ ACE-Step / Stable Audio）
+## GPU 显存互斥（llama-server ⇄ ACE-Step）
 
 与 IndexTTS 完全复用同一套机制（原来叫 `LlmSuspendedForTts`，现已泛化改名为
 `LlmSuspendedForGpu`，`src/tts_engine.py` 里的旧引用保留别名兼容）：
 `src/asset_gen.SubprocessAudioGenBackend.generate_batch()` 在
 `with LlmSuspendedForGpu(config):` 块内跑子进程，批量生成前自动停 llama-server，
 结束后自动重新拉起。`python cli.py assets gen` 期间 Qwen 服务会短暂不可用，
-命令结束后自动恢复，无需手动干预。ACE-Step XL（约 12GB）与 Stable Audio Small
-（数 GB）单独驻卡时显存都很宽裕，**只是不与 `parse` 并发**——脚本设计上也没有
-让两者同时跑的场景（`generate_assets()` 按 kind 顺序调用，一次只有一个生成模型在跑）。
+命令结束后自动恢复，无需手动干预。ACE-Step XL（约 12GB）单独驻卡显存很宽裕，
+**只是不与 `parse` 并发**。TangoFlux 跑在 CPU 上，不占显存，不需要也不参与这套
+换卡机制，理论上可以和 llama-server/ACE-Step 同时跑（`SubprocessAudioGenBackend`
+统一走同一套 subprocess 协议，TangoFlux 那次调用也会象征性暂停/恢复一下
+llama-server，多余但无害，不值得为此分叉逻辑）。
 
-## 冒烟测试
+## ACE-Step 冒烟测试
 
 ```bash
 # 1. 先用 mock 后端确认脚手架本身没问题（不需要真实环境）
@@ -179,3 +195,55 @@ tokenizer+约束解码器+权重约 1 分钟——这部分是子进程启动后
 ```
 成功会在 `assets/ambience/rain_heavy.wav` 生成一段真实的雨声环境音（而非 Mock
 的滤波噪声占位），试听确认循环接缝（首尾交叉淡化后）没有明显咔哒声。
+
+## TangoFlux（音效 sfx）环境搭建
+
+比 ACE-Step 简单很多——CPU 推理、无需 ROCm、官方包直接 `pip install git+...`
+装，不需要单独 clone 源码仓库。
+
+```bash
+# 1. 建独立 venv
+uv venv tools/tangoflux_env --python 3.11
+
+# 2. 装 CPU 版 torch/torchaudio/torchvision，版本严格对齐 TangoFlux 的
+#    install_requires（均为裸版本号 "==2.4.0" 这类，不含 local 版本段，
+#    所以只要主版本号对上，pip 后续不会像 ACE-Step 那样把它们换掉）
+uv pip install --python tools/tangoflux_env/bin/python \
+    torch==2.4.0 torchaudio==2.4.0 torchvision==0.19.0 \
+    --index-url https://download.pytorch.org/whl/cpu
+
+# 3. 装 TangoFlux 本体（直接从 GitHub 装，无需先 git clone）
+uv pip install --python tools/tangoflux_env/bin/python \
+    "tangoflux @ git+https://github.com/declare-lab/TangoFlux"
+
+# 4. 验证（首次调用会自动下载权重到 HF_HOME 指向的目录，约几 GB）
+mkdir -p /srv/unsafe/models/audiogen/tangoflux
+HF_HOME=/srv/unsafe/models/audiogen/tangoflux tools/tangoflux_env/bin/python -c "
+from tangoflux import TangoFluxInference
+model = TangoFluxInference(name='declare-lab/TangoFlux', device='cpu')
+print('OK')
+"
+```
+
+### 已知坑
+
+1. **不是 gated repo，无需申请** —— 这正是弃用 Stable Audio 3 Small SFX 改用
+   它的原因，`snapshot_download` 直接拉取即可，不会遇到 401/403。
+2. **`generate()` 不支持 `negative_prompt`，也不暴露 `seed` 参数** ——
+   `tools/tangoflux_infer.py` 对 `negative_prompt` 直接忽略（协议里保留字段
+   只是为了跨后端一致），用 `torch.manual_seed()` 在调用前手动设种子来达到
+   可复现效果。
+3. **`duration` 官方 CLI 限定 1-30 秒** —— 本项目 sfx 素材（`assets/asset_specs.yaml`
+   里的 sfx 类目）全部是几秒钟的短音效，天然在这个范围内，不构成实际约束；
+   如果以后往 sfx 类目里加超过 30 秒的条目会需要另外处理。
+4. **默认 CPU** —— 和 Stable Audio Small 同样的取舍：SFX 素材生成频率低、
+   单条时长短，CPU 慢一点换来不占显存、不用参与 GPU 换卡调度，简单可靠。
+   如果批量条目很多嫌慢，`tools/tangoflux_infer.py` 的 `--device` 参数可以
+   改成 `cuda`，但需要额外验证 ROCm 下这条链路（未测试）。
+
+## 冒烟测试（sfx / TangoFlux）
+
+```bash
+.venv/bin/python cli.py assets gen --kind sfx --only sword_clash --force
+.venv/bin/python cli.py assets list   # 期望 sword_clash 一行 engine=tangoflux，used_fallback=false
+```

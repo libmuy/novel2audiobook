@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 GPU 显存仲裁：RX 7900XTX 由 llama-server（Qwen3.8，本项目 parse 阶段依赖）与
-GPU 密集型批处理阶段——IndexTTS-2.5（tts）、ACE-Step/Stable Audio（assets，见
+GPU 密集型批处理阶段——IndexTTS-2.5（tts）、ACE-Step（assets，见
 src/asset_gen.py）——共用，这些阶段常规配置下都无法与 llama-server 同时装入显存，
 因此本模块保证互斥：批量任务前暂停 llama-server 腾出显存，任务结束后（无论成功
 与否）恢复其运行，使系统回到用户预期的默认状态（llama-server 常驻服务于其他用途）。

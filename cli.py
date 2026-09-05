@@ -44,7 +44,7 @@ def run_test_module(module_name: str):
     """
     自检脚本路由。为保证自检快速、可重复、不依赖外部服务（LLM API / GPU），
     统一在隔离临时工作区中运行，使用启发式解析器 + Mock TTS/素材生成后端。
-    真实 Qwen/IndexTTS/ACE-Step/Stable Audio 链路的验证见
+    真实 Qwen/IndexTTS/ACE-Step/TangoFlux 链路的验证见
     `python cli.py parse|tts|mix|assets`。
     """
     print(f"--> 开始运行自检模块: [{module_name}]（隔离临时工作区，Mock 引擎）")
