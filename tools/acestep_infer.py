@@ -50,6 +50,10 @@ def main():
     args = parser.parse_args()
 
     os.environ["ACESTEP_CHECKPOINTS_DIR"] = os.path.abspath(args.checkpoints_dir)
+    # ACE-Step 在 ROCm 下默认用 fp32（实测日志会提示 "using dtype=torch.float32
+    # (set ACESTEP_ROCM_DTYPE=bfloat16 ... to override)"）；本机 RX 7900XTX 实测
+    # bf16 结果正常、显存/内存占用减半、明显更快，见 docs/audiogen_setup.md 已知坑。
+    os.environ.setdefault("ACESTEP_ROCM_DTYPE", "bfloat16")
     sys.path.insert(0, args.repo_dir)
 
     with open(args.jobs_file, "r", encoding="utf-8") as f:

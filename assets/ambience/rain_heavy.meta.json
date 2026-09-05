@@ -1,0 +1,13 @@
+{
+  "name": "rain_heavy",
+  "kind": "ambience",
+  "prompt": "heavy rainstorm ambience, steady downpour, water dripping from eaves, distant rolling thunder, no music, no melody, no vocals, seamless loop",
+  "negative_prompt": "music, melody, drums, vocals, speech, singing",
+  "seed": 1001,
+  "duration_sec": 60.0,
+  "engine": "ace_step",
+  "spec_hash": "1968d612e798017d9c2a94445f3d79ad",
+  "used_fallback": false,
+  "generated_at": "2026-09-05 17:10:52",
+  "duration_ms": 58000
+}

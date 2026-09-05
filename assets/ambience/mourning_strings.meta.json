@@ -1,0 +1,13 @@
+{
+  "name": "mourning_strings",
+  "kind": "ambience",
+  "prompt": "somber melancholic ambient drone, sparse sustained low strings, sorrowful and restrained, funeral-like atmosphere, no percussion, no vocals, seamless loop",
+  "negative_prompt": "drums, vocals, upbeat, happy, fast tempo",
+  "seed": 1006,
+  "duration_sec": 45.0,
+  "engine": "ace_step",
+  "spec_hash": "8ddebdfdcc9ca6c076354dca3bd76b4e",
+  "used_fallback": false,
+  "generated_at": "2026-09-05 17:21:47",
+  "duration_ms": 43000
+}

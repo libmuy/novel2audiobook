@@ -14,3 +14,10 @@ chapters/*/output/*.srt
 # 与 ROCm venv，均为本机专属大体积产物，不随代码分发
 tools/indextts_repo/
 tools/indextts_env/
+
+# ACE-Step 1.5 独立推理环境：同上，见 docs/audiogen_setup.md
+tools/acestep_repo/
+tools/acestep_env/
+
+# ACE-Step 运行时自校准缓存（扩散步数耗时估算），机器相关，不随代码分发
+.cache/acestep/

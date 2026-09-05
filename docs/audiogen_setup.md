@@ -36,26 +36,34 @@ cd /home/bjn/novel2audiobook
 # 1. 克隆官方仓库
 git clone --depth 1 https://github.com/ace-step/ACE-Step-1.5.git tools/acestep_repo
 
-# 2. 建独立 venv（官方要求 Python 3.11-3.12）
+# 2. 建独立 venv（官方要求 Python 3.11-3.12；实测本机 uv 自带 3.11.15 可直接用）
 uv venv tools/acestep_env --python 3.11
 
-# 3. 装 ROCm 版 torch（官方文档给的是 rocm6.0 索引；ROCm 有前向兼容性，
-#    本机是 ROCm 7.0，若该索引装不到匹配 wheel 再换成 rocm6.4/其他可用版本）
+# 3. 装 ROCm 版 torch（官方文档给的是 rocm6.0 索引；本机 IndexTTS 那边已验证
+#    rocm6.4 wheel 在本机 RX 7900XTX 上可正常跑，直接用 rocm6.4）
 uv pip install --python tools/acestep_env/bin/python \
-    torch --index-url https://download.pytorch.org/whl/rocm6.0
+    torch --index-url https://download.pytorch.org/whl/rocm6.4
 
-# 4. 装 ACE-Step 本体依赖
+# 4. 装 ACE-Step 本体依赖（会把上一步装的 ROCm torch 覆盖成它 pyproject.toml
+#    里硬编码的 CUDA 版，见下方已知坑 §0，必须紧跟着做第 5 步修复）
 uv pip install --python tools/acestep_env/bin/python -e tools/acestep_repo
 
-# 5. 验证 ROCm torch 没被上一步悄悄换回 CPU/CUDA 版
-tools/acestep_env/bin/python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+# 5. 【必做】把 torch/torchaudio 强制换回 ROCm 版——不加 --reinstall-package
+#    uv 会因为"同名包已安装"直接跳过，不会真的切换 index/build variant
+uv pip install --python tools/acestep_env/bin/python \
+    --reinstall-package torch --reinstall-package torchaudio \
+    torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.4
 
-# 6. RX 7900 XTX 是 RDNA3（gfx1100），若第 5 步 cuda.is_available() 为 False，
+# 6. 验证
+tools/acestep_env/bin/python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+# 期望输出: 2.9.1+rocm6.4 True
+
+# 7. RX 7900 XTX 是 RDNA3（gfx1100），若第 6 步 cuda.is_available() 为 False，
 #    先跑官方诊断脚本，多半需要设置 HSA_OVERRIDE_GFX_VERSION
 tools/acestep_env/bin/python tools/acestep_repo/scripts/check_gpu.py
 export HSA_OVERRIDE_GFX_VERSION=11.0.0   # RX 7900 XT/XTX、RX 9070 XT 专用值
 
-# 7. 下载权重到项目外的共享目录，并用官方支持的环境变量指向它
+# 8. 下载权重到项目外的共享目录，并用官方支持的环境变量指向它
 #    （ACE-Step 用 config_path 这个"模型名"定位权重，不接受直接路径参数，
 #    实际目录由 ACESTEP_CHECKPOINTS_DIR 决定——见 tools/acestep_infer.py 顶部注释）
 mkdir -p /srv/unsafe/models/audiogen/ACE-Step-1.5
@@ -65,6 +73,19 @@ ACESTEP_CHECKPOINTS_DIR=/srv/unsafe/models/audiogen/ACE-Step-1.5 \
 ```
 
 ## 已知坑与应对
+
+### 0. `pip install -e .` 会把 ROCm torch 换回 CUDA 版（实测踩到）
+`tools/acestep_repo/pyproject.toml` 对 Linux x86_64 硬编码了
+`torch==2.10.0+cu128`（精确版本+build 标签，不是范围约束），装 ACE-Step 本体
+依赖（步骤 4）时会**无条件覆盖**掉步骤 3 装好的 ROCm 版 torch。这与
+`docs/indextts_setup.md` 记录的坑不同：那边是版本冲突需要"先装 ROCm 版占住坑位"，
+这边是装完之后才被换掉，必须在步骤 4 **之后**再修一次（步骤 5）。
+
+**排障陷阱**：`uv pip install torch --index-url .../rocm6.4`（不带
+`--reinstall-package`）看起来会执行成功（"Checked 2 packages"），但**不会真的换**——
+uv 判断"已有同名包满足未锁版本的依赖"就直接跳过，根本不比较 index/build variant。
+必须显式加 `--reinstall-package torch --reinstall-package torchaudio`
+才会真的卸载重装。验证方式很简单：`torch.__version__` 里能不能看到 `+rocm` 后缀。
 
 ### 1. `torchcodec` 在 ROCm 上不可用
 官方文档明确：AMD ROCm（以及 Intel XPU）没有 `torchcodec` wheel，ACE-Step 会
@@ -98,6 +119,41 @@ ROCm 版 PyTorch 复用 CUDA 的设备命名空间（`torch.cuda.*` API 在 ROCm
 `LM_MODEL_PATH = "acestep-5Hz-lm-1.7B"` 是按官方选型表里 "20-24GB 显存" 档位选的
 （停掉 llama-server 后独占 24GB）。如果生成结果质量不理想，可以换
 `acestep-v15-xl-turbo`（更快、质量略低）试一版对比。
+
+`--all` 只下主模型（vae/embedding/turbo-2B/lm-1.7B），**XL 系列要单独下**：
+```bash
+ACESTEP_CHECKPOINTS_DIR=/srv/unsafe/models/audiogen/ACE-Step-1.5 \
+    tools/acestep_env/bin/python -m acestep.model_downloader --model acestep-v15-xl-sft
+```
+
+### 6. ROCm 下默认 fp32，务必设 `ACESTEP_ROCM_DTYPE=bfloat16`（实测踩到）
+`initialize_service()` 检测到 ROCm/HIP 设备时默认用 `torch.float32`（日志会打印
+"using dtype=torch.float32 (set ACESTEP_ROCM_DTYPE=bfloat16 or float16 to
+override)"），这是保守的默认值，不是显存不够。本机 RX 7900XTX 实测对比：
+
+| dtype | DiT init 峰值内存 | GPU 显存(max allocated) | 备注 |
+|---|---|---|---|
+| fp32（默认） | ~17GB | 未测（更高） | XL 档位 fp32 加载明显更吃显存，是最初一次真实生成
+被系统当成"内存不足"杀掉的疑似诱因之一 |
+| bfloat16 | ~17.5GB（含 LM） | max 18.5GB，VAE 解码前留 9GB 余量 | 结果正常（`success: True`），生成 8 步扩散仅 ~5 秒 |
+
+`tools/acestep_infer.py` 已经在 import 前 `os.environ.setdefault("ACESTEP_ROCM_DTYPE", "bfloat16")`，无需手动设置；如果要临时对比 fp32 效果，运行前 `unset ACESTEP_ROCM_DTYPE` 或改成 `float16`。
+
+### 7. `flash_attn` 装了但是 CUDA 版，会报错后自动降级（可忽略）
+日志会出现 `flash_attn is installed but failed to import: libcudart.so.12:
+cannot open shared object file`——`-e .` 装依赖时把 CUDA 版 flash-attn 也带了进来，
+在 ROCm 上打不开是预期的，代码会自动降级到原生 PyTorch attention（`sdpa`），
+不影响生成结果，无需处理（也可以 `uv pip uninstall flash-attn` 消除这条日志噪音，
+但不是必须）。
+
+### 8. 各阶段耗时参考（RX 7900XTX 实测，10 秒测试片段）
+首次调用一次性加载：DiT 权重（XL，4 个 safetensors 分片）约 4.5 分钟、LM
+tokenizer+约束解码器+权重约 1 分钟——这部分是子进程启动后**每次调用只付一次**
+的固定成本（`tools/acestep_infer.py` 设计成单次加载、批量循环生成，见文件顶部
+说明），不会随素材条数线性增加。单条生成里，8 步扩散只要 ~5 秒，VAE 解码
+（tiled，本机显存档位下）约 90 秒是单条最大头的部分，60 秒长的 ambience 素材
+解码时间预计等比更长——`global_config.yaml:asset_gen.ace_step.timeout_sec`
+（3600 秒）留的余量对付批量跑几条是够的，如果一次性生成条目很多可以按需调大。
 
 ## GPU 显存互斥（llama-server ⇄ ACE-Step / Stable Audio）
 
