@@ -250,3 +250,163 @@ class TestGuessNameFromContext:
         manifest = {"roles": {}}
         result = roles.guess_name_from_context("任意文本", manifest)
         assert result is None
+
+
+class TestGetEmbeddingStatus:
+    """speaker embedding 状态查询功能测试（计划 001，不依赖 torch/GPU）"""
+
+    def test_never_precomputed(self, tmp_roles_dir):
+        """从未预计算过：exists=False，附带说明原因"""
+        manifest = roles.load_manifest(tmp_roles_dir)
+        status = roles.get_embedding_status("narrator", manifest, tmp_roles_dir)
+        assert status["exists"] is False
+        assert status["valid"] is False
+        assert status["stale_reason"]
+
+    def test_valid_cache_matches_current_reference(self, tmp_roles_dir):
+        """.pt + .meta.json 都在，且 meta 记录的 MD5 与当前 reference.wav 一致 -> valid"""
+        from src.utils import calculate_file_md5
+        import json as json_mod
+
+        role_dir = os.path.join(tmp_roles_dir, "narrator")
+        ref_audio = os.path.join(role_dir, "reference.wav")
+        with open(os.path.join(role_dir, roles.EMBEDDING_FILENAME), "wb") as f:
+            f.write(b"fake pt content")
+        with open(os.path.join(role_dir, roles.EMBEDDING_META_FILENAME), "w", encoding="utf-8") as f:
+            json_mod.dump({
+                "ref_audio_md5": calculate_file_md5(ref_audio),
+                "model_version": "v1",
+                "created_at": "2026-01-01T00:00:00+00:00",
+            }, f)
+
+        manifest = roles.load_manifest(tmp_roles_dir)
+        status = roles.get_embedding_status("narrator", manifest, tmp_roles_dir)
+        assert status["exists"] is True
+        assert status["valid"] is True
+        assert status["created_at"] == "2026-01-01T00:00:00+00:00"
+
+    def test_stale_when_reference_audio_changed(self, tmp_roles_dir):
+        """reference.wav 内容变化后，旧 .meta.json 记录的 MD5 对不上 -> valid=False"""
+        import json as json_mod
+
+        role_dir = os.path.join(tmp_roles_dir, "narrator")
+        with open(os.path.join(role_dir, roles.EMBEDDING_FILENAME), "wb") as f:
+            f.write(b"fake pt content")
+        with open(os.path.join(role_dir, roles.EMBEDDING_META_FILENAME), "w", encoding="utf-8") as f:
+            json_mod.dump({"ref_audio_md5": "stale-md5-does-not-match", "model_version": "v1",
+                           "created_at": "2026-01-01T00:00:00+00:00"}, f)
+
+        manifest = roles.load_manifest(tmp_roles_dir)
+        status = roles.get_embedding_status("narrator", manifest, tmp_roles_dir)
+        assert status["exists"] is True
+        assert status["valid"] is False
+        assert "变化" in status["stale_reason"]
+
+    def test_missing_meta_json_is_stale(self, tmp_roles_dir):
+        """只有 .pt 没有 .meta.json（旧版本产物）-> valid=False"""
+        role_dir = os.path.join(tmp_roles_dir, "narrator")
+        with open(os.path.join(role_dir, roles.EMBEDDING_FILENAME), "wb") as f:
+            f.write(b"fake pt content")
+
+        manifest = roles.load_manifest(tmp_roles_dir)
+        status = roles.get_embedding_status("narrator", manifest, tmp_roles_dir)
+        assert status["exists"] is True
+        assert status["valid"] is False
+
+
+class TestPrecomputeEmbedding:
+    """embedding 预计算触发功能测试（不依赖真实 GPU 环境）"""
+
+    def test_unregistered_role_returns_error(self, tmp_roles_dir):
+        """角色未注册时直接返回错误，不尝试起子进程"""
+        manifest = roles.load_manifest(tmp_roles_dir)
+        result = roles.precompute_embedding("no_such_role", manifest, tmp_roles_dir)
+        assert result["ok"] is False
+        assert result["error"]
+
+    def test_env_not_ready_returns_error(self, tmp_roles_dir, tmp_project_dir):
+        """IndexTTS 推理环境未就绪（venv/权重缺失）时返回明确错误，不抛异常"""
+        manifest = roles.load_manifest(tmp_roles_dir)
+        config = {
+            "tts": {
+                "index_tts": {
+                    "python_bin": os.path.join(tmp_project_dir, "no_such_venv", "bin", "python"),
+                    "repo_dir": os.path.join(tmp_project_dir, "no_such_repo"),
+                    "checkpoints_dir": os.path.join(tmp_project_dir, "no_such_checkpoints"),
+                }
+            }
+        }
+        result = roles.precompute_embedding("narrator", manifest, tmp_roles_dir, config=config)
+        assert result["ok"] is False
+        assert "未就绪" in result["error"]
+
+
+class TestSetRoleReference:
+    """替换角色参考音频功能测试"""
+
+    def test_copies_wav_and_invalidates_cache(self, tmp_roles_dir, tmp_project_dir):
+        """替换后 reference.wav 更新为新内容，且旧的 .pt/.meta.json 被删除"""
+        role_dir = os.path.join(tmp_roles_dir, "narrator")
+        with open(os.path.join(role_dir, roles.EMBEDDING_FILENAME), "wb") as f:
+            f.write(b"stale pt")
+        with open(os.path.join(role_dir, roles.EMBEDDING_META_FILENAME), "w", encoding="utf-8") as f:
+            f.write("{}")
+
+        new_wav = os.path.join(tmp_project_dir, "new_reference.wav")
+        with open(new_wav, "wb") as f:
+            f.write(b"brand new reference audio bytes")
+
+        manifest = roles.load_manifest(tmp_roles_dir)
+        roles.set_role_reference("narrator", new_wav, manifest, tmp_roles_dir)
+
+        with open(os.path.join(role_dir, "reference.wav"), "rb") as f:
+            assert f.read() == b"brand new reference audio bytes"
+        assert not os.path.exists(os.path.join(role_dir, roles.EMBEDDING_FILENAME))
+        assert not os.path.exists(os.path.join(role_dir, roles.EMBEDDING_META_FILENAME))
+
+    def test_unregistered_role_raises(self, tmp_roles_dir, tmp_project_dir):
+        """角色未注册时抛异常"""
+        new_wav = os.path.join(tmp_project_dir, "new_reference.wav")
+        with open(new_wav, "wb") as f:
+            f.write(b"x")
+        manifest = roles.load_manifest(tmp_roles_dir)
+        with pytest.raises(ValueError):
+            roles.set_role_reference("no_such_role", new_wav, manifest, tmp_roles_dir)
+
+    def test_missing_wav_raises(self, tmp_roles_dir, tmp_project_dir):
+        """源 wav 文件不存在时抛异常"""
+        manifest = roles.load_manifest(tmp_roles_dir)
+        with pytest.raises(FileNotFoundError):
+            roles.set_role_reference(
+                "narrator", os.path.join(tmp_project_dir, "does_not_exist.wav"), manifest, tmp_roles_dir
+            )
+
+
+class TestDeleteRole:
+    """删除角色功能测试"""
+
+    def test_deletes_role_dir_and_manifest_entry(self, tmp_roles_dir):
+        """删除后角色目录和清单条目都不再存在"""
+        manifest = roles.load_manifest(tmp_roles_dir)
+        assert "lin_dong" in manifest["roles"]
+
+        roles.delete_role("lin_dong", manifest, tmp_roles_dir)
+
+        assert "lin_dong" not in manifest["roles"]
+        assert not os.path.isdir(os.path.join(tmp_roles_dir, "lin_dong"))
+
+        reloaded = roles.load_manifest(tmp_roles_dir)
+        assert "lin_dong" not in reloaded["roles"]
+
+    def test_narrator_cannot_be_deleted(self, tmp_roles_dir):
+        """narrator 是兜底音色来源，禁止删除"""
+        manifest = roles.load_manifest(tmp_roles_dir)
+        with pytest.raises(ValueError):
+            roles.delete_role("narrator", manifest, tmp_roles_dir)
+        assert "narrator" in manifest["roles"]
+        assert os.path.isdir(os.path.join(tmp_roles_dir, "narrator"))
+
+    def test_deleting_nonexistent_role_is_noop(self, tmp_roles_dir):
+        """角色本就不存在时静默返回，不抛异常"""
+        manifest = roles.load_manifest(tmp_roles_dir)
+        roles.delete_role("no_such_role", manifest, tmp_roles_dir)  # 不应抛异常

@@ -1,13 +1,13 @@
 {
   "name": "cough_fit",
   "kind": "sfx",
-  "prompt": "a short muffled coughing fit sound effect, weak and labored, non-vocal foley style",
-  "negative_prompt": "music, clear speech, singing",
+  "prompt": "a muffled coughing fit sound effect with two or three coughs filling the entire clip, weak and labored, non-vocal foley style",
+  "negative_prompt": "music, clear speech, singing, silence",
   "seed": 2006,
-  "duration_sec": 3.0,
+  "duration_sec": 2.0,
   "engine": "tangoflux",
-  "spec_hash": "519920ec1420a96864ac6cb2a1c2d2b6",
+  "spec_hash": "1844a311ac78ef6062ff6a5573a3e8c7",
   "used_fallback": false,
-  "generated_at": "2026-09-05 18:24:31",
-  "duration_ms": 935
+  "generated_at": "2026-09-05 21:16:57",
+  "duration_ms": 2000
 }

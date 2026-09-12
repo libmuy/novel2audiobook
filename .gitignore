@@ -22,5 +22,10 @@ tools/acestep_env/
 # ACE-Step 运行时自校准缓存（扩散步数耗时估算），机器相关，不随代码分发
 .cache/acestep/
 
+# 常驻 TTS 服务的 pidfile/socket，以及 GPU 换手耗时历史：都是本机运行时状态，
+# 不随代码分发
+.cache/tts_daemon/
+.cache/gpu_arbiter/
+
 # TangoFlux 独立推理环境：见 docs/audiogen_setup.md
 tools/tangoflux_env/

@@ -1,13 +1,13 @@
 {
   "name": "door_creak",
   "kind": "sfx",
-  "prompt": "old wooden door slowly creaking open, single long creak, dry recording",
-  "negative_prompt": "music, vocals",
+  "prompt": "old wooden door slowly creaking open, a single continuous creak that lasts the entire clip, dry recording",
+  "negative_prompt": "music, vocals, silence",
   "seed": 2002,
-  "duration_sec": 3.0,
+  "duration_sec": 2.0,
   "engine": "tangoflux",
-  "spec_hash": "345de65f0041b03b5e1c6854aeeadd82",
+  "spec_hash": "143d9e971bb40a927c295ff544210800",
   "used_fallback": false,
-  "generated_at": "2026-09-05 18:24:30",
-  "duration_ms": 1886
+  "generated_at": "2026-09-05 21:16:57",
+  "duration_ms": 2000
 }

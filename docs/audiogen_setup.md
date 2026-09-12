@@ -9,8 +9,18 @@
 
 | 素材类型 | 模型 | 状态 |
 |---|---|---|
-| ambience（BGM/环境音） | [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5)，GPU | 本文档已覆盖 |
+| ambience（BGM/环境音） | **AudioLDM-S-Full-v2**，CPU，见 `docs/audioldm_setup.md` | 当前默认 |
 | sfx（音效） | [TangoFlux](https://github.com/declare-lab/TangoFlux)，CPU | 本文档已覆盖 |
+
+> **ambience 模型变更说明**：本文档下方 ACE-Step 1.5 相关内容（环境搭建、
+> 已知坑）**保留作参考，但已不是默认引擎**。诊断发现 ACE-Step 本质是音乐生成
+> 模型，生成写实环境录音（雨声/矿洞/风声）会带出音乐化的调性音色（频谱分析：
+> 多条素材有异常突出的单一音高主峰，占能量 15%-34%），已换成训练数据为真实
+> 音频事件的 AudioLDM，接入也更简单（标准 diffusers pipeline，CPU 推理，
+> 不需要下面这些 ROCm 专属坑）。`AceStepBackend`、`tools/acestep_*` 代码/环境
+> 未删除，`global_config.yaml` 的 `ace_step:` 配置段也原样保留，如需切回可以
+> 直接改 `src/asset_gen.build_asset_gen_backend()` 里 ambience 对应的 backend
+> 类。详见 `docs/audioldm_setup.md`。
 
 原计划音效用 Stable Audio 3 Small SFX（官方明确该档位专为 CPU 设计，不需要
 Flash-Attention 2——那只是 Medium/Large 档位的要求，最初调研时的 ROCm+FA2

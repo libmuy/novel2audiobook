@@ -138,6 +138,55 @@ def run_test_module(module_name: str):
         shutil.rmtree(tmp_root, ignore_errors=True)
 
 
+def _prompt_yes_no(question: str) -> bool:
+    try:
+        answer = input(f"{question} [y/N] ").strip().lower()
+    except EOFError:
+        return False
+    return answer in ("y", "yes")
+
+
+def _release_tts_daemon_if_running(auto_yes: bool) -> bool:
+    """
+    B5 换手策略之一：`parse` 依赖 llama-server，如果常驻 TTS 服务（计划 003）
+    正占着显存，交互式终端下先问一句是否释放，非交互式（管道/脚本/CI）或
+    传了 --yes 则直接释放，不阻塞。返回 False 表示用户拒绝，调用方应中止。
+    """
+    from tools import gpu_arbiter
+    if not gpu_arbiter.is_tts_daemon_running():
+        return True
+    if sys.stdin.isatty() and not auto_yes:
+        if not _prompt_yes_no("常驻 TTS 服务正占用显存，需要先释放才能运行 parse，是否释放？"):
+            return False
+    from src.tts_daemon import IndexTTSDaemon
+    result = IndexTTSDaemon().shutdown()
+    if not result.get("ok"):
+        print(f"释放常驻 TTS 服务失败: {result.get('error')}")
+        return False
+    return True
+
+
+def _confirm_batch_llm_swap(auto_yes: bool) -> bool:
+    """
+    B5 换手策略之二：`tts` 命令的批量链路本身就会通过
+    tools.gpu_arbiter.LlmSuspendedForGpu 自动停/起 llama-server（这条路径不变，
+    见 src/tts_engine.IndexTTSBackend）；这里只是在交互式终端下、真的会发生
+    换手时先告知一声，避免用户在不知情的情况下让 llama-server 被停用一整个
+    批次的时长（单章可能耗时 65-70 分钟，见 global_config.yaml 的 timeout_sec
+    注释）。非交互式/--yes 直接放行，不阻塞、不改变已有的自动换手行为。
+    """
+    if auto_yes or not sys.stdin.isatty():
+        return True
+    from tools import gpu_arbiter
+    if gpu_arbiter.get_current_owner() != gpu_arbiter.OWNER_LLM:
+        return True  # llama-server 本来就没在跑，不会产生换手代价
+    stop_eta = gpu_arbiter.get_expected_swap_seconds("llm_stop")
+    start_eta = gpu_arbiter.get_expected_swap_seconds("llm_start")
+    eta_str = f"（历史约停 {stop_eta:.0f}s + 恢复 {start_eta:.0f}s）" if stop_eta and start_eta else ""
+    print(f"本次 TTS 合成会先停止 llama-server 腾出显存，完成后自动恢复{eta_str}。")
+    return _prompt_yes_no("确认继续？")
+
+
 def main():
     parser = argparse.ArgumentParser(description="千万字全本地离线有声书生成流水线")
     subparsers = parser.add_subparsers(dest="command", help="子命令列表")
@@ -148,14 +197,20 @@ def main():
     # 2. parse
     parser_parse = subparsers.add_parser("parse", help="解析 raw.txt 生成 script_draft.json")
     parser_parse.add_argument("--chapter", required=True, help="章节 ID (如 0001 或 ch_0001)")
+    parser_parse.add_argument("--yes", action="store_true",
+                               help="跳过 GPU 换手确认（释放常驻 TTS 服务时不再询问）")
 
     # 3. tts
     parser_tts = subparsers.add_parser("tts", help="基于 script_final.json 执行哈希增量 TTS 生成")
     parser_tts.add_argument("--chapter", required=True, help="章节 ID (如 0001 或 ch_0001)")
+    parser_tts.add_argument("--yes", action="store_true",
+                            help="跳过 GPU 换手确认（自动停/起 llama-server 时不再询问）")
 
     # 4. mix
-    parser_mix = subparsers.add_parser("mix", help="根据 timeline.json 执行多轨闪避混音导出成品 MP3")
+    parser_mix = subparsers.add_parser("mix", help="根据 timeline.json 混音导出成品 MP3（当前默认纯人声）")
     parser_mix.add_argument("--chapter", required=True, help="章节 ID (如 0001 或 ch_0001)")
+    parser_mix.add_argument("--with-assets", action="store_true",
+                             help="包含环境音/音效的完整闪避混音（覆盖 global_config.yaml 的 mixing.voice_only）")
 
     # 5. test
     parser_test = subparsers.add_parser("test", help="内置自检脚本")
@@ -171,6 +226,23 @@ def main():
     parser_assets.add_argument("--force", action="store_true", help="忽略增量缓存，全部重新生成")
     parser_assets.add_argument("--backend", choices=["mock"], help="强制使用指定后端（目前仅支持 mock，用于离线自检/占位铺库）")
 
+    # 7. serve
+    parser_serve = subparsers.add_parser("serve", help="启动本地 HTTP 服务，浏览素材库与章节成片（只读）")
+    parser_serve.add_argument("--host", default="127.0.0.1", help="监听地址，默认仅本机可访问 (127.0.0.1)")
+    parser_serve.add_argument("--port", type=int, default=8090, help="监听端口，默认 8090（避开 llm.serve_port=8080）")
+
+    # 8. tts-serve（计划 003：常驻 TTS 服务，脱离 webui 单独调试用）
+    parser_tts_serve = subparsers.add_parser(
+        "tts-serve", help="管理常驻 IndexTTS 推理服务（避免每次试听都重新加载模型）"
+    )
+    parser_tts_serve.add_argument("action", choices=["start", "stop", "status"])
+    parser_tts_serve.add_argument("--yes", action="store_true", help="启动时跳过 GPU 换手确认")
+
+    # 9. webui（计划 002：Gradio 全流程管理界面）
+    parser_webui = subparsers.add_parser("webui", help="启动 Gradio 全流程管理界面")
+    parser_webui.add_argument("--host", default="127.0.0.1", help="监听地址，默认仅本机可访问 (127.0.0.1)")
+    parser_webui.add_argument("--port", type=int, default=7860, help="监听端口，默认 7860")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -181,6 +253,9 @@ def main():
         print_status_table()
 
     elif args.command == "parse":
+        if not _release_tts_daemon_if_running(args.yes):
+            print("已取消（常驻 TTS 服务仍在运行，需要先释放显存才能执行 parse）")
+            sys.exit(1)
         chapter_dir = get_chapter_dir(args.chapter)
         try:
             draft_path = process_chapter_parse(chapter_dir)
@@ -190,6 +265,9 @@ def main():
             sys.exit(1)
 
     elif args.command == "tts":
+        if not _confirm_batch_llm_swap(args.yes):
+            print("已取消")
+            sys.exit(1)
         chapter_dir = get_chapter_dir(args.chapter)
         try:
             timeline_path = process_chapter_tts(chapter_dir)
@@ -201,8 +279,9 @@ def main():
     elif args.command == "mix":
         chapter_dir = get_chapter_dir(args.chapter)
         try:
-            out_path = mix_chapter(chapter_dir)
-            print(f"成功完成章节 [{args.chapter}] 闪避混音，成品位置: {out_path}")
+            voice_only = False if args.with_assets else None  # None = 按 global_config.yaml 的 mixing.voice_only
+            out_path = mix_chapter(chapter_dir, voice_only=voice_only)
+            print(f"成功完成章节 [{args.chapter}] 混音，成品位置: {out_path}")
         except Exception as e:
             print(f"错误: {e}")
             sys.exit(1)
@@ -238,6 +317,57 @@ def main():
             except Exception as e:
                 print(f"错误: {e}")
                 sys.exit(1)
+
+    elif args.command == "serve":
+        from src.web_server import run_server
+        print(f"--> 启动资源浏览服务: http://{args.host}:{args.port}/ (Ctrl+C 停止)")
+        run_server(host=args.host, port=args.port)
+
+    elif args.command == "tts-serve":
+        from tools import gpu_arbiter
+        from src.tts_daemon import IndexTTSDaemon
+        daemon = IndexTTSDaemon()
+
+        if args.action == "status":
+            if daemon.is_running():
+                state = gpu_arbiter.read_tts_daemon_state() or {}
+                print(f"常驻 TTS 服务：运行中 (pid={state.get('pid')}, started_at={state.get('started_at')})")
+            else:
+                print("常驻 TTS 服务：未运行")
+
+        elif args.action == "start":
+            if daemon.is_running():
+                print("常驻 TTS 服务已经在运行，无需重复启动")
+            else:
+                plan = gpu_arbiter.plan_swap(gpu_arbiter.OWNER_TTS)
+                if not plan["noop"] and sys.stdin.isatty() and not args.yes:
+                    eta = f"，历史约 {plan['estimated_seconds']:.0f} 秒" if plan["estimated_seconds"] else ""
+                    print(f"将执行：{' -> '.join(plan['steps'])}{eta}")
+                    if not _prompt_yes_no("确认继续？"):
+                        print("已取消")
+                        sys.exit(1)
+                result = daemon.ensure_started()
+                if result["ok"]:
+                    print("常驻 TTS 服务已启动")
+                else:
+                    print(f"启动失败: {result['error']}")
+                    sys.exit(1)
+
+        else:  # stop
+            if not daemon.is_running():
+                print("常驻 TTS 服务本来就没有运行")
+            else:
+                result = daemon.shutdown()
+                if result["ok"]:
+                    print("常驻 TTS 服务已停止")
+                else:
+                    print(f"停止失败: {result['error']}")
+                    sys.exit(1)
+
+    elif args.command == "webui":
+        from src.webui_app import run_webui
+        print(f"--> 启动管理界面: http://{args.host}:{args.port}/ (Ctrl+C 停止)")
+        run_webui(host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

@@ -6,9 +6,12 @@ import wave
 import struct
 import math
 import json
+import logging
 import numpy as np
 from pydub import AudioSegment
 from src.utils import load_global_config, update_chapter_status, resolve_path
+
+logger = logging.getLogger(__name__)
 
 MIX_SAMPLE_RATE = 24000
 
@@ -143,7 +146,12 @@ def _build_scene_bgm_track(items: list, total_duration_ms: int, chapter_dir: str
             continue
         bgm_file = resolve_path(os.path.join("assets", "ambience", f"{bgm_name}.wav"))
         if not os.path.exists(bgm_file):
-            generate_mock_audio_file(bgm_file, duration_ms=5000)
+            # mix 是读路径，缺素材不该在这里静默补一份占位音写进共享的 assets/
+            # 目录（那是 src/asset_gen.py 的职责）；跳过这段场景音即可，
+            # 不影响人声。
+            logger.warning("场景 [%d, %d) 引用的环境音 %r 不存在（%s），跳过该段环境音",
+                            start_ms, end_ms, bgm_name, bgm_file)
+            continue
         bgm_seg = _load_and_normalize(bgm_file)
 
         scene_duration = int(end_ms - start_ms)
@@ -178,18 +186,24 @@ def _validate_timeline_assets(items: list, chapter_dir: str):
         )
 
 
-def mix_chapter(chapter_dir: str, timeline_data: dict = None, config: dict = None) -> str:
+def mix_chapter(chapter_dir: str, timeline_data: dict = None, config: dict = None, voice_only: bool = None) -> str:
     """
     引入 pydub，读取 timeline.json。
-    将人声轨拼接，遍历人声计算 RMS 响度，实现自动闪避（Audio Ducking）逻辑——
-    当人声音量大于阈值时，环境音轨(BGM)降低至指定音量比例 (如 30%)，
+    将人声轨拼接；voice_only=False 时还会遍历人声计算 RMS 响度，实现自动闪避
+    （Audio Ducking）——人声音量大于阈值时环境音轨(BGM)降低至指定音量比例，
     瞬时音效(SFX)在特定时间戳 Overlay。
     导出为 output/chapter_XXXX.mp3。
+
+    voice_only 未显式传入时，取 global_config.yaml 的 mixing.voice_only
+    （当前阶段默认 True——效果音/环境音流水线尚未做，先只出人声成片，
+    避免任何缺素材时的占位音悄悄混进成片）。
     """
     if config is None:
         config = load_global_config()
 
     mixing_cfg = config.get("mixing", {})
+    if voice_only is None:
+        voice_only = mixing_cfg.get("voice_only", True)
     duck_thresh = mixing_cfg.get("ducking_threshold", -20.0)
     duck_ratio = mixing_cfg.get("ducking_volume_ratio", 0.3)
     duck_fade_ms = mixing_cfg.get("ducking_fade_ms", 300)
@@ -212,7 +226,7 @@ def mix_chapter(chapter_dir: str, timeline_data: dict = None, config: dict = Non
     vocal_track = AudioSegment.silent(duration=total_duration_ms, frame_rate=MIX_SAMPLE_RATE)
     sfx_track = AudioSegment.silent(duration=total_duration_ms, frame_rate=MIX_SAMPLE_RATE)
 
-    # 记录哪些时间段（以毫秒为单位）有人声发言且 RMS 超过阈值
+    # 记录哪些时间段（以毫秒为单位）有人声发言且 RMS 超过阈值（仅 voice_only=False 时才用得上）
     duck_intervals = []
 
     for item in items:
@@ -222,6 +236,10 @@ def mix_chapter(chapter_dir: str, timeline_data: dict = None, config: dict = Non
 
         vocal_seg = _load_and_normalize(audio_full_path)
         vocal_track = vocal_track.overlay(vocal_seg, position=start_ms)
+
+        if voice_only:
+            continue  # 纯人声模式：不叠加音效、也不需要为闪避收集区间
+
         if vocal_seg.dBFS > duck_thresh:
             duck_intervals.append((start_ms, start_ms + len(vocal_seg)))
 
@@ -229,19 +247,25 @@ def mix_chapter(chapter_dir: str, timeline_data: dict = None, config: dict = Non
         if sfx_name:
             sfx_file = resolve_path(os.path.join("assets", "sfx", f"{sfx_name}.wav"))
             if not os.path.exists(sfx_file):
-                generate_mock_audio_file(sfx_file, duration_ms=1000)
-            sfx_seg = _load_and_normalize(sfx_file)
-            if sfx_seg.dBFS > sfx_limit_db:
-                sfx_seg = sfx_seg.apply_gain(sfx_limit_db - sfx_seg.dBFS)  # 限幅防爆音
-            sfx_track = sfx_track.overlay(sfx_seg, position=start_ms)
+                # 同上：不静默补占位音写进共享 assets/，跳过这条音效即可
+                logger.warning("句段 %s 引用的音效 %r 不存在（%s），跳过该条音效叠加",
+                                item.get("seg_id"), sfx_name, sfx_file)
+            else:
+                sfx_seg = _load_and_normalize(sfx_file)
+                if sfx_seg.dBFS > sfx_limit_db:
+                    sfx_seg = sfx_seg.apply_gain(sfx_limit_db - sfx_seg.dBFS)  # 限幅防爆音
+                sfx_track = sfx_track.overlay(sfx_seg, position=start_ms)
 
-    # 2. 场景级连续环境音轨（替代逐句硬贴，消除断续感），并施加基础增益
-    bgm_track = _build_scene_bgm_track(items, total_duration_ms, chapter_dir)
-    if len(bgm_track) > 0 and bgm_track.dBFS != float("-inf"):
-        bgm_track = bgm_track.apply_gain(ambience_gain_db - bgm_track.dBFS)
+    if voice_only:
+        bgm_track = AudioSegment.silent(duration=total_duration_ms, frame_rate=MIX_SAMPLE_RATE)
+    else:
+        # 2. 场景级连续环境音轨（替代逐句硬贴，消除断续感），并施加基础增益
+        bgm_track = _build_scene_bgm_track(items, total_duration_ms, chapter_dir)
+        if len(bgm_track) > 0 and bgm_track.dBFS != float("-inf"):
+            bgm_track = bgm_track.apply_gain(ambience_gain_db - bgm_track.dBFS)
 
-    # 3. 执行 Audio Ducking (自动闪避逻辑，边界做增益渐变)
-    bgm_track = _apply_ducking(bgm_track, duck_intervals, duck_db_change, duck_fade_ms, total_duration_ms)
+        # 3. 执行 Audio Ducking (自动闪避逻辑，边界做增益渐变)
+        bgm_track = _apply_ducking(bgm_track, duck_intervals, duck_db_change, duck_fade_ms, total_duration_ms)
 
     # 4. 三轨终极混音 (人声 + 闪避后BGM + SFX)
     final_mix = vocal_track.overlay(bgm_track).overlay(sfx_track)

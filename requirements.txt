@@ -5,3 +5,5 @@ pedalboard>=0.8.0
 numpy>=1.20.0
 requests>=2.28.0
 pypinyin>=0.50.0
+flask>=3.0.0
+gradio>=5.50.0,<6.0.0  # 管理界面（计划 002）；钉在 5.x，避开 6.x 大版本的 breaking changes

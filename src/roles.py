@@ -14,8 +14,9 @@ import os
 import re
 import json
 import shutil
+import subprocess
 
-from src.utils import resolve_path
+from src.utils import resolve_path, load_global_config, calculate_file_md5
 
 try:
     from pypinyin import lazy_pinyin
@@ -23,6 +24,13 @@ except ImportError:  # 极端情况下离线环境缺少该库，退化为不做
     lazy_pinyin = None
 
 MANIFEST_REL_PATH = os.path.join("roles", "roles_manifest.json")
+
+# 与 tools/indextts_infer.py 的 EMBEDDING_CACHE_FILENAME / EMBEDDING_META_FILENAME
+# 保持一致的文件名约定。本模块跑在项目主 venv（不装 torch），不能 torch.load(.pt)，
+# 只通过同名 .meta.json 做只读状态查询；两边各自维护一份常量，避免主 venv
+# 反向 import tools.indextts_infer（它顶层 `import torch`，主 venv 没装会直接炸）。
+EMBEDDING_FILENAME = "speaker_embeddings.pt"
+EMBEDDING_META_FILENAME = "speaker_embeddings.meta.json"
 
 # 常见别名 -> 角色 ID。可持续补充。
 ROLE_ALIASES = {
@@ -202,3 +210,143 @@ def guess_name_from_context(text: str, manifest: dict) -> str:
         if name and name in text:
             return name
     return None
+
+
+# --------------------------------------------------------------------------
+# Speaker embedding 预计算管理（计划 001）+ 角色增删（计划 002 Tab 2 消费）
+# --------------------------------------------------------------------------
+
+def get_embedding_status(role_id: str, manifest: dict, roles_dir: str = None) -> dict:
+    """
+    只读查询某角色 speaker_embeddings.pt 的状态，供 webui 展示。不依赖 torch
+    （本模块跑在主 venv），只读同目录下的 .meta.json 与当前 reference.wav 的
+    MD5 做比对。
+
+    返回 {"exists": bool, "valid": bool, "created_at": str|None, "stale_reason": str|None}：
+    - exists=False：从未预计算过
+    - exists=True, valid=False：.pt 存在但已过期/元数据缺失损坏，stale_reason 说明原因
+    - valid=True：可以放心复用，无需重新预计算
+    """
+    base = roles_dir if roles_dir is not None else resolve_path("roles")
+    role_dir = os.path.join(base, role_id)
+    ref_audio = os.path.join(role_dir, "reference.wav")
+    pt_path = os.path.join(role_dir, EMBEDDING_FILENAME)
+    meta_path = os.path.join(role_dir, EMBEDDING_META_FILENAME)
+
+    status = {"exists": os.path.exists(pt_path), "valid": False, "created_at": None, "stale_reason": None}
+    if not status["exists"]:
+        status["stale_reason"] = "尚未预计算"
+        return status
+
+    if not os.path.exists(meta_path):
+        status["stale_reason"] = "缺少元数据文件（可能来自旧版本流程），建议重新预计算"
+        return status
+    try:
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        status["stale_reason"] = "元数据文件损坏，建议重新预计算"
+        return status
+
+    status["created_at"] = meta.get("created_at")
+    if not os.path.exists(ref_audio):
+        status["stale_reason"] = "参考音频不存在"
+        return status
+    if meta.get("ref_audio_md5") != calculate_file_md5(ref_audio):
+        status["stale_reason"] = "参考音频已变化，需要重新预计算"
+        return status
+
+    status["valid"] = True
+    return status
+
+
+def precompute_embedding(role_id: str, manifest: dict, roles_dir: str = None,
+                         config: dict = None, force: bool = True) -> dict:
+    """
+    为单个角色触发 speaker embedding 预计算：以子进程方式调用
+    tools/precompute_embeddings.py（复用与 IndexTTSBackend 相同的独立 venv/
+    权重路径配置，见 global_config.yaml 的 tts.index_tts 段）。
+
+    这是一次真实的 GPU 推理操作，会与运行中的 llama-server 竞争显存——
+    调用方（webui/CLI）必须在用户显式确认换手之后才调用本函数；本函数
+    本身不做任何自动的 GPU 仲裁/暂停 llama-server 的动作。
+
+    返回 {"ok": bool, "error": str|None}。
+    """
+    if role_id not in manifest.get("roles", {}):
+        return {"ok": False, "error": f"角色 {role_id!r} 未注册"}
+
+    if config is None:
+        config = load_global_config()
+    tts_cfg = config.get("tts", {}).get("index_tts", {})
+    python_bin = resolve_path(tts_cfg.get("python_bin", "tools/indextts_env/bin/python"))
+    script = resolve_path("tools/precompute_embeddings.py")
+    repo_dir = resolve_path(tts_cfg.get("repo_dir", "tools/indextts_repo"))
+    checkpoints_dir = tts_cfg.get("checkpoints_dir", "/srv/unsafe/models/tts/IndexTTS-2.5")
+    base = roles_dir if roles_dir is not None else resolve_path("roles")
+
+    if not (os.path.exists(python_bin) and os.path.exists(script)
+            and os.path.isdir(repo_dir) and os.path.isdir(checkpoints_dir)):
+        return {"ok": False, "error": "IndexTTS 推理环境未就绪（venv/权重缺失），无法预计算 embedding"}
+
+    cmd = [
+        python_bin, script,
+        "--repo-dir", repo_dir, "--checkpoints-dir", checkpoints_dir,
+        "--roles-dir", base, "--role", role_id,
+    ]
+    if force:
+        cmd.append("--force")
+
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=tts_cfg.get("timeout_sec", 1800))
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "预计算超时"}
+
+    if proc.returncode != 0:
+        return {"ok": False, "error": (proc.stderr or proc.stdout)[-2000:]}
+    return {"ok": True, "error": None}
+
+
+def set_role_reference(role_id: str, wav_path: str, manifest: dict, roles_dir: str = None):
+    """
+    用新的 wav 文件替换角色的 reference.wav，并使旧的 speaker_embeddings.pt /
+    .meta.json 立即失效（直接删除而非等下次 MD5 比对，避免任何绕过
+    get_embedding_status 校验的调用路径误用陈旧音色）。role_id 必须已注册。
+    """
+    if role_id not in manifest.get("roles", {}):
+        raise ValueError(f"角色 {role_id!r} 未注册，无法设置参考音频")
+    if not os.path.exists(wav_path):
+        raise FileNotFoundError(f"参考音频不存在: {wav_path}")
+
+    base = roles_dir if roles_dir is not None else resolve_path("roles")
+    role_dir = os.path.join(base, role_id)
+    os.makedirs(role_dir, exist_ok=True)
+    shutil.copyfile(wav_path, os.path.join(role_dir, "reference.wav"))
+
+    for fname in (EMBEDDING_FILENAME, EMBEDDING_META_FILENAME):
+        stale_path = os.path.join(role_dir, fname)
+        if os.path.exists(stale_path):
+            os.remove(stale_path)
+
+
+def delete_role(role_id: str, manifest: dict, roles_dir: str = None):
+    """
+    删除一个角色：从清单中移除并删除其整个目录（config.json / reference.wav /
+    speaker_embeddings.pt 等）。narrator 是所有角色 TTS 兜底音色的来源
+    （见 get_role_runtime_config 与 register_role 的占位逻辑），禁止删除。
+    角色本就不存在时静默返回（幂等）。
+    """
+    if role_id == "narrator":
+        raise ValueError("不允许删除 narrator（其他角色注册/合成兜底依赖它）")
+
+    roles = manifest.get("roles", {})
+    if role_id not in roles:
+        return
+
+    base = roles_dir if roles_dir is not None else resolve_path("roles")
+    role_dir = os.path.join(base, role_id)
+    if os.path.isdir(role_dir):
+        shutil.rmtree(role_dir)
+
+    del roles[role_id]
+    save_manifest(manifest, roles_dir)

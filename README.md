@@ -16,6 +16,7 @@ raw.txt → script_draft.json → script_final.json → 增量 TTS → timeline.
 | 混音 | `python cli.py mix --chapter 0001` | 场景级环境音 + 自动闪避（Ducking）+ 音效叠加，导出 `chapters/ch_0001/output/chapter_0001.mp3` |
 | 状态 | `python cli.py status` | 查看各章节各阶段产物是否齐全，及是否存在"上游更新但下游未重跑"的陈旧状态 |
 | 自检 | `python cli.py test --module {llm,tts,audio,all,dry-run}` | 隔离临时工作区跑通全链路（Mock 引擎，不依赖网络/GPU），用于快速回归验证 |
+| 浏览 | `python cli.py serve --port 8090` | 启动只读 HTTP 服务，浏览器打开 `http://127.0.0.1:8090/` 试听素材库与章节成片 |
 
 ## 环境
 

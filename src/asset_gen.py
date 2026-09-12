@@ -317,6 +317,17 @@ class TangoFluxBackend(SubprocessAudioGenBackend):
     config_key = "tangoflux"
 
 
+class AudioLDMBackend(SubprocessAudioGenBackend):
+    """AudioLDM-S-Full-v2：环境音生成（CPU），见 docs/audioldm_setup.md。
+
+    替换 ACE-Step 1.5——后者是音乐生成模型，用来生成写实环境录音（雨声/风声/
+    矿洞回响）会带出音乐化的调性音色（诊断记录：频谱分析显示异常突出的单一
+    音高主峰）。AudioLDM 训练数据是真实音频事件，且原生支持 negative_prompt。
+    """
+    name = "audioldm"
+    config_key = "audioldm"
+
+
 def build_asset_gen_backend(kind: str, config: dict = None):
     """按配置为指定 kind（ambience/sfx）选择生成后端；专用推理环境未就绪时自动回退 Mock，保证管线不中断"""
     if config is None:
@@ -324,7 +335,7 @@ def build_asset_gen_backend(kind: str, config: dict = None):
     gen_cfg = config.get("asset_gen", {})
     engine_name = gen_cfg.get("ambience_engine" if kind == "ambience" else "sfx_engine", "")
 
-    backend_cls = AceStepBackend if kind == "ambience" else TangoFluxBackend
+    backend_cls = AudioLDMBackend if kind == "ambience" else TangoFluxBackend
     backend = backend_cls(config)
     if backend.is_available():
         return backend

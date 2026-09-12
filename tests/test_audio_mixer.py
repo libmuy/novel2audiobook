@@ -206,6 +206,88 @@ class TestMixChapter:
         assert status_data.get("status") == "completed"
 
 
+class TestMixChapterVoiceOnly:
+    """纯人声混音模式功能测试（阶段 A3：效果音先延后，避免占位音悄悄混入成片）"""
+
+    def _make_timeline_with_effects(self, tmp_chapter_dir, sfx_name="no_such_sfx_xyz", bgm_name="no_such_bgm_xyz"):
+        """构造一份引用了不存在的 sfx/bgm 名称的 timeline，用来验证两条路径都不会
+        再往共享 assets/ 目录写占位文件（旧行为会静默调用 generate_mock_audio_file）。"""
+        timeline = {
+            "chapter_id": "ch_0001",
+            "total_duration_ms": 3000.0,
+            "tts_engine": "mock",
+            "used_fallback": False,
+            "items": [
+                {
+                    "seg_id": 1, "speaker": "narrator", "text": "测试",
+                    "emotion": "neutral", "audio_path": "audio_cache/hash1.wav",
+                    "start_time_ms": 0.0, "duration_ms": 1000.0,
+                    "sfx": sfx_name, "bgm": bgm_name, "cached": False,
+                },
+            ],
+        }
+        for item in timeline["items"]:
+            audio_path = os.path.join(tmp_chapter_dir, item["audio_path"])
+            create_sample_wav_file(audio_path, duration_ms=1000)
+        return timeline
+
+    def test_default_config_is_voice_only(self, tmp_chapter_dir, tmp_roles_dir):
+        """未显式传 voice_only、且 config 里没有 mixing.voice_only 键时，默认按纯人声处理
+        （效果音阶段尚未开始，默认不能悄悄把占位音混进成片）"""
+        timeline = self._make_timeline_with_effects(tmp_chapter_dir)
+        sfx_path = utils.resolve_path(os.path.join("assets", "sfx", "no_such_sfx_xyz.wav"))
+        bgm_path = utils.resolve_path(os.path.join("assets", "ambience", "no_such_bgm_xyz.wav"))
+
+        output_path = audio_mixer.mix_chapter(
+            tmp_chapter_dir, timeline_data=timeline, config={"mixing": {}}
+        )
+
+        assert os.path.exists(output_path)
+        assert not os.path.exists(sfx_path), "voice_only 模式不该为缺失的 sfx 在共享 assets/ 目录生成占位文件"
+        assert not os.path.exists(bgm_path), "voice_only 模式不该为缺失的 bgm 在共享 assets/ 目录生成占位文件"
+
+    def test_explicit_voice_only_true_ignores_missing_effects(self, tmp_chapter_dir, tmp_roles_dir):
+        """显式 voice_only=True：即使 timeline 引用了不存在的 sfx/bgm，也不报错、不生成占位文件"""
+        timeline = self._make_timeline_with_effects(tmp_chapter_dir)
+        output_path = audio_mixer.mix_chapter(
+            tmp_chapter_dir, timeline_data=timeline, config={"mixing": {"voice_only": True}}, voice_only=True
+        )
+        assert os.path.exists(output_path)
+
+    def test_voice_only_false_missing_effects_skips_without_writing_placeholder(
+        self, tmp_chapter_dir, tmp_roles_dir
+    ):
+        """
+        voice_only=False（--with-assets）时，缺失的 sfx/bgm 应该被跳过并记录警告，
+        而不是像旧行为那样静默调用 generate_mock_audio_file 往共享 assets/ 目录写文件。
+        """
+        timeline = self._make_timeline_with_effects(tmp_chapter_dir)
+        sfx_path = utils.resolve_path(os.path.join("assets", "sfx", "no_such_sfx_xyz.wav"))
+        bgm_path = utils.resolve_path(os.path.join("assets", "ambience", "no_such_bgm_xyz.wav"))
+        assert not os.path.exists(sfx_path) and not os.path.exists(bgm_path)  # 前置条件
+
+        output_path = audio_mixer.mix_chapter(
+            tmp_chapter_dir, timeline_data=timeline, config={"mixing": {}}, voice_only=False
+        )
+
+        assert os.path.exists(output_path)
+        assert not os.path.exists(sfx_path), "mix 是读路径，缺素材不该反过来写共享 assets/ 目录"
+        assert not os.path.exists(bgm_path), "mix 是读路径，缺素材不该反过来写共享 assets/ 目录"
+
+    def test_voice_only_true_shorter_than_full_mix_path_no_crash_on_none_effects(
+        self, tmp_chapter_dir, tmp_roles_dir, sample_timeline_json
+    ):
+        """voice_only=True 时，sfx/bgm 均为 None 的普通 timeline 依然正常出片"""
+        for item in sample_timeline_json["items"]:
+            audio_path = os.path.join(tmp_chapter_dir, item["audio_path"])
+            create_sample_wav_file(audio_path, duration_ms=1000)
+
+        output_path = audio_mixer.mix_chapter(
+            tmp_chapter_dir, timeline_data=sample_timeline_json, voice_only=True
+        )
+        assert os.path.exists(output_path)
+
+
 class TestGenerateMockAudioFile:
     """占位音频文件生成功能测试"""
 

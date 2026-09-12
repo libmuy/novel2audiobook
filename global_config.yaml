@@ -28,7 +28,11 @@ asset_gen:
   ambience_loop_crossfade_ms: 2000   # ambience 素材首尾等功率交叉淡化时长，用于无缝循环
   ambience_target_dbfs: -20.0        # ambience 素材归一化的平均响度（dBFS）
   sfx_target_dbfs: -6.0              # sfx 素材归一化的峰值响度（dBFS）
-  ambience_engine: "ACE-Step-1.5"  # 仅用于日志展示；实际选型见下方 ace_step 配置段
+  ambience_engine: "AudioLDM-S-Full-v2"  # 仅用于日志展示；实际选型见下方 audioldm 配置段
+                                   # （原用 ACE-Step 1.5，但它是音乐生成模型，生成写实环境音
+                                   #  会带出音乐化调性，诊断后换成训练数据为真实音频事件的
+                                   #  AudioLDM，见 docs/audioldm_setup.md；ace_step 配置段保留
+                                   #  未删除，AceStepBackend 仍可用，只是不再被默认选用）
   sfx_engine: "TangoFlux"          # 仅用于日志展示；实际选型见下方 tangoflux 配置段
                                    # （原计划用 Stable Audio 3 Small SFX，但它是 HuggingFace
                                    # gated repo 且审批不顺畅，改用公开、无需申请的 TangoFlux）
@@ -38,6 +42,11 @@ asset_gen:
     repo_dir: "tools/acestep_repo"                   # ACE-Step 官方源码仓库
     checkpoints_dir: "/srv/unsafe/models/audiogen/ACE-Step-1.5"
     timeout_sec: 3600
+  audioldm:
+    python_bin: "tools/audioldm_env/bin/python"      # 独立 venv（CPU torch + diffusers），见 docs/audioldm_setup.md
+    infer_script: "tools/audioldm_infer.py"
+    checkpoints_dir: "/srv/unsafe/models/audiogen/audioldm"  # HF_HOME 缓存根目录，非直接模型路径
+    timeout_sec: 1800
   tangoflux:
     python_bin: "tools/tangoflux_env/bin/python"     # 独立 venv（CPU torch），见 docs/audiogen_setup.md
     infer_script: "tools/tangoflux_infer.py"
@@ -45,6 +54,9 @@ asset_gen:
     timeout_sec: 1800
 
 mixing:
+  voice_only: true          # 当前阶段先只做旁白/角色人声成片，跳过环境音/音效
+                             # 叠加与自动闪避（效果音流水线待后续阶段再打通）；
+                             # `python cli.py mix --with-assets` 可单次覆盖为 false
   ducking_threshold: -20.0  # dBFS RMS 阈值
   ducking_volume_ratio: 0.3 # BGM 闪避时降低到的音量比例 (30%)
   ducking_fade_ms: 300      # 渐变过渡毫秒数

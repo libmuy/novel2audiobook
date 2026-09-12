@@ -199,6 +199,46 @@ class TestGenerateTTSIncremental:
 
         assert status_data.get("status") == "tts_completed"
 
+    def test_generate_tts_incremental_batch_sorted_by_reference_audio(
+        self, tmp_chapter_dir, tmp_roles_dir, sample_script_json
+    ):
+        """
+        下发给 synthesize_batch 的任务应按 reference_audio 聚拢，而不是原始
+        script 顺序（narrator/su_yan/narrator/lin_dong 交替）——避免 IndexTTS
+        的音色缓存因说话人交替而逐句失效。时间线顺序（按 seg_id）不受影响，
+        由另一条用例单独验证。
+        """
+        captured_jobs = []
+
+        class RecordingBackend(tts_engine.MockTTSBackend):
+            def synthesize_batch(self, jobs):
+                captured_jobs.extend(jobs)
+                return super().synthesize_batch(jobs)
+
+        tts_engine.generate_tts_incremental(
+            tmp_chapter_dir,
+            sample_script_json,
+            backend=RecordingBackend(),
+            roles_dir=tmp_roles_dir,
+        )
+
+        ref_audios = [job["role_cfg"]["reference_audio"] for job in captured_jobs]
+        assert ref_audios == sorted(ref_audios), "下发批次未按 reference_audio 排序"
+
+    def test_generate_tts_incremental_timeline_order_unaffected_by_batch_sort(
+        self, tmp_chapter_dir, tmp_roles_dir, sample_script_json
+    ):
+        """无论合成批次如何重排，timeline items 仍按原始 script 顺序（seg_id）输出"""
+        result = tts_engine.generate_tts_incremental(
+            tmp_chapter_dir,
+            sample_script_json,
+            backend=tts_engine.MockTTSBackend(),
+            roles_dir=tmp_roles_dir,
+        )
+
+        seg_ids = [item["seg_id"] for item in result["items"]]
+        assert seg_ids == [seg["seg_id"] for seg in sample_script_json]
+
     def test_generate_tts_incremental_audio_paths_exist(self, tmp_chapter_dir, tmp_roles_dir, sample_script_json):
         """时间线中引用的音频文件都存在"""
         result = tts_engine.generate_tts_incremental(

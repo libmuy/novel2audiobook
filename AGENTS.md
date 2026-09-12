@@ -12,6 +12,7 @@
 - 增量生成 TTS 与时间线：`python cli.py tts --chapter 0001`
 - 多轨闪避混音生成 MP3：`python cli.py mix --chapter 0001`
 - 执行全流程或单模块自检：`python cli.py test --module {llm,tts,audio,all,dry-run}`
+- 启动只读 HTTP 浏览服务（素材库/章节成片试听）：`python cli.py serve --port 8090`
 
 以上 `python` 需为项目 venv（`.venv/bin/python`，或先 `source .venv/bin/activate`）；
 依赖清单见 `requirements.txt`。

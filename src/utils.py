@@ -29,6 +29,15 @@ def calculate_md5(key_string: str) -> str:
     return hashlib.md5(key_string.encode("utf-8")).hexdigest()
 
 
+def calculate_file_md5(file_path: str) -> str:
+    """计算文件内容的 MD5（分块读取），用于判断 reference.wav 等资源是否变化"""
+    h = hashlib.md5()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def load_global_config(config_path: str = None) -> dict:
     """读取全局 YAML 配置文件（默认取项目根目录下的 global_config.yaml）"""
     if config_path is None:

@@ -4,10 +4,10 @@
   "prompt": "deep mine tunnel ambience, distant dripping water, faint wind echoing through rock walls, low rumble, claustrophobic underground atmosphere, no music, seamless loop",
   "negative_prompt": "music, melody, drums, vocals, speech",
   "seed": 1002,
-  "duration_sec": 60.0,
-  "engine": "ace_step",
-  "spec_hash": "176097bf6aad79ac40ba6aaf9a41e601",
+  "duration_sec": 10.0,
+  "engine": "audioldm",
+  "spec_hash": "6bb0729c3e1310fc1d4b2705fe8096f7",
   "used_fallback": false,
-  "generated_at": "2026-09-05 17:21:47",
-  "duration_ms": 58000
+  "generated_at": "2026-09-05 22:23:53",
+  "duration_ms": 8000
 }

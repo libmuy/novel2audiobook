@@ -4,10 +4,10 @@
   "prompt": "dark tense atmospheric drone, low ominous sustained tone, subtle rising tension, cinematic underscore texture, no percussion, no melody, no vocals, seamless loop",
   "negative_prompt": "melody, drums, vocals, upbeat, happy",
   "seed": 1005,
-  "duration_sec": 45.0,
-  "engine": "ace_step",
-  "spec_hash": "663777495b6d942e4b7c5ed5ebf33af6",
+  "duration_sec": 10.0,
+  "engine": "audioldm",
+  "spec_hash": "e36222b617958fb4d588bcb628f7e2cb",
   "used_fallback": false,
-  "generated_at": "2026-09-05 17:21:47",
-  "duration_ms": 43000
+  "generated_at": "2026-09-05 22:23:53",
+  "duration_ms": 8000
 }

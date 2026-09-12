@@ -4,10 +4,10 @@
   "prompt": "daytime village ambience, distant indistinct chatter, occasional rooster, wooden carts, wind through trees, rural everyday atmosphere, no music, seamless loop",
   "negative_prompt": "music, melody, drums, clear vocals, singing",
   "seed": 1004,
-  "duration_sec": 60.0,
-  "engine": "ace_step",
-  "spec_hash": "5da535c8b9fecb3fba67a7960e00d51b",
+  "duration_sec": 10.0,
+  "engine": "audioldm",
+  "spec_hash": "703e24ac0d2f33d19a5fdf6e14f08890",
   "used_fallback": false,
-  "generated_at": "2026-09-05 17:21:47",
-  "duration_ms": 58000
+  "generated_at": "2026-09-05 22:23:53",
+  "duration_ms": 8000
 }

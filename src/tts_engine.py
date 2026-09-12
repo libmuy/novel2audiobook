@@ -243,7 +243,14 @@ def generate_tts_incremental(chapter_dir: str, script_final_data: list, sample_r
 
     # 第二遍：批量合成，失败的任务逐条回退 Mock，保证整章合成不中断
     if pending_jobs:
-        batch_results = backend.synthesize_batch(list(pending_jobs.values()))
+        # 按参考音频路径稳定排序后再下发：script 顺序天然是多角色交替的，
+        # IndexTTS 的音色缓存以 spk_audio_prompt 为键（见 infer_v2_5.py 的
+        # cache_spk_audio_prompt 判断逻辑），交替顺序会让缓存逐句失效、
+        # 每句都重新跑一遍参考音频特征提取；按角色聚拢后同一角色的任务连续
+        # 下发，同角色内可以命中缓存，只在切换角色时才重新提取一次。
+        # 结果顺序仅影响合成阶段的耗时，不影响 seg_infos 拼接的时间线顺序。
+        batch_jobs = sorted(pending_jobs.values(), key=lambda job: job["role_cfg"].get("reference_audio", ""))
+        batch_results = backend.synthesize_batch(batch_jobs)
         for hash_val, job in pending_jobs.items():
             if not batch_results.get(hash_val):
                 used_fallback = True

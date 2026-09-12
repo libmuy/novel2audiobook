@@ -4,10 +4,10 @@
   "prompt": "cold night wind blowing across open wilderness, occasional gust, distant rustling grass, desolate and quiet atmosphere, no music, seamless loop",
   "negative_prompt": "music, melody, drums, vocals, speech",
   "seed": 1003,
-  "duration_sec": 60.0,
-  "engine": "ace_step",
-  "spec_hash": "062b4fe942d689cf4c5796719849d978",
+  "duration_sec": 10.0,
+  "engine": "audioldm",
+  "spec_hash": "516f0e85162b68aa9e0c30f4580bc0c1",
   "used_fallback": false,
-  "generated_at": "2026-09-05 17:21:47",
-  "duration_ms": 58000
+  "generated_at": "2026-09-05 22:23:53",
+  "duration_ms": 8000
 }

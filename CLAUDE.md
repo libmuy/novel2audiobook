@@ -9,9 +9,20 @@
 ## 命令行常用指令
 - 查看所有章节状态：`python cli.py status`
 - 解析文本为剧本初稿：`python cli.py parse --chapter 0001`
+  （若常驻 TTS 服务正占着显存，交互式终端下会先问是否释放，`--yes` 跳过确认）
 - 增量生成 TTS 与时间线：`python cli.py tts --chapter 0001`
+  （会自动停/起 llama-server 腾显存，交互式终端下先告知一声，`--yes` 跳过确认）
 - 多轨闪避混音生成 MP3：`python cli.py mix --chapter 0001`
+  （当前 `global_config.yaml` 的 `mixing.voice_only` 默认 `true`，只出旁白/
+  角色人声成片，不叠加环境音/音效；效果音流水线待后续阶段再打通，需要时加
+  `--with-assets` 单次覆盖）
 - 执行全流程或单模块自检：`python cli.py test --module {llm,tts,audio,all,dry-run}`
+- 启动只读 HTTP 浏览服务（素材库/章节成片试听）：`python cli.py serve --port 8090`
+- 管理常驻 IndexTTS 推理服务（交互式试听用，避免每次都重新加载模型）：
+  `python cli.py tts-serve {start,stop,status}`；启动会与 llama-server
+  争抢显存，交互式终端下默认会先询问换手确认（`--yes` 跳过）
+- 启动 Gradio 全流程管理界面（仪表盘/角色管理/章节管理/TTS 试听）：
+  `python cli.py webui --port 7860`
 
 以上 `python` 需为项目 venv（`.venv/bin/python`，或先 `source .venv/bin/activate`）；
 依赖清单见 `requirements.txt`。
