@@ -167,20 +167,33 @@ class TestParseTextToJson:
         assert seg_ids == list(range(1, len(seg_ids) + 1))
 
     def test_parse_text_to_json_speaker_normalized(self, tmp_roles_dir, sample_raw_text):
-        """speaker 已归一化"""
+        """speaker 已归一化：要么在已注册角色中，要么为 None（未绑定）"""
         result = llm_parser.parse_text_to_json(
             sample_raw_text,
             backend=llm_parser.HeuristicBackend(),
             roles_dir=tmp_roles_dir
         )
 
-        # 所有 speaker 都应该是合法的角色 ID
         manifest = roles_mod.load_manifest(tmp_roles_dir)
         all_role_ids = set(manifest.get("roles", {}).keys())
         for seg in result:
             speaker = seg.get("speaker")
-            # speaker 要么在已注册的角色中，要么是新注册的
-            assert speaker is not None
+            assert speaker is None or speaker in all_role_ids
+
+    def test_parse_text_to_json_no_auto_registration(self, tmp_roles_dir, sample_raw_text):
+        """清单外角色不再自动注册，speaker 留空"""
+        before_manifest = roles_mod.load_manifest(tmp_roles_dir)
+        before_count = len(before_manifest.get("roles", {}))
+
+        result = llm_parser.parse_text_to_json(
+            sample_raw_text,
+            backend=llm_parser.HeuristicBackend(),
+            roles_dir=tmp_roles_dir
+        )
+
+        after_manifest = roles_mod.load_manifest(tmp_roles_dir)
+        after_count = len(after_manifest.get("roles", {}))
+        assert after_count == before_count
 
     def test_parse_text_to_json_fields_present(self, tmp_roles_dir, sample_raw_text):
         """返回的各字段都存在"""

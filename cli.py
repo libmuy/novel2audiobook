@@ -9,7 +9,7 @@ import shutil
 import tempfile
 
 from src.utils import get_chapter_dir, normalize_chapter_id, get_project_root
-from src.status_tracker import print_status_table
+from src.status_tracker import print_status_table, get_novel_status_summary
 from src.llm_parser import process_chapter_parse, HeuristicBackend
 from src.tts_engine import process_chapter_tts, generate_tts_incremental, MockTTSBackend
 from src.audio_mixer import mix_chapter
@@ -17,6 +17,7 @@ from src.asset_gen import (
     generate_assets, load_asset_specs, print_asset_status_table,
     MockAudioGenBackend, VALID_KINDS,
 )
+from src import library
 
 
 def _make_isolated_test_workspace() -> tuple:
@@ -31,7 +32,7 @@ def _make_isolated_test_workspace() -> tuple:
 
     chapter_dir = os.path.join(tmp_root, "chapters", "ch_0001")
     os.makedirs(chapter_dir, exist_ok=True)
-    src_raw = os.path.join(root, "chapters", "ch_0001", "raw.txt")
+    src_raw = os.path.join(root, "tests", "fixtures", "sample_raw.txt")
     shutil.copyfile(src_raw, os.path.join(chapter_dir, "raw.txt"))
 
     roles_dir = os.path.join(tmp_root, "roles")
@@ -91,6 +92,16 @@ def run_test_module(module_name: str):
             import json
             with open(final_path, "r", encoding="utf-8") as f:
                 script_final_data = json.load(f)
+
+            # 模拟人工定稿：把未绑定分块指派为 narrator，让自检能跑通
+            unbound_count = sum(1 for seg in script_final_data if not seg.get("speaker"))
+            if unbound_count:
+                for seg in script_final_data:
+                    if not seg.get("speaker"):
+                        seg["speaker"] = "narrator"
+                with open(final_path, "w", encoding="utf-8") as f:
+                    json.dump(script_final_data, f, ensure_ascii=False, indent=2)
+                print(f"  [Test] 将 {unbound_count} 个未绑定分块指派为 narrator（模拟人工定稿）")
             timeline_data = generate_tts_incremental(
                 chapter_dir, script_final_data, backend=MockTTSBackend(), roles_dir=roles_dir
             )
@@ -192,22 +203,26 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="子命令列表")
 
     # 1. status
-    parser_status = subparsers.add_parser("status", help="扫描 chapters/ 目录，打印各章节进度")
+    parser_status = subparsers.add_parser("status", help="查看章节/小说状态")
+    parser_status.add_argument("--novel", help="指定小说 ID，查看该小说章节表；不传则列出所有小说汇总")
 
     # 2. parse
     parser_parse = subparsers.add_parser("parse", help="解析 raw.txt 生成 script_draft.json")
+    parser_parse.add_argument("--novel", required=True, help="小说 ID")
     parser_parse.add_argument("--chapter", required=True, help="章节 ID (如 0001 或 ch_0001)")
     parser_parse.add_argument("--yes", action="store_true",
                                help="跳过 GPU 换手确认（释放常驻 TTS 服务时不再询问）")
 
     # 3. tts
     parser_tts = subparsers.add_parser("tts", help="基于 script_final.json 执行哈希增量 TTS 生成")
+    parser_tts.add_argument("--novel", required=True, help="小说 ID")
     parser_tts.add_argument("--chapter", required=True, help="章节 ID (如 0001 或 ch_0001)")
     parser_tts.add_argument("--yes", action="store_true",
                             help="跳过 GPU 换手确认（自动停/起 llama-server 时不再询问）")
 
     # 4. mix
     parser_mix = subparsers.add_parser("mix", help="根据 timeline.json 混音导出成品 MP3（当前默认纯人声）")
+    parser_mix.add_argument("--novel", required=True, help="小说 ID")
     parser_mix.add_argument("--chapter", required=True, help="章节 ID (如 0001 或 ch_0001)")
     parser_mix.add_argument("--with-assets", action="store_true",
                              help="包含环境音/音效的完整闪避混音（覆盖 global_config.yaml 的 mixing.voice_only）")
@@ -226,22 +241,55 @@ def main():
     parser_assets.add_argument("--force", action="store_true", help="忽略增量缓存，全部重新生成")
     parser_assets.add_argument("--backend", choices=["mock"], help="强制使用指定后端（目前仅支持 mock，用于离线自检/占位铺库）")
 
-    # 7. serve
-    parser_serve = subparsers.add_parser("serve", help="启动本地 HTTP 服务，浏览素材库与章节成片（只读）")
-    parser_serve.add_argument("--host", default="127.0.0.1", help="监听地址，默认仅本机可访问 (127.0.0.1)")
-    parser_serve.add_argument("--port", type=int, default=8090, help="监听端口，默认 8090（避开 llm.serve_port=8080）")
-
-    # 8. tts-serve（计划 003：常驻 TTS 服务，脱离 webui 单独调试用）
+    # 7. tts-serve
     parser_tts_serve = subparsers.add_parser(
         "tts-serve", help="管理常驻 IndexTTS 推理服务（避免每次试听都重新加载模型）"
     )
     parser_tts_serve.add_argument("action", choices=["start", "stop", "status"])
     parser_tts_serve.add_argument("--yes", action="store_true", help="启动时跳过 GPU 换手确认")
 
-    # 9. webui（计划 002：Gradio 全流程管理界面）
-    parser_webui = subparsers.add_parser("webui", help="启动 Gradio 全流程管理界面")
-    parser_webui.add_argument("--host", default="127.0.0.1", help="监听地址，默认仅本机可访问 (127.0.0.1)")
-    parser_webui.add_argument("--port", type=int, default=7860, help="监听端口，默认 7860")
+    # 8. novel
+    parser_novel = subparsers.add_parser("novel", help="管理小说库")
+    novel_sub = parser_novel.add_subparsers(dest="novel_action")
+    novel_sub.add_parser("list", help="列出所有小说")
+    parser_novel_create = novel_sub.add_parser("create", help="新建小说")
+    parser_novel_create.add_argument("--title", required=True, help="小说标题")
+    parser_novel_create.add_argument("--description", default="", help="小说简介")
+    parser_novel_create.add_argument("--part", action="store_true", help="启用「部」层级")
+    parser_novel_create.add_argument("--volume", action="store_true", help="启用「卷」层级")
+    parser_novel_delete = novel_sub.add_parser("delete", help="删除小说（移至 .trash/）")
+    parser_novel_delete.add_argument("--novel", required=True, help="小说 ID")
+
+    # 9. node
+    parser_node = subparsers.add_parser("node", help="管理部/卷节点")
+    node_sub = parser_node.add_subparsers(dest="node_action")
+    parser_node_add = node_sub.add_parser("add", help="新建部/卷节点")
+    parser_node_add.add_argument("--novel", required=True, help="小说 ID")
+    parser_node_add.add_argument("--type", required=True, choices=["part", "volume"], help="节点类型")
+    parser_node_add.add_argument("--title", required=True, help="节点标题")
+    parser_node_add.add_argument("--parent", help="父节点 ID（不传则挂到根）")
+    parser_node_rm = node_sub.add_parser("rm", help="删除部/卷节点（含子树）")
+    parser_node_rm.add_argument("--novel", required=True, help="小说 ID")
+    parser_node_rm.add_argument("--node", required=True, help="节点 ID")
+
+    # 10. chapter
+    parser_chapter = subparsers.add_parser("chapter", help="管理章节")
+    chapter_sub = parser_chapter.add_subparsers(dest="chapter_action")
+    parser_ch_add = chapter_sub.add_parser("add", help="新建章节并导入正文")
+    parser_ch_add.add_argument("--novel", required=True, help="小说 ID")
+    parser_ch_add.add_argument("--title", required=True, help="章节标题")
+    parser_ch_add.add_argument("--raw", required=True, help="正文文件路径")
+    parser_ch_add.add_argument("--parent", help="父节点 ID（卷/部）")
+    parser_ch_list = chapter_sub.add_parser("list", help="缩进打印章节树（带状态）")
+    parser_ch_list.add_argument("--novel", required=True, help="小说 ID")
+    parser_ch_rm = chapter_sub.add_parser("rm", help="删除章节（移至 .trash/）")
+    parser_ch_rm.add_argument("--novel", required=True, help="小说 ID")
+    parser_ch_rm.add_argument("--chapter", required=True, help="章节 ID")
+    parser_ch_reimport = chapter_sub.add_parser("reimport", help="重新导入章节正文（清空下游产物，保留 audio_cache）")
+    parser_ch_reimport.add_argument("--novel", required=True, help="小说 ID")
+    parser_ch_reimport.add_argument("--chapter", required=True, help="章节 ID")
+    parser_ch_reimport.add_argument("--raw", required=True, help="新的正文文件路径")
+    parser_ch_reimport.add_argument("--yes", action="store_true", help="跳过确认")
 
     args = parser.parse_args()
 
@@ -250,16 +298,35 @@ def main():
         sys.exit(1)
 
     if args.command == "status":
-        print_status_table()
+        if args.novel:
+            summary = get_novel_status_summary(args.novel)
+            print(f"\n小说: {args.novel} | 章节总数: {summary['total']}")
+            if summary["by_status"]:
+                status_str = ", ".join(f"{k}: {v}" for k, v in sorted(summary["by_status"].items()))
+                print(f"状态分布: {status_str}")
+            print()
+            from src.status_tracker import print_status_table
+            print_status_table(library.get_chapters_dir(args.novel))
+        else:
+            novels = library.list_novels()
+            if not novels:
+                print("小说库为空。使用 `python cli.py novel create --title 标题` 创建第一本小说。")
+                return
+            print(f"{'小说 ID':<20} | {'标题':<12} | {'章节数':<6} | 状态分布")
+            print("-" * 70)
+            for n in novels:
+                summary = get_novel_status_summary(n["novel_id"])
+                status_str = ", ".join(f"{k}:{v}" for k, v in sorted(summary["by_status"].items())) or "-"
+                print(f"{n['novel_id']:<20} | {n['title']:<12} | {n['chapter_count']:<6} | {status_str}")
 
     elif args.command == "parse":
         if not _release_tts_daemon_if_running(args.yes):
             print("已取消（常驻 TTS 服务仍在运行，需要先释放显存才能执行 parse）")
             sys.exit(1)
-        chapter_dir = get_chapter_dir(args.chapter)
+        chapter_dir = library.get_chapter_dir(args.novel, args.chapter)
         try:
             draft_path = process_chapter_parse(chapter_dir)
-            print(f"成功为章节 [{args.chapter}] 生成剧本初稿: {draft_path}")
+            print(f"成功为 [{args.novel}/{args.chapter}] 生成剧本初稿: {draft_path}")
         except Exception as e:
             print(f"错误: {e}")
             sys.exit(1)
@@ -268,20 +335,21 @@ def main():
         if not _confirm_batch_llm_swap(args.yes):
             print("已取消")
             sys.exit(1)
-        chapter_dir = get_chapter_dir(args.chapter)
+        chapter_dir = library.get_chapter_dir(args.novel, args.chapter)
         try:
             timeline_path = process_chapter_tts(chapter_dir)
-            print(f"成功为章节 [{args.chapter}] 生成哈希 TTS 时间线: {timeline_path}")
+            print(f"成功为 [{args.novel}/{args.chapter}] 生成哈希 TTS 时间线: {timeline_path}")
         except Exception as e:
             print(f"错误: {e}")
             sys.exit(1)
 
     elif args.command == "mix":
-        chapter_dir = get_chapter_dir(args.chapter)
+        chapter_dir = library.get_chapter_dir(args.novel, args.chapter)
         try:
-            voice_only = False if args.with_assets else None  # None = 按 global_config.yaml 的 mixing.voice_only
-            out_path = mix_chapter(chapter_dir, voice_only=voice_only)
-            print(f"成功完成章节 [{args.chapter}] 混音，成品位置: {out_path}")
+            voice_only = False if args.with_assets else None
+            output_stem = f"{args.novel}_{normalize_chapter_id(args.chapter)}"
+            out_path = mix_chapter(chapter_dir, voice_only=voice_only, output_stem=output_stem)
+            print(f"成功完成 [{args.novel}/{args.chapter}] 混音，成品位置: {out_path}")
         except Exception as e:
             print(f"错误: {e}")
             sys.exit(1)
@@ -297,7 +365,7 @@ def main():
     elif args.command == "assets":
         if args.action == "list":
             print_asset_status_table()
-        else:  # gen
+        else:
             kinds = [args.kind] if args.kind else None
             only = set(args.only.split(",")) if args.only else None
             backend_map = None
@@ -317,11 +385,6 @@ def main():
             except Exception as e:
                 print(f"错误: {e}")
                 sys.exit(1)
-
-    elif args.command == "serve":
-        from src.web_server import run_server
-        print(f"--> 启动资源浏览服务: http://{args.host}:{args.port}/ (Ctrl+C 停止)")
-        run_server(host=args.host, port=args.port)
 
     elif args.command == "tts-serve":
         from tools import gpu_arbiter
@@ -353,7 +416,7 @@ def main():
                     print(f"启动失败: {result['error']}")
                     sys.exit(1)
 
-        else:  # stop
+        else:
             if not daemon.is_running():
                 print("常驻 TTS 服务本来就没有运行")
             else:
@@ -364,10 +427,92 @@ def main():
                     print(f"停止失败: {result['error']}")
                     sys.exit(1)
 
-    elif args.command == "webui":
-        from src.webui_app import run_webui
-        print(f"--> 启动管理界面: http://{args.host}:{args.port}/ (Ctrl+C 停止)")
-        run_webui(host=args.host, port=args.port)
+    elif args.command == "novel":
+        if args.novel_action == "list":
+            novels = library.list_novels()
+            if not novels:
+                print("小说库为空。")
+            for n in novels:
+                print(f"  {n['novel_id']:<20} {n['title']:<12} 章节:{n['chapter_count']}  更新:{n['updated_at']}")
+        elif args.novel_action == "create":
+            levels = {"part": args.part, "volume": args.volume}
+            nid = library.create_novel(args.title, args.description, levels)
+            print(f"已创建小说: {nid}")
+        elif args.novel_action == "delete":
+            library.delete_novel(args.novel)
+            print(f"已删除小说: {args.novel}（移至 .trash/）")
+        else:
+            parser_novel.print_help()
+
+    elif args.command == "node":
+        if args.node_action == "add":
+            novel_data = library.load_novel(args.novel)
+            node_id = f"{args.type[:3]}_{novel_data.get('next_chapter_seq', 1):03d}"
+            # 为节点生成唯一 ID
+            existing_ids = set()
+            def _collect_ids(nodes):
+                for n in nodes:
+                    existing_ids.add(n.get("id"))
+                    if n.get("children"):
+                        _collect_ids(n["children"])
+            _collect_ids(novel_data.get("tree", []))
+            suffix = 1
+            base_id = f"{args.type[:3]}_{suffix:03d}"
+            while base_id in existing_ids:
+                suffix += 1
+                base_id = f"{args.type[:3]}_{suffix:03d}"
+            node = {"type": args.type, "id": base_id, "title": args.title}
+            library.tree_insert(novel_data, args.parent, node)
+            library.save_novel(novel_data)
+            print(f"已添加节点: {base_id} ({args.title})")
+        elif args.node_action == "rm":
+            novel_data = library.load_novel(args.novel)
+            affected = library.tree_delete(novel_data, args.node)
+            library.save_novel(novel_data)
+            print(f"已删除节点: {args.node}")
+            if affected:
+                print(f"  注意：以下章节从树中移除（磁盘目录仍在）: {affected}")
+        else:
+            parser_node.print_help()
+
+    elif args.command == "chapter":
+        if args.chapter_action == "add":
+            with open(args.raw, "r", encoding="utf-8") as f:
+                raw_text = f.read()
+            ch_id = library.add_chapter(args.novel, args.title, raw_text, args.parent)
+            print(f"已添加章节: {ch_id} ({args.title})")
+        elif args.chapter_action == "list":
+            novel_data = library.load_novel(args.novel)
+            summary = get_novel_status_summary(args.novel)
+            status_map = {c["chapter_id"]: c["status"] for c in summary["chapters"]}
+            def _print_tree(nodes, indent=0):
+                for node in nodes:
+                    prefix = "  " * indent
+                    if node["type"] == "chapter":
+                        st = status_map.get(node["id"], "?")
+                        print(f"{prefix}{node['id']}  {node.get('title', '')}  [{st}]")
+                    else:
+                        print(f"{prefix}[{node['type']}] {node['id']}  {node.get('title', '')}")
+                        if node.get("children"):
+                            _print_tree(node["children"], indent + 1)
+            _print_tree(novel_data.get("tree", []))
+        elif args.chapter_action == "rm":
+            library.delete_chapter(args.novel, args.chapter)
+            print(f"已删除章节: {args.chapter}（移至 .trash/）")
+        elif args.chapter_action == "reimport":
+            ch_display = normalize_chapter_id(args.chapter)
+            if not args.yes:
+                if not _prompt_yes_no(
+                    f"该操作会清空 {ch_display} 的剧本、时间线和成品 MP3（audio_cache 保留），确认继续？"
+                ):
+                    print("已取消")
+                    sys.exit(1)
+            with open(args.raw, "r", encoding="utf-8") as f:
+                raw_text = f.read()
+            result = library.import_chapter_raw(args.novel, args.chapter, raw_text)
+            print(f"已重新导入 {ch_display}，清除: {result['removed']}，保留缓存: {result['kept_cache_count']} 条")
+        else:
+            parser_chapter.print_help()
 
 
 if __name__ == "__main__":

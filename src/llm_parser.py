@@ -7,8 +7,8 @@ LLM 剧本解析模块
 - HeuristicBackend：不依赖网络的规则版回退实现，在 LLM 不可达/解析失败时兜底，
   也用于 `cli.py test` 自检（保证自检不依赖外部服务）。
 
-说话人 ID 统一在 process_chapter_parse 中经 src.roles 三层处理：
-精确/别名/拼音归一匹配已注册角色 -> 未命中则自动注册新角色 -> 注册失败回退 narrator。
+说话人 ID 统一在 process_chapter_parse 中经 src.roles 归一化：
+精确/别名/拼音归一匹配已注册角色 -> 未命中则留空（speaker: null），由人工后续指派。
 """
 import os
 import re
@@ -112,7 +112,7 @@ class HeuristicBackend:
         return segments
 
     def _make_segment(self, text, manifest, assets, is_dialogue, speaker_hint=None):
-        speaker = speaker_hint if (is_dialogue and speaker_hint) else "narrator"
+        speaker = speaker_hint if is_dialogue else "narrator"
         return {
             "speaker": speaker,
             "text": text,
@@ -132,14 +132,16 @@ _SYSTEM_PROMPT_TEMPLATE = """你是小说转有声书的剧本解析器。将给
 
 规则：
 1. 每个片段只能属于一个说话人；叙述性文字的说话人固定为 "narrator"。
-2. 说话人优先使用下列已注册角色的中文名：{role_names}。
-   如果这段文本里出现了不在列表中的新角色说话，直接输出该角色的中文全名（2-4个汉字），不要编造角色ID。
+2. speaker 字段只能填 "narrator"（一切叙述性文字）或下面这份已注册角色清单里的中文名之一：
+{role_table}
+   如果某句台词的说话人不在这份清单里，speaker 必须填 null。
+   不要编造新名字，也不要硬套一个不相干的角色——填 null 比填错更有价值，后续会由人工指派。
 3. emotion 字段必须是以下之一：{emotions}。
 4. sfx（音效）字段只能从这个词表中选择，或者为 null（没有则填 null，不要编造）：{sfx_list}
 5. bgm（环境音）字段只能从这个词表中选择，或者为 null：{bgm_list}
 6. 严格按输入文本的顺序和原文内容切分，不要增删、翻译或改写正文内容；对话保留引号内的原文（不含引号本身）。
 7. 只输出一个 JSON 数组，数组每项形如：
-   {{"speaker": "...", "text": "...", "emotion": "...", "sfx": null, "bgm": null}}
+   {{"speaker": "..." 或 null, "text": "...", "emotion": "...", "sfx": null, "bgm": null}}
    不要输出任何解释文字、Markdown 代码块标记或多余内容。
 """
 
@@ -151,6 +153,19 @@ def _render_asset_list(names: list, descriptions: dict) -> str:
         desc = descriptions.get(name)
         parts.append(f"{name}（{desc}）" if desc else name)
     return "、".join(parts)
+
+
+def _render_role_table(manifest: dict) -> str:
+    """把角色清单渲染成「- 中文名：简介」的多行文本，供 prompt 注入。"""
+    roles = manifest.get("roles", {})
+    if not roles:
+        return "  （暂无已注册角色）"
+    lines = []
+    for rid, info in roles.items():
+        name = info.get("name", rid)
+        desc = info.get("description", "")
+        lines.append(f"  - {name}：{desc}" if desc else f"  - {name}")
+    return "\n".join(lines)
 
 
 class QwenLLMBackend:
@@ -175,7 +190,7 @@ class QwenLLMBackend:
             return False
 
     def _build_system_prompt(self, manifest: dict, assets: dict) -> str:
-        role_names = "、".join(name for _, name in roles_mod.list_role_names(manifest)) or "（暂无）"
+        role_table = _render_role_table(manifest)
 
         try:
             from src.asset_gen import get_asset_descriptions
@@ -189,7 +204,7 @@ class QwenLLMBackend:
         bgm_list = _render_asset_list(assets.get("bgm", []), descriptions.get("bgm", {})) \
             or "（无可用环境音，一律填 null）"
         return _SYSTEM_PROMPT_TEMPLATE.format(
-            role_names=role_names,
+            role_table=role_table,
             emotions="、".join(sorted(VALID_EMOTIONS)),
             sfx_list=sfx_list,
             bgm_list=bgm_list,
@@ -232,8 +247,12 @@ class QwenLLMBackend:
                     emotion = item.get("emotion") if item.get("emotion") in VALID_EMOTIONS else "neutral"
                     sfx = item.get("sfx") if item.get("sfx") in assets.get("sfx", []) else None
                     bgm = item.get("bgm") if item.get("bgm") in assets.get("bgm", []) else None
+                    raw_speaker = item.get("speaker")
+                    speaker = None if raw_speaker is None else str(raw_speaker).strip()
+                    if speaker in ("", "null", "None", "NULL", "未知", "无"):
+                        speaker = None
                     segments.append({
-                        "speaker": str(item.get("speaker", "narrator")).strip() or "narrator",
+                        "speaker": speaker,
                         "text": text,
                         "emotion": emotion,
                         "sfx": sfx,
@@ -265,7 +284,7 @@ def parse_text_to_json(text: str, backend=None, roles_dir: str = None) -> list:
 
     返回字段说明：
     - seg_id: 句段序号 (1, 2, ...)
-    - speaker: 说话人角色 ID（已归一化，保证是 roles_manifest.json 中的注册角色）
+    - speaker: 说话人角色 ID（已归一化）；未绑定角色时为 None，由人工后续指派
     - text: 台词/旁白文本
     - emotion: 情感说明
     - sfx: 伴随音效（assets/sfx 词表内的名称，或 None）
@@ -288,19 +307,13 @@ def parse_text_to_json(text: str, backend=None, roles_dir: str = None) -> list:
             raw_segments = HeuristicBackend().parse_paragraph(para, manifest, assets)
 
         for seg in raw_segments:
-            raw_speaker = seg.get("speaker", "narrator")
-            role_id = roles_mod.resolve_role_id(raw_speaker, manifest)
-            if role_id is None:
-                if raw_speaker == "narrator":
-                    role_id = "narrator"
-                else:
-                    try:
-                        role_id = roles_mod.register_role(raw_speaker, manifest, roles_dir)
-                        logger.info("自动注册新角色: %s -> %s", raw_speaker, role_id)
-                    except Exception as e:  # noqa: BLE001 - 注册失败必须有兜底路径
-                        logger.warning("自动注册角色失败（%s），回退为 narrator: %s", raw_speaker, e)
-                        role_id = "narrator"
-                        seg["text"] = f"{raw_speaker}：{seg['text']}"
+            raw_speaker = seg.get("speaker")
+            if raw_speaker is None:
+                role_id = None
+            elif raw_speaker == "narrator":
+                role_id = "narrator"
+            else:
+                role_id = roles_mod.resolve_role_id(raw_speaker, manifest)
 
             script_segments.append({
                 "seg_id": seg_id,

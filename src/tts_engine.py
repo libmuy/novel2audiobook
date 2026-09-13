@@ -213,6 +213,15 @@ def generate_tts_incremental(chapter_dir: str, script_final_data: list, sample_r
     检查 audio_cache/ 下是否已有该文件。如果有，跳过合成；如果没有，调用 TTS 后端生成。
     返回累加的时间线数据 timeline.json 的结构。
     """
+    unbound = [seg.get("seg_id") for seg in script_final_data if not seg.get("speaker")]
+    if unbound:
+        shown = unbound[:20]
+        more = f"（共 {len(unbound)} 个，只列前 20 个）" if len(unbound) > 20 else ""
+        raise ValueError(
+            f"以下分块尚未绑定角色，无法合成{more}：seg_id={shown}。"
+            "请先在配音工作台为它们指派角色。"
+        )
+
     if backend is None:
         backend = build_tts_backend()
 

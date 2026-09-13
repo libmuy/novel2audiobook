@@ -53,6 +53,11 @@ asset_gen:
     checkpoints_dir: "/srv/unsafe/models/audiogen/tangoflux"  # HF_HOME 缓存根目录，非直接模型路径
     timeout_sec: 1800
 
+server:
+  library_root: "library"   # 小说库根目录，相对项目根
+  host: "127.0.0.1"
+  port: 7860
+
 mixing:
   voice_only: true          # 当前阶段先只做旁白/角色人声成片，跳过环境音/音效
                              # 叠加与自动闪避（效果音流水线待后续阶段再打通）；

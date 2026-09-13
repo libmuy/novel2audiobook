@@ -186,7 +186,8 @@ def _validate_timeline_assets(items: list, chapter_dir: str):
         )
 
 
-def mix_chapter(chapter_dir: str, timeline_data: dict = None, config: dict = None, voice_only: bool = None) -> str:
+def mix_chapter(chapter_dir: str, timeline_data: dict = None, config: dict = None,
+                voice_only: bool = None, output_stem: str = None) -> str:
     """
     引入 pydub，读取 timeline.json。
     将人声轨拼接；voice_only=False 时还会遍历人声计算 RMS 响度，实现自动闪避
@@ -270,17 +271,19 @@ def mix_chapter(chapter_dir: str, timeline_data: dict = None, config: dict = Non
     # 4. 三轨终极混音 (人声 + 闪避后BGM + SFX)
     final_mix = vocal_track.overlay(bgm_track).overlay(sfx_track)
 
-    # 5. 导出成品 MP3 文件（文件名遵循 chapter_XXXX.mp3 约定）
-    ch_id = os.path.basename(os.path.abspath(chapter_dir))
-    ch_num = ch_id.replace("ch_", "")
+    # 5. 导出成品 MP3 文件
+    if output_stem is None:
+        base = os.path.basename(os.path.abspath(chapter_dir))
+        num = base[3:] if base.startswith("ch_") else base
+        output_stem = f"chapter_{num}"
     output_dir = os.path.join(chapter_dir, "output")
     os.makedirs(output_dir, exist_ok=True)
-    output_mp3_path = os.path.join(output_dir, f"chapter_{ch_num}.mp3")
+    output_mp3_path = os.path.join(output_dir, f"{output_stem}.mp3")
 
     try:
         final_mix.export(output_mp3_path, format="mp3", bitrate=mixing_cfg.get("bitrate", "192k"))
     except Exception:
-        output_wav_path = os.path.join(output_dir, f"chapter_{ch_num}.wav")
+        output_wav_path = os.path.join(output_dir, f"{output_stem}.wav")
         final_mix.export(output_wav_path, format="wav")
         output_mp3_path = output_wav_path
 

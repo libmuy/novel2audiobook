@@ -83,10 +83,10 @@ def list_available_assets() -> dict:
     return result
 
 
-def update_chapter_status(chapter_dir: str, status: str):
+def update_chapter_status(chapter_dir: str, status: str, chapter_id: str = None):
     """更新章节工作区内的 .status.json 标记"""
     status_file = os.path.join(chapter_dir, ".status.json")
-    ch_id = os.path.basename(os.path.abspath(chapter_dir))
+    ch_id = chapter_id or os.path.basename(os.path.abspath(chapter_dir))
     data = {
         "chapter_id": ch_id,
         "status": status,

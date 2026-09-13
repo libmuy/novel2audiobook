@@ -70,13 +70,13 @@ class TestRunTestModule:
         import subprocess
 
         root = get_project_root()
-        chapters_dir = os.path.join(root, "chapters")
+        library_dir = os.path.join(root, "library")
 
-        # 获取测试前的章节列表
-        if os.path.exists(chapters_dir):
-            before_chapters = set(os.listdir(chapters_dir))
+        # 获取测试前的小说列表
+        if os.path.exists(library_dir):
+            before_novels = set(os.listdir(library_dir))
         else:
-            before_chapters = set()
+            before_novels = set()
 
         # 运行测试
         try:
@@ -84,18 +84,16 @@ class TestRunTestModule:
         except Exception:
             pass  # 即使失败也要继续检查
 
-        # 获取测试后的章节列表
-        if os.path.exists(chapters_dir):
-            after_chapters = set(os.listdir(chapters_dir))
+        # 获取测试后的小说列表
+        if os.path.exists(library_dir):
+            after_novels = set(os.listdir(library_dir))
         else:
-            after_chapters = set()
+            after_novels = set()
 
-        # 新增的章节应该仅限临时测试目录，不应该修改真实章节
-        # 这里简化检查：确保没有新增的 ch_xxxx 目录
-        new_chapters = after_chapters - before_chapters
-        for ch in new_chapters:
-            if ch.startswith("ch_"):
-                pytest.fail(f"测试污染了真实章节: {ch}")
+        # 自检不应在真实 library/ 下创建任何内容
+        new_entries = after_novels - before_novels
+        for entry in new_entries:
+            pytest.fail(f"测试污染了真实 library 目录: {entry}")
 
     def test_run_test_module_assets_does_not_pollute_real_assets_dir(self):
         """assets 自检模块只写隔离临时目录，不应在真实 assets/ 下新增任何文件"""

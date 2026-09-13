@@ -126,3 +126,18 @@ def print_status_table(chapters_dir: str = "chapters"):
         mp3_str = "✓" if s["mp3"] else "✗"
         print(f"{s['chapter_id']:<10} | {raw_str:<5} | {draft_str:<5} | {final_str:<5} | {timeline_str:<8} | {mp3_str:<5} | {s['status']:<18} | {s['audio_cache_count']} wavs")
     print("=" * 95)
+
+
+def get_novel_status_summary(novel_id: str, library_dir: str = None) -> dict:
+    """返回某本小说的章节状态汇总。"""
+    from src import library
+    chapters_dir = library.get_chapters_dir(novel_id, library_dir)
+    chapters = get_all_chapters_status(chapters_dir)
+    by_status = {}
+    for ch in chapters:
+        by_status[ch["status"]] = by_status.get(ch["status"], 0) + 1
+    return {
+        "total": len(chapters),
+        "by_status": by_status,
+        "chapters": chapters,
+    }
