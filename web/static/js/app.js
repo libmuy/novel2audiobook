@@ -844,7 +844,6 @@ app.component('novel-detail-page', {
         };
 
         const loadTree = async () => {
-            const wasLoading = loading.value;
             loading.value = true;
             try {
                 // GET /tree 返回 {novel: {...真实小说对象，含 tree}, status: {...}}，
@@ -856,11 +855,12 @@ app.component('novel-detail-page', {
                 console.error('加载树形结构失败:', error);
             } finally {
                 loading.value = false;
-                // loading 从 true 翻到 false 时 v-if/v-else 会重建 tree-content
-                // 容器的 DOM，之前挂的 Sortable 实例就失效了，要重新挂一次
-                if (wasLoading) {
-                    nextTick(() => setupTreeSortable());
-                }
+                // 每次调用都会经历 loading true->false 的切换，v-if/v-else 因此
+                // 每次都会重建 tree-content 的 DOM（不只是首次加载）——之前这里
+                // 只在"首次加载完成"时重新挂载 Sortable（用 wasLoading 判断），
+                // 导致第一次拖拽触发的 reorder -> loadTree() 刷新会重建 DOM 却
+                // 不重新挂 Sortable，第二次开始拖拽全部静默失效。改成每次都重挂。
+                nextTick(() => setupTreeSortable());
             }
         };
 
