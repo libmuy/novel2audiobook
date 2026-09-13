@@ -2,9 +2,11 @@
 import os
 import json
 from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi.responses import FileResponse
 from src import library, status_tracker
 from src.api.deps import get_config
 from src import derived_index
+from src.utils import calculate_md5
 
 router = APIRouter(prefix="/novels/{nid}/chapters", tags=["chapters"])
 
@@ -90,3 +92,47 @@ def upload_script(nid: str, cid: str, script: list):
         json.dump(script, f, ensure_ascii=False, indent=2)
     derived_index.invalidate()
     return {"ok": True}
+
+
+@router.get("/{cid}/timeline")
+def get_timeline(nid: str, cid: str):
+    ch_dir = _get_chapter_dir(nid, cid)
+    path = os.path.join(ch_dir, "timeline.json")
+    if not os.path.exists(path):
+        raise HTTPException(404, "无时间线文件（该章节还没有跑过 TTS）")
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+@router.get("/{cid}/segments/{seg_id}/audio")
+def get_segment_audio(nid: str, cid: str, seg_id: str):
+    """分块本身不存 md5，音频缓存文件名是 speaker+text+emotion 的哈希，
+    这里复用 src.tts_engine 里同样的算法现算一次去查 audio_cache/。"""
+    ch_dir = _get_chapter_dir(nid, cid)
+    final_path = os.path.join(ch_dir, "script_final.json")
+    if not os.path.exists(final_path):
+        raise HTTPException(404, "无定稿剧本")
+    with open(final_path, "r", encoding="utf-8") as f:
+        segments = json.load(f)
+    seg = next((s for s in segments if str(s.get("seg_id")) == str(seg_id)), None)
+    if seg is None:
+        raise HTTPException(404, f"分块 {seg_id} 不存在")
+    speaker = seg.get("speaker")
+    if not speaker:
+        raise HTTPException(404, "该分块尚未绑定角色，不存在人声")
+    key = f"{speaker}_{seg.get('text', '')}_{seg.get('emotion', 'neutral')}"
+    audio_path = os.path.join(ch_dir, "audio_cache", f"{calculate_md5(key)}.wav")
+    if not os.path.exists(audio_path):
+        raise HTTPException(404, "该分块尚未合成")
+    return FileResponse(audio_path, media_type="audio/wav")
+
+
+@router.get("/{cid}/output.mp3")
+def get_output_audio(nid: str, cid: str):
+    ch_dir = _get_chapter_dir(nid, cid)
+    output_dir = os.path.join(ch_dir, "output")
+    if os.path.isdir(output_dir):
+        mp3s = [f for f in os.listdir(output_dir) if f.endswith(".mp3")]
+        if mp3s:
+            return FileResponse(os.path.join(output_dir, mp3s[0]), media_type="audio/mpeg")
+    raise HTTPException(404, "还没有生成成品 MP3")

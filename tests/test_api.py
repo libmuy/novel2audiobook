@@ -97,6 +97,20 @@ class TestNodesAPI:
         r2 = client.post(f"/api/novels/{nid}/nodes", json={"type": "volume", "title": "卷二"})
         assert r1.json()["node_id"] != r2.json()["node_id"]
 
+    def test_tree_inlines_chapter_status(self, client, tmp_path):
+        """GET /tree 应该把每个 chapter 节点的 status 内联进去，
+        不能让前端自己拼两个平行结构"""
+        nid = self._create_novel(client, volume=True)
+        vol_id = client.post(f"/api/novels/{nid}/nodes", json={"type": "volume", "title": "卷一"}).json()["node_id"]
+        ch_id = client.post(f"/api/novels/{nid}/nodes",
+                            json={"type": "chapter", "title": "章一", "parent_id": vol_id}).json()["node_id"]
+        client.put(f"/api/novels/{nid}/chapters/{ch_id}/raw", files={"file": ("raw.txt", b"x")})
+
+        tree = client.get(f"/api/novels/{nid}/tree").json()["novel"]["tree"]
+        chapter_node = tree[0]["children"][0]
+        assert chapter_node["id"] == ch_id
+        assert "status" in chapter_node and chapter_node["status"]
+
     def test_create_node_rejects_disallowed_level(self, client):
         nid = self._create_novel(client, volume=False, part=False)
         resp = client.post(f"/api/novels/{nid}/nodes", json={"type": "volume", "title": "不该存在的卷"})
@@ -206,6 +220,61 @@ class TestChaptersAPI:
         assert not (ch_dir / "script_final.json").exists()
         assert (ch_dir / "audio_cache" / "x.wav").exists()
         assert (ch_dir / "raw.txt").read_bytes() == b"new content"
+
+    def test_timeline_404_before_tts_then_readable(self, client, tmp_path):
+        nid = client.post("/api/novels", json={"title": "timeline测试"}).json()["novel_id"]
+        ch_id = self._new_chapter(client, nid)
+        client.put(f"/api/novels/{nid}/chapters/{ch_id}/raw", files={"file": ("raw.txt", b"x")})
+
+        assert client.get(f"/api/novels/{nid}/chapters/{ch_id}/timeline").status_code == 404
+
+        ch_dir = tmp_path / "library" / nid / "chapters" / ch_id
+        (ch_dir / "timeline.json").write_text(json.dumps({"chapter_id": ch_id, "items": [{"seg_id": 1}]}))
+        resp = client.get(f"/api/novels/{nid}/chapters/{ch_id}/timeline")
+        assert resp.status_code == 200
+        assert len(resp.json()["items"]) == 1
+
+    def test_segment_audio_404_before_synthesis_then_found(self, client, tmp_path):
+        nid = client.post("/api/novels", json={"title": "音频测试"}).json()["novel_id"]
+        ch_id = self._new_chapter(client, nid)
+        client.put(f"/api/novels/{nid}/chapters/{ch_id}/raw", files={"file": ("raw.txt", b"x")})
+        ch_dir = tmp_path / "library" / nid / "chapters" / ch_id
+        script = [{"seg_id": 1, "speaker": "narrator", "text": "你好", "emotion": "neutral"}]
+        (ch_dir / "script_final.json").write_text(json.dumps(script))
+
+        assert client.get(f"/api/novels/{nid}/chapters/{ch_id}/segments/1/audio").status_code == 404
+
+        from src.utils import calculate_md5
+        (ch_dir / "audio_cache").mkdir()
+        key = calculate_md5("narrator_你好_neutral")
+        (ch_dir / "audio_cache" / f"{key}.wav").write_bytes(b"RIFF....")
+        resp = client.get(f"/api/novels/{nid}/chapters/{ch_id}/segments/1/audio")
+        assert resp.status_code == 200
+        assert resp.content == b"RIFF...."
+
+    def test_segment_audio_unbound_speaker_404(self, client, tmp_path):
+        nid = client.post("/api/novels", json={"title": "未绑定测试"}).json()["novel_id"]
+        ch_id = self._new_chapter(client, nid)
+        client.put(f"/api/novels/{nid}/chapters/{ch_id}/raw", files={"file": ("raw.txt", b"x")})
+        ch_dir = tmp_path / "library" / nid / "chapters" / ch_id
+        script = [{"seg_id": 1, "speaker": None, "text": "你好", "emotion": "neutral"}]
+        (ch_dir / "script_final.json").write_text(json.dumps(script))
+        assert client.get(f"/api/novels/{nid}/chapters/{ch_id}/segments/1/audio").status_code == 404
+
+    def test_output_mp3_404_then_found(self, client, tmp_path):
+        nid = client.post("/api/novels", json={"title": "成品测试"}).json()["novel_id"]
+        ch_id = self._new_chapter(client, nid)
+        client.put(f"/api/novels/{nid}/chapters/{ch_id}/raw", files={"file": ("raw.txt", b"x")})
+
+        assert client.get(f"/api/novels/{nid}/chapters/{ch_id}/output.mp3").status_code == 404
+
+        ch_dir = tmp_path / "library" / nid / "chapters" / ch_id
+        output_dir = ch_dir / "output"
+        output_dir.mkdir()
+        (output_dir / "chapter_0001.mp3").write_bytes(b"ID3fake")
+        resp = client.get(f"/api/novels/{nid}/chapters/{ch_id}/output.mp3")
+        assert resp.status_code == 200
+        assert resp.content == b"ID3fake"
 
 
 class TestSegmentsAPI:

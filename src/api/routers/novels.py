@@ -43,6 +43,19 @@ def delete_novel(nid: str):
     return {"ok": True}
 
 
+def _merge_status_into_tree(nodes: list, status_by_chapter: dict) -> None:
+    """把每个 chapter 节点的状态摘要内联进树（原地修改），前端不用自己拿
+    两份平行数据再拼一遍。只影响本次响应，不会写回 novel.yaml。"""
+    for node in nodes:
+        if node.get("type") == "chapter":
+            ch_status = status_by_chapter.get(node.get("id"))
+            if ch_status:
+                node["status"] = ch_status.get("status")
+        children = node.get("children")
+        if children:
+            _merge_status_into_tree(children, status_by_chapter)
+
+
 @router.get("/{nid}/tree")
 def get_novel_tree(nid: str):
     from src.status_tracker import get_novel_status_summary
@@ -51,6 +64,8 @@ def get_novel_tree(nid: str):
     except FileNotFoundError:
         raise HTTPException(404, f"小说 {nid} 不存在")
     status_summary = get_novel_status_summary(nid)
+    status_by_chapter = {c["chapter_id"]: c for c in status_summary.get("chapters", [])}
+    _merge_status_into_tree(novel.get("tree", []), status_by_chapter)
     return {"novel": novel, "status": status_summary}
 
 
