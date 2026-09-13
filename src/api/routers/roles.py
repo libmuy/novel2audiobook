@@ -3,13 +3,14 @@ import os
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from src import roles, derived_index
 from src.api.schemas import RoleCreate, RoleUpdate
-from src.utils import PROJECT_ROOT
+from src.utils import resolve_path
 
 router = APIRouter(tags=["roles"])
 
 
 def _get_roles_dir() -> str:
-    return os.path.join(PROJECT_ROOT, "roles")
+    # resolve_path 在调用时动态读取 PROJECT_ROOT，见 chapters.py 里的详细注释
+    return resolve_path("roles")
 
 
 @router.get("/roles")

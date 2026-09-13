@@ -2,7 +2,6 @@
 from fastapi import APIRouter, HTTPException
 from src import library
 from src.api.schemas import NovelCreate, NovelUpdate, NodeCreate, NodeUpdate, NodeReorder
-from src.utils import PROJECT_ROOT
 import os
 
 router = APIRouter(prefix="/novels", tags=["novels"])
@@ -57,11 +56,11 @@ def get_novel_tree(nid: str):
 
 @router.post("/{nid}/nodes")
 def create_node(nid: str, data: NodeCreate):
-    novel = library.load_novel(nid)
-    node = {"type": data.type, "title": data.title}
-    library.tree_insert(novel, data.parent_id, node)
-    library.save_novel(novel)
-    return {"ok": True}
+    try:
+        node_id = library.create_node(nid, data.type, data.title, data.parent_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, "node_id": node_id}
 
 
 @router.patch("/{nid}/nodes/{node_id}")
@@ -95,15 +94,21 @@ def reorder_node(nid: str, data: NodeReorder):
 @router.delete("/{nid}/nodes/{node_id}")
 def delete_node(nid: str, node_id: str, confirm: bool = False):
     novel = library.load_novel(nid)
-    affected = library.tree_delete(novel, node_id)
+    try:
+        affected = library.iter_chapters(novel, node_id)
+    except ValueError:
+        raise HTTPException(404, f"节点 {node_id} 不存在")
+
     if not confirm:
+        # 预览模式：只读、不改树也不碰磁盘，真正删除见下面 confirm 分支
         has_audio = False
         for ch_id in affected:
-            ch_dir = os.path.join(PROJECT_ROOT, "library", nid, "chapters", ch_id)
-            output_dir = os.path.join(ch_dir, "output")
-            if os.path.exists(output_dir):
+            ch_dir = library.get_chapter_dir(nid, ch_id)
+            if os.path.isdir(os.path.join(ch_dir, "output")):
                 has_audio = True
                 break
         return {"affected_chapters": len(affected), "has_audio": has_audio, "confirmed": False}
-    library.save_novel(novel)
-    return {"ok": True, "confirmed": True}
+
+    # 确认删除：从树里摘掉节点并把每个受影响章节目录移到 .trash/（不用 rmtree）
+    affected = library.delete_node(nid, node_id)
+    return {"ok": True, "confirmed": True, "affected_chapters": len(affected)}

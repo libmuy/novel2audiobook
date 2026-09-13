@@ -457,31 +457,13 @@ def main():
 
     elif args.command == "node":
         if args.node_action == "add":
-            novel_data = library.load_novel(args.novel)
-            # 为节点生成唯一 ID
-            existing_ids = set()
-            def _collect_ids(nodes):
-                for n in nodes:
-                    existing_ids.add(n.get("id"))
-                    if n.get("children"):
-                        _collect_ids(n["children"])
-            _collect_ids(novel_data.get("tree", []))
-            suffix = 1
-            base_id = f"{args.type[:3]}_{suffix:03d}"
-            while base_id in existing_ids:
-                suffix += 1
-                base_id = f"{args.type[:3]}_{suffix:03d}"
-            node = {"type": args.type, "id": base_id, "title": args.title}
-            library.tree_insert(novel_data, args.parent, node)
-            library.save_novel(novel_data)
-            print(f"已添加节点: {base_id} ({args.title})")
+            node_id = library.create_node(args.novel, args.type, args.title, args.parent)
+            print(f"已添加节点: {node_id} ({args.title})")
         elif args.node_action == "rm":
-            novel_data = library.load_novel(args.novel)
-            affected = library.tree_delete(novel_data, args.node)
-            library.save_novel(novel_data)
+            affected = library.delete_node(args.novel, args.node)
             print(f"已删除节点: {args.node}")
             if affected:
-                print(f"  注意：以下章节从树中移除（磁盘目录仍在）: {affected}")
+                print(f"  以下章节随子树一并移至 .trash/: {affected}")
         else:
             parser_node.print_help()
 

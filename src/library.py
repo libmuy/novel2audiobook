@@ -346,12 +346,36 @@ def tree_rename(novel_data: dict, node_id: str, title: str) -> None:
 
 
 def tree_delete(novel_data: dict, node_id: str) -> list:
-    """从树里摘掉该节点及其整棵子树，返回受影响的 chapter_id 列表。"""
+    """从树里摘掉该节点及其整棵子树，返回受影响的 chapter_id 列表。
+    只改树，不碰磁盘——磁盘目录的搬迁由调用方处理，见 delete_node()。"""
     node, siblings, idx = find_node(novel_data, node_id)
     if node is None:
         raise ValueError(f"节点不存在: {node_id}")
     siblings.pop(idx)
     return _collect_chapter_ids([node])
+
+
+def _collect_all_node_ids(tree: list) -> list:
+    ids = []
+    for node in tree:
+        ids.append(node.get("id"))
+        children = node.get("children")
+        if children:
+            ids.extend(_collect_all_node_ids(children))
+    return ids
+
+
+def generate_node_id(novel_data: dict, node_type: str) -> str:
+    """为新建的 part/volume 节点生成不重复的 ID（如 vol_001）。
+    chapter 节点走 alloc_chapter_id，不要用这个函数。"""
+    prefix = node_type[:3]
+    existing_ids = set(_collect_all_node_ids(novel_data.get("tree", [])))
+    suffix = 1
+    candidate = f"{prefix}_{suffix:03d}"
+    while candidate in existing_ids:
+        suffix += 1
+        candidate = f"{prefix}_{suffix:03d}"
+    return candidate
 
 
 def iter_chapters(novel_data: dict, node_id: str = None) -> list:
@@ -373,6 +397,24 @@ def alloc_chapter_id(novel_data: dict) -> str:
     ch_id = f"ch_{seq:04d}"
     novel_data["next_chapter_seq"] = seq + 1
     return ch_id
+
+
+def create_node(novel_id: str, node_type: str, title: str,
+                parent_id: str = None, library_dir: str = None) -> str:
+    """新建一个 part/volume/chapter 节点并挂到树上，返回新节点 ID。
+    chapter 节点只分配 ID、插入树，不建目录——目录留给后续的 raw 上传/add_chapter 负责，
+    这样 POST /nodes（先建空节点）+ PUT .../raw（后传正文）两步式流程才能成立。"""
+    lock = _get_novel_lock(novel_id)
+    with lock:
+        novel_data = load_novel(novel_id, library_dir)
+        if node_type == "chapter":
+            node_id = alloc_chapter_id(novel_data)
+        else:
+            node_id = generate_node_id(novel_data, node_type)
+        node = {"type": node_type, "id": node_id, "title": title}
+        tree_insert(novel_data, parent_id, node)
+        save_novel(novel_data, library_dir)
+    return node_id
 
 
 def add_chapter(novel_id: str, title: str, raw_text: str,
@@ -424,22 +466,42 @@ def import_chapter_raw(novel_id: str, chapter_id: str, raw_text: str,
     return {"removed": removed, "kept_cache_count": kept}
 
 
+def _move_chapter_dir_to_trash(novel_id: str, chapter_id: str, library_dir: str = None) -> bool:
+    """把单个章节目录移到 library/<nid>/.trash/ 下；目录不存在时什么也不做。
+    返回是否真的移动了（供调用方统计）。"""
+    chapter_dir = get_chapter_dir(novel_id, chapter_id, library_dir)
+    if not os.path.isdir(chapter_dir):
+        return False
+    trash_dir = os.path.join(get_novel_dir(novel_id, library_dir), TRASH_DIR_NAME)
+    os.makedirs(trash_dir, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    shutil.move(chapter_dir, os.path.join(trash_dir, f"{ts}_{chapter_id}"))
+    return True
+
+
 def delete_chapter(novel_id: str, chapter_id: str, library_dir: str = None) -> None:
     lock = _get_novel_lock(novel_id)
     with lock:
         novel_data = load_novel(novel_id, library_dir)
         from src.utils import normalize_chapter_id
         ch_id = normalize_chapter_id(chapter_id)
-        affected = tree_delete(novel_data, ch_id)
+        tree_delete(novel_data, ch_id)
         save_novel(novel_data, library_dir)
+        _move_chapter_dir_to_trash(novel_id, ch_id, library_dir)
 
-        # 移到 .trash/
-        chapter_dir = get_chapter_dir(novel_id, ch_id, library_dir)
-        if os.path.isdir(chapter_dir):
-            trash_dir = os.path.join(get_novel_dir(novel_id, library_dir), TRASH_DIR_NAME)
-            os.makedirs(trash_dir, exist_ok=True)
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            shutil.move(chapter_dir, os.path.join(trash_dir, f"{ts}_{ch_id}"))
+
+def delete_node(novel_id: str, node_id: str, library_dir: str = None) -> list:
+    """删除树中的一个节点（part/volume/chapter 均可，含整棵子树），
+    并把受影响的每个章节目录移到 .trash/（不会用 rmtree 直接删）。
+    返回受影响的 chapter_id 列表。"""
+    lock = _get_novel_lock(novel_id)
+    with lock:
+        novel_data = load_novel(novel_id, library_dir)
+        affected = tree_delete(novel_data, node_id)
+        save_novel(novel_data, library_dir)
+        for ch_id in affected:
+            _move_chapter_dir_to_trash(novel_id, ch_id, library_dir)
+    return affected
 
 
 # --------------------------------------------------------------------------

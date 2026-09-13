@@ -1,9 +1,10 @@
 """系统路由"""
 import os
+import yaml
 from fastapi import APIRouter
 from src.api.deps import get_config, set_config
 from src import monitor
-from src.utils import PROJECT_ROOT, load_global_config
+from src.utils import resolve_path
 
 router = APIRouter(tags=["system"])
 
@@ -15,6 +16,13 @@ ALLOWED_CONFIG_KEYS = {
 }
 
 
+def _config_file_path() -> str:
+    # 故意不做成模块级常量：常量会在 system.py 首次被 import 时把 PROJECT_ROOT
+    # 冻结下来，测试里 monkeypatch PROJECT_ROOT 就不生效了（这个坑真的踩过，
+    # 见 005 review）。resolve_path() 在每次调用时动态读取。
+    return resolve_path("global_config.yaml")
+
+
 @router.get("/config")
 def get_config_endpoint():
     return get_config()
@@ -23,20 +31,29 @@ def get_config_endpoint():
 @router.patch("/config")
 def patch_config(data: dict):
     config = get_config()
-    updated = False
+    applied_keys = []
+    rejected_keys = []
     for key, value in data.items():
         if key not in ALLOWED_CONFIG_KEYS:
+            rejected_keys.append(key)
             continue
         parts = key.split(".")
         section = config
         for p in parts[:-1]:
             section = section.setdefault(p, {})
         section[parts[-1]] = value
-        updated = True
+        applied_keys.append(key)
 
-    if updated:
+    if applied_keys:
+        # 写回磁盘，保证重启后配置仍然生效；不能只改内存里的 _config
+        config_path = _config_file_path()
+        tmp_path = config_path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        os.replace(tmp_path, config_path)
         set_config(config)
-    return {"ok": updated}
+
+    return {"ok": bool(applied_keys), "applied_keys": applied_keys, "rejected_keys": rejected_keys}
 
 
 @router.get("/gpu/owner")

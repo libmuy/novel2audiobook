@@ -1,11 +1,8 @@
 """任务路由"""
-import json
 from fastapi import APIRouter, HTTPException
 from src.api.deps import get_queue
 from src.api.schemas import TaskCreate
 from src import library, preflight
-from src.utils import PROJECT_ROOT
-from src.task_queue import TYPE_PARSE, TYPE_TTS, TYPE_MIX
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -20,7 +17,6 @@ def list_tasks(state: str = None, group_id: str = None, limit: int = 200):
 
 @router.post("")
 def submit_task(data: TaskCreate):
-    from src.task_queue import TASK_LANE
     q = get_queue()
 
     # Determine chapter IDs from scope
@@ -29,14 +25,17 @@ def submit_task(data: TaskCreate):
     chapter_ids = scope.get("chapter_ids")
 
     if not chapter_ids:
-        # Load novel tree to find chapters
+        # 按 node_id（整本/整部/整卷）展开为章节 ID 列表；
+        # iter_chapters 本身返回的就是 chapter_id 字符串列表，不需要再取字段
         try:
             novel = library.load_novel(data.novel_id)
         except FileNotFoundError:
             raise HTTPException(404, f"小说 {data.novel_id} 不存在")
 
-        all_chapters = library.iter_chapters(novel, node_id)
-        chapter_ids = [ch["chapter_id"] for ch in all_chapters]
+        try:
+            chapter_ids = library.iter_chapters(novel, node_id)
+        except ValueError:
+            raise HTTPException(404, f"节点 {node_id} 不存在")
 
     if not chapter_ids:
         raise HTTPException(400, "未找到可处理的章节")
@@ -65,8 +64,10 @@ def preflight_check(data: TaskCreate):
         except FileNotFoundError:
             raise HTTPException(404, f"小说 {data.novel_id} 不存在")
 
-        all_chapters = library.iter_chapters(novel, node_id)
-        chapter_ids = [ch["chapter_id"] for ch in all_chapters]
+        try:
+            chapter_ids = library.iter_chapters(novel, node_id)
+        except ValueError:
+            raise HTTPException(404, f"节点 {node_id} 不存在")
 
     return preflight.preflight(data.type, data.novel_id, chapter_ids)
 

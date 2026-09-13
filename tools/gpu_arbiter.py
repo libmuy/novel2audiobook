@@ -203,16 +203,19 @@ class LlmSuspendedForGpu:
         return self
 
     def __exit__(self, exc_type, exc, tb):
-        # 无论恢复成功与否都删掉标记文件
+        # 标记文件必须在 start_llama_server 完成（或失败）之后才删——如果先删标记
+        # 再重启，进程恰好在 start_llama_server 执行期间（最长可达 startup_timeout
+        # 秒）被强杀，孤儿恢复机制就找不到这次停用的痕迹，llama-server 会永久停摆，
+        # 这正是 recover_orphaned_suspension 存在的意义。无论恢复成功与否都要删。
         if self._was_running:
-            try:
-                os.remove(LLM_SUSPENDED_PATH)
-            except OSError:
-                pass
             if self.model_registry_name:
                 t0 = time.time()
                 start_llama_server(self.model_registry_name, self.port, self.api_base, self.startup_timeout)
                 record_swap_seconds("llm_start", time.time() - t0)
+            try:
+                os.remove(LLM_SUSPENDED_PATH)
+            except OSError:
+                pass
         return False  # 不吞异常
 
 

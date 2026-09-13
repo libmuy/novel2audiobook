@@ -71,7 +71,24 @@ def _handle_parse(task, ctx):
 def _handle_tts(task, ctx):
     from src.tts_engine import process_chapter_tts
     chapter_dir = os.path.join(PROJECT_ROOT, "library", task.novel_id, "chapters", task.chapter_id)
-    process_chapter_tts(chapter_dir, progress_cb=ctx.progress, should_cancel=ctx.should_cancel)
+    t0 = time.time()
+    timeline_path = process_chapter_tts(chapter_dir, progress_cb=ctx.progress, should_cancel=ctx.should_cancel)
+    elapsed = time.time() - t0
+    _record_tts_timing(timeline_path, elapsed)
+
+
+def _record_tts_timing(timeline_path: str, elapsed_seconds: float):
+    """按新合成（非缓存命中）的句子数摊薄总耗时，喂给 preflight 的历史统计。
+    只在真的合成过新句子时记录，避免一次几乎全命中缓存的运行把平均值拉得虚低。"""
+    try:
+        with open(timeline_path, "r", encoding="utf-8") as f:
+            timeline = json.load(f)
+        newly_synthesized = sum(1 for item in timeline.get("items", []) if not item.get("cached"))
+        if newly_synthesized > 0:
+            from src.preflight import update_tts_stats
+            update_tts_stats(elapsed_seconds / newly_synthesized)
+    except (OSError, json.JSONDecodeError, KeyError):
+        pass
 
 
 def _handle_mix(task, ctx):
@@ -285,7 +302,9 @@ class TaskQueue:
 
     def list(self, state: str = None, group_id: str = None, limit: int = 200) -> list:
         results = []
-        for task in self._tasks.values():
+        # 拍个快照再遍历：submit() 会从别的线程往 self._tasks 里插入新 key，
+        # 直接遍历 .values() 可能撞上 "dictionary changed size during iteration"
+        for task in list(self._tasks.values()):
             if state and task.state != state:
                 continue
             if group_id and task.group_id != group_id:
@@ -333,7 +352,7 @@ class TaskQueue:
         """清理超过 max_age_days 天的任务记录"""
         cutoff = time.time() - max_age_days * 86400
         to_remove = []
-        for task_id, task in self._tasks.items():
+        for task_id, task in list(self._tasks.items()):
             if task.state not in (STATE_SUCCEEDED, STATE_FAILED, STATE_CANCELLED):
                 continue
             try:

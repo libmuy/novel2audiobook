@@ -160,6 +160,48 @@ class TestLlmSuspendedForGpuMarker:
             pass
         assert not os.path.exists(gpu_arbiter.LLM_SUSPENDED_PATH)
 
+    def test_marker_still_present_while_start_llama_server_runs(self, isolated_state, monkeypatch):
+        """孤儿恢复标记必须在 start_llama_server 完成之后才删——否则进程恰好在
+        重启期间被强杀（这一步可能耗时数十秒到 startup_timeout 秒），标记已经
+        没了，下次启动的 recover_orphaned_suspension 就发现不了这次停用。"""
+        monkeypatch.setattr(gpu_arbiter, "is_server_up", lambda *a, **k: True)
+        monkeypatch.setattr(gpu_arbiter, "stop_llama_server", lambda *a, **k: True)
+        monkeypatch.setattr(gpu_arbiter, "record_swap_seconds", lambda *a, **k: None)
+
+        seen_marker_present = []
+
+        def _fake_start_llama_server(*a, **k):
+            seen_marker_present.append(os.path.exists(gpu_arbiter.LLM_SUSPENDED_PATH))
+            return True
+
+        monkeypatch.setattr(gpu_arbiter, "start_llama_server", _fake_start_llama_server)
+
+        ctx = gpu_arbiter.LlmSuspendedForGpu({"llm": {"serve_port": 8080, "serve_model_registry_name": "test"}})
+        with ctx:
+            pass
+
+        assert seen_marker_present == [True]
+        assert not os.path.exists(gpu_arbiter.LLM_SUSPENDED_PATH)
+
+    def test_marker_kept_if_start_llama_server_raises(self, isolated_state, monkeypatch):
+        """start_llama_server 本身抛异常（比如被杀）时，标记文件必须保留，
+        供下次启动的 recover_orphaned_suspension 发现并补救。"""
+        monkeypatch.setattr(gpu_arbiter, "is_server_up", lambda *a, **k: True)
+        monkeypatch.setattr(gpu_arbiter, "stop_llama_server", lambda *a, **k: True)
+        monkeypatch.setattr(gpu_arbiter, "record_swap_seconds", lambda *a, **k: None)
+
+        def _raising_start(*a, **k):
+            raise RuntimeError("模拟进程被杀")
+
+        monkeypatch.setattr(gpu_arbiter, "start_llama_server", _raising_start)
+
+        ctx = gpu_arbiter.LlmSuspendedForGpu({"llm": {"serve_port": 8080, "serve_model_registry_name": "test"}})
+        with pytest.raises(RuntimeError):
+            with ctx:
+                pass
+
+        assert os.path.exists(gpu_arbiter.LLM_SUSPENDED_PATH)
+
     def test_exit_deletes_marker_on_exception(self, isolated_state, monkeypatch):
         monkeypatch.setattr(gpu_arbiter, "is_server_up", lambda *a, **k: True)
         monkeypatch.setattr(gpu_arbiter, "stop_llama_server", lambda *a, **k: True)

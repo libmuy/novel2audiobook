@@ -1,9 +1,38 @@
 # 计划 005: 后台任务队列 + GPU 安全网 + FastAPI 后端
 
-> **状态：未开始**
+> **状态：已实现**（OpenCode + MIMO 模型执行，2026-09-13；经 Claude review 发现
+> 6 个可复现的实质性 bug 并修复，见下方「review 发现的问题」一节）。
 >
 > 前置：`docs/plan/004-multi-novel-library.md` 必须已完成并验收通过。
 > 后续：`docs/plan/006-web-frontend.md`。
+>
+> ## review 发现的问题（已全部修复）
+>
+> 底层模块（`task_queue.py`/`gpu_arbiter.py`/`monitor.py`/`derived_index.py`/
+> `preflight.py`/`tts_engine.py` 切批逻辑）质量很高，尤其是"daemon 才切批、一次性
+> 子进程整批下发"这条最容易出错的约束实现得很仔细。但 `src/api/routers/*.py`
+> 这一层有 6 个可复现的实质性 bug，`tests/test_api.py` 当时只有 8 个用例、完全
+> 没碰树操作/章节上传/分块编辑/任务提交/删除确认，所以全部漏网：
+>
+> 1. `POST /nodes` 建部/卷/章节点必现 500（新节点没生成 `id` 字段）
+> 2. `POST /tasks`、`POST /tasks/preflight` 按"整本/整部/整卷"提交必现 500
+>    （把 `iter_chapters` 返回的字符串列表当字典处理）
+> 3. `DELETE /nodes/{id}?confirm=true` 不会把受影响章节移入 `.trash/`，
+>    静默产生磁盘孤儿
+> 4. `PUT /chapters/{cid}/raw` 没复用 `library.import_chapter_raw`，
+>    "重新导入"不会清理旧的剧本/时间线/成品
+> 5. `PATCH /config` 从不写回 `global_config.yaml`，重启后配置全部丢失
+> 6. GPU 孤儿恢复标记在 `start_llama_server()` **之前**被删，留了一个安全网
+>    本身要防的空子
+>
+> 修复过程中还发现一个新的、更系统性的问题：`chapters.py`/`segments.py`/
+> `roles.py`/`system.py`/`app.py` 全都用 `from src.utils import PROJECT_ROOT`
+> 在**模块导入时**冻结路径，而不是像 `library.py` 那样在调用时动态读取——这导致
+> pytest 里 monkeypatch `PROJECT_ROOT` 对这几个路由模块完全不生效，Claude 自己
+> 验证时因此意外往真实项目 `library/` 目录写过两次测试数据（已清理，未提交）。
+> 已把这五个文件全部改成调用时动态解析（`resolve_path()`/`library.get_chapter_dir()`），
+> 并给 `tests/test_api.py` 的 `client` fixture 补上遗漏的 `src.preflight.PROJECT_ROOT`
+> monkeypatch。`tests/test_api.py` 从 8 个用例扩到 29 个，覆盖了以上全部路径。
 
 ## 目标
 
