@@ -1,7 +1,9 @@
 # 计划 006: Web 前端（小说管理 / 配音工作台 / 角色库 / 系统配置）
 
-> **状态：已实现**（OpenCode + MIMO 模型执行，2026-09-13；经 Claude review
-> 发现规模远超 004/005 的问题并修复，见下方「review 发现的问题」一节）。
+> **状态：已实现**（OpenCode + MIMO 模型执行，2026-09-13；经三轮 Claude
+> review 发现并修复问题——初次实现、批量任务/角色分类/混音格式补漏、
+> Playwright headless 测试与真实拖拽 bug，见下方各节）。虚拟滚动仍未实现，
+> 见文末「仍未处理」。
 >
 > 前置：`docs/plan/004-multi-novel-library.md` 与
 > `docs/plan/005-task-queue-and-api.md` 必须都已完成并验收通过。
@@ -93,9 +95,36 @@
 > `.cache/index/`、`.cache/tasks/`（005 引入的任务队列状态和角色引用派生索引，
 > 都是可随时删除重建的运行时缓存）补上了忽略规则。
 >
+> ## 第三轮：Playwright headless 测试 + 真实拖拽验证发现的问题（同日）
+>
+> OpenCode + MIMO 补了 `tests/test_web_ui.py`（19 个用例，真起服务 +
+> headless Chromium）。Claude review 时发现这份测试本身质量不均：多数
+> 用例是真实的浏览器交互，但"拖拽"和"未绑定角色"这两个本次改造里最需要
+> 验证的场景，测试写法上绕开了真正要测的东西——
+> `TestTreeDragDrop` 不模拟真实拖拽，直接调 `POST /nodes/reorder` 假装
+> "拖拽发生了"；`TestUnboundSpeakerFlow` 的正文没有任何对话、也从没提交
+> 过 parse 任务，断言又写成"页面任意位置出现『未绑定』三个字"——这两个
+> 问题叠加，就算对应功能完全没做，测试也会通过。
+>
+> 用 `page.mouse.down/move/up` 做真实连续两次拖拽后，**实测复现了一个
+> 真实 bug**：`novel-detail-page` 的 `loadTree()` 每次调用都会让 `loading`
+> 从 `true` 切到 `false`，`v-if`/`v-else` 因此每次都重建 `.tree-content`
+> 的 DOM，但重新挂载 SortableJS 实例的判断条件（`wasLoading`）只在"首次
+> 加载完成"时为真——第一次拖拽触发的 `reorder -> loadTree()` 刷新会重建
+> DOM 却不重新挂 Sortable，**从第二次拖拽开始全部静默失效，没有任何报错**。
+> 已修复（改成每次 `loadTree()` 完成后都无条件重挂），并把
+> `TestTreeDragDrop`/`TestUnboundSpeakerFlow` 两个测试改成真实拖拽 + 真实
+> parse 验证，确认能测出这个 bug（对着修复前的代码跑会失败）。
+>
+> 用真实点击（非直接调 API）额外验证过、确认工作正常：批量任务按钮点击
+> → 预检弹窗显示正确汇总 → 确认提交 → 任务队列出现新任务，控制台零报错。
+>
 > 仍未处理、诚实记录：
-> - 拖拽排序改用 SortableJS 接上了，但没有真实浏览器环境点击验证过，
->   下次涉及这块建议找人工或有浏览器工具的会话实测一遍。
+> - **配音工作台没有实现虚拟滚动**——计划里"长章节（100+ 分块）必须做
+>   虚拟滚动，只渲染可视区域附近的卡片"这条要求没有落地，300+ 分块目前
+>   是整份渲染进 DOM。功能上能用（Playwright 实测 350 句在 headless
+>   Chromium 里几秒内能加载完），但不满足原计划的性能设计，章节再大几倍
+>   时会有多卡顿没有验证过。是否现在补，等用户拍板。
 
 ## 目标
 
