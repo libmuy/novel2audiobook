@@ -21,6 +21,7 @@ import tempfile
 
 from src.utils import calculate_md5, update_chapter_status, load_global_config, resolve_path
 from src import roles as roles_mod
+from src.pipeline_errors import TaskCancelled
 
 logger = logging.getLogger(__name__)
 
@@ -161,13 +162,24 @@ class IndexTTSBackend:
             from tools.gpu_arbiter import LlmSuspendedForTts  # 延迟导入，避免无网络场景下的循环依赖
 
             proc = None
+            self._current_proc = None
             try:
                 with LlmSuspendedForTts(self.config):
-                    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=self.timeout)
+                    proc = subprocess.Popen(
+                        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        start_new_session=True,  # 独立进程组，取消时可整体 kill
+                    )
+                    self._current_proc = proc
+                    out, err = proc.communicate(timeout=self.timeout)
+                self._current_proc = None
                 if proc.returncode != 0:
-                    logger.warning("[IndexTTSBackend] 批量合成子进程返回非零: %s", proc.stderr[-1000:])
+                    logger.warning("[IndexTTSBackend] 批量合成子进程返回非零: %s", err.decode(errors="replace")[-1000:])
             except subprocess.TimeoutExpired:
                 logger.warning("[IndexTTSBackend] 批量合成超时（%d 条任务）", len(jobs))
+                if proc:
+                    self.terminate_current()
+            finally:
+                self._current_proc = None
 
             results = {}
             if os.path.exists(result_file):
@@ -184,6 +196,26 @@ class IndexTTSBackend:
                 for job in jobs:
                     results[job["id"]] = False
             return results
+
+    def terminate_current(self):
+        """取消任务时由 TaskQueue 调用。先 terminate 整个进程组，宽限 5 秒再 kill。
+        用 os.killpg 而不是 proc.terminate()——start_new_session=True 起的是独立进程组，
+        IndexTTS 内部可能还有子进程。"""
+        proc = self._current_proc
+        if proc is None:
+            return
+        try:
+            os.killpg(os.getpgid(proc.pid), 15)  # SIGTERM
+        except (ProcessLookupError, PermissionError):
+            pass
+        try:
+            proc.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(os.getpgid(proc.pid), 9)  # SIGKILL
+            except (ProcessLookupError, PermissionError):
+                pass
+        self._current_proc = None
 
 
 def build_tts_backend(config: dict = None):
@@ -207,7 +239,8 @@ def build_tts_backend(config: dict = None):
 # --------------------------------------------------------------------------
 
 def generate_tts_incremental(chapter_dir: str, script_final_data: list, sample_rate: int = 24000,
-                              backend=None, roles_dir: str = None) -> dict:
+                              backend=None, roles_dir: str = None,
+                              progress_cb=None, should_cancel=None, chunk_size=None, config=None) -> dict:
     """
     遍历 JSON 的每一句，使用 MD5(speaker + text + emotion) 计算哈希值作为文件名。
     检查 audio_cache/ 下是否已有该文件。如果有，跳过合成；如果没有，调用 TTS 后端生成。
@@ -224,6 +257,8 @@ def generate_tts_incremental(chapter_dir: str, script_final_data: list, sample_r
 
     if backend is None:
         backend = build_tts_backend()
+    if config is None:
+        config = load_global_config()
 
     audio_cache_dir = os.path.join(chapter_dir, "audio_cache")
     os.makedirs(audio_cache_dir, exist_ok=True)
@@ -250,6 +285,10 @@ def generate_tts_incremental(chapter_dir: str, script_final_data: list, sample_r
                 "emotion": emotion, "out": audio_path, "sample_rate": sample_rate,
             }
 
+    # 报告总任务数
+    if progress_cb:
+        progress_cb(0, len(script_final_data), f"共 {len(script_final_data)} 句，需新合成 {len(pending_jobs)} 句")
+
     # 第二遍：批量合成，失败的任务逐条回退 Mock，保证整章合成不中断
     if pending_jobs:
         # 按参考音频路径稳定排序后再下发：script 顺序天然是多角色交替的，
@@ -259,11 +298,36 @@ def generate_tts_incremental(chapter_dir: str, script_final_data: list, sample_r
         # 下发，同角色内可以命中缓存，只在切换角色时才重新提取一次。
         # 结果顺序仅影响合成阶段的耗时，不影响 seg_infos 拼接的时间线顺序。
         batch_jobs = sorted(pending_jobs.values(), key=lambda job: job["role_cfg"].get("reference_audio", ""))
-        batch_results = backend.synthesize_batch(batch_jobs)
-        for hash_val, job in pending_jobs.items():
-            if not batch_results.get(hash_val):
-                used_fallback = True
-                MockTTSBackend().synthesize(job["text"], job["role_cfg"], job["emotion"], job["out"], sample_rate)
+
+        # 检查后端是否支持切批（常驻 daemon 模型常驻显存，切批成本低）
+        supports_chunking = getattr(backend, "supports_chunking", False)
+        effective_chunk_size = chunk_size or config.get("server", {}).get("gpu_chunk_size", 8)
+
+        if supports_chunking and effective_chunk_size and effective_chunk_size > 0:
+            # 常驻 daemon 后端：按已排序列表切连续窗口
+            for i in range(0, len(batch_jobs), effective_chunk_size):
+                if should_cancel and should_cancel():
+                    logger.info("TTS 合成被取消（已合成 %d/%d 句，已缓存的 wav 留在 audio_cache/）",
+                                i, len(batch_jobs))
+                    raise TaskCancelled(f"用户取消（已合成 {i}/{len(batch_jobs)} 句）")
+                chunk = batch_jobs[i:i + effective_chunk_size]
+                batch_results = backend.synthesize_batch(chunk)
+                for job in chunk:
+                    if not batch_results.get(job["id"]):
+                        used_fallback = True
+                        MockTTSBackend().synthesize(job["text"], job["role_cfg"], job["emotion"], job["out"], sample_rate)
+                if progress_cb:
+                    progress_cb(min(i + effective_chunk_size, len(batch_jobs)),
+                                len(batch_jobs), f"已合成 {min(i + effective_chunk_size, len(batch_jobs))}/{len(batch_jobs)} 句")
+        else:
+            # 一次性子进程后端（IndexTTSBackend）：整批下发，切批会重载模型
+            batch_results = backend.synthesize_batch(batch_jobs)
+            for hash_val, job in pending_jobs.items():
+                if not batch_results.get(hash_val):
+                    used_fallback = True
+                    MockTTSBackend().synthesize(job["text"], job["role_cfg"], job["emotion"], job["out"], sample_rate)
+            if progress_cb:
+                progress_cb(len(batch_jobs), len(batch_jobs), f"已合成 {len(batch_jobs)}/{len(batch_jobs)} 句")
 
     # 第三遍：按顺序读取实际时长，拼出时间线
     timeline_items = []
@@ -313,7 +377,8 @@ def generate_tts_incremental(chapter_dir: str, script_final_data: list, sample_r
     return timeline_data
 
 
-def process_chapter_tts(chapter_dir: str, roles_dir: str = None, backend=None) -> str:
+def process_chapter_tts(chapter_dir: str, roles_dir: str = None, backend=None,
+                        progress_cb=None, should_cancel=None) -> str:
     """
     基于 script_final.json 执行哈希增量 TTS，如果 script_final.json 不存在则抛出错误。
 
@@ -331,5 +396,6 @@ def process_chapter_tts(chapter_dir: str, roles_dir: str = None, backend=None) -
     with open(script_final_path, "r", encoding="utf-8") as f:
         script_final_data = json.load(f)
 
-    generate_tts_incremental(chapter_dir, script_final_data, backend=backend, roles_dir=roles_dir)
+    generate_tts_incremental(chapter_dir, script_final_data, backend=backend, roles_dir=roles_dir,
+                             progress_cb=progress_cb, should_cancel=should_cancel)
     return os.path.join(chapter_dir, "timeline.json")

@@ -48,6 +48,9 @@ TTS_DAEMON_SOCKET_PATH = os.path.join(TTS_DAEMON_STATE_DIR, "daemon.sock")
 
 SWAP_HISTORY_PATH = os.path.join(PROJECT_ROOT, ".cache", "gpu_arbiter", "swap_history.json")
 
+# 孤儿恢复标记：记录哪个进程停掉了 llama-server，以便进程被强杀后能恢复
+LLM_SUSPENDED_PATH = os.path.join(PROJECT_ROOT, ".cache", "gpu_arbiter", "llm_suspended.json")
+
 
 def _find_listening_pid(port: int) -> int:
     """通过 ss 查找监听指定端口的进程 PID，未找到返回 None"""
@@ -109,6 +112,57 @@ def start_llama_server(model_registry_name: str, port: int, api_base: str, start
     return False
 
 
+def recover_orphaned_suspension(config: dict = None) -> dict:
+    """
+    检查是否存在「llama-server 被某个已经死掉的进程停用后没人负责恢复」的孤儿状态。
+    存在就把 llama-server 拉回来并清掉标记文件。
+    返回 {"recovered": bool, "reason": str}。
+    只在服务启动/关闭这类明确的时机调用，不要做成后台轮询。
+    """
+    if not os.path.exists(LLM_SUSPENDED_PATH):
+        return {"recovered": False, "reason": "无孤儿标记"}
+
+    try:
+        with open(LLM_SUSPENDED_PATH, "r", encoding="utf-8") as f:
+            marker = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {"recovered": False, "reason": "标记文件损坏"}
+
+    pid = marker.get("pid")
+    if pid is None:
+        # 标记文件没有 pid，视为损坏
+        try:
+            os.remove(LLM_SUSPENDED_PATH)
+        except OSError:
+            pass
+        return {"recovered": False, "reason": "标记文件无 pid 字段"}
+
+    if is_pid_alive(pid):
+        return {"recovered": False, "reason": f"pid {pid} 仍在运行，非孤儿"}
+
+    # pid 已死，需要恢复 llama-server
+    if config is None:
+        from src.utils import load_global_config
+        config = load_global_config()
+
+    llm_cfg = config.get("llm", {})
+    model_registry_name = marker.get("model_registry_name", llm_cfg.get("serve_model_registry_name", ""))
+    port = llm_cfg.get("serve_port", 8080)
+    api_base = llm_cfg.get("api_base", f"http://localhost:{port}/v1")
+    startup_timeout = llm_cfg.get("server_start_timeout_sec", 180)
+
+    ok = start_llama_server(model_registry_name, port, api_base, startup_timeout)
+    try:
+        os.remove(LLM_SUSPENDED_PATH)
+    except OSError:
+        pass
+
+    if ok:
+        return {"recovered": True, "reason": f"pid {pid} 已死，已恢复 llama-server"}
+    else:
+        return {"recovered": False, "reason": f"pid {pid} 已死，但恢复 llama-server 失败"}
+
+
 class LlmSuspendedForGpu:
     """
     上下文管理器：进入时若 llama-server 正在运行则停止，退出时恢复
@@ -135,13 +189,30 @@ class LlmSuspendedForGpu:
             t0 = time.time()
             stop_llama_server(self.port)
             record_swap_seconds("llm_stop", time.time() - t0)
+            # 写孤儿恢复标记：记录当前 pid 和 model_registry_name
+            os.makedirs(os.path.dirname(LLM_SUSPENDED_PATH), exist_ok=True)
+            marker = {
+                "pid": os.getpid(),
+                "since": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "model_registry_name": self.model_registry_name,
+            }
+            tmp_path = LLM_SUSPENDED_PATH + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(marker, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, LLM_SUSPENDED_PATH)
         return self
 
     def __exit__(self, exc_type, exc, tb):
-        if self._was_running and self.model_registry_name:
-            t0 = time.time()
-            start_llama_server(self.model_registry_name, self.port, self.api_base, self.startup_timeout)
-            record_swap_seconds("llm_start", time.time() - t0)
+        # 无论恢复成功与否都删掉标记文件
+        if self._was_running:
+            try:
+                os.remove(LLM_SUSPENDED_PATH)
+            except OSError:
+                pass
+            if self.model_registry_name:
+                t0 = time.time()
+                start_llama_server(self.model_registry_name, self.port, self.api_base, self.startup_timeout)
+                record_swap_seconds("llm_start", time.time() - t0)
         return False  # 不吞异常
 
 

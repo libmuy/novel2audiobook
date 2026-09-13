@@ -248,7 +248,12 @@ def main():
     parser_tts_serve.add_argument("action", choices=["start", "stop", "status"])
     parser_tts_serve.add_argument("--yes", action="store_true", help="启动时跳过 GPU 换手确认")
 
-    # 8. novel
+    # 8. webui
+    parser_webui = subparsers.add_parser("webui", help="启动 FastAPI 管理界面")
+    parser_webui.add_argument("--host", default="127.0.0.1", help="监听地址（默认 127.0.0.1）")
+    parser_webui.add_argument("--port", type=int, default=7860, help="监听端口（默认 7860）")
+
+    # 9. novel
     parser_novel = subparsers.add_parser("novel", help="管理小说库")
     novel_sub = parser_novel.add_subparsers(dest="novel_action")
     novel_sub.add_parser("list", help="列出所有小说")
@@ -426,6 +431,12 @@ def main():
                 else:
                     print(f"停止失败: {result['error']}")
                     sys.exit(1)
+
+    elif args.command == "webui":
+        import uvicorn
+        from src.api.app import create_app
+        print(f"--> 启动管理界面: http://{args.host}:{args.port}/ (Ctrl+C 停止)")
+        uvicorn.run(create_app(), host=args.host, port=args.port)
 
     elif args.command == "novel":
         if args.novel_action == "list":

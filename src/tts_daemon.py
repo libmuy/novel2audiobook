@@ -44,6 +44,8 @@ class IndexTTSDaemon:
     gpu_arbiter.record_swap_seconds()，供下次 plan_swap() 展示。
     """
 
+    supports_chunking = True  # 常驻 daemon 模型常驻显存，切批成本低
+
     def __init__(self, config: dict = None):
         self.config = config if config is not None else load_global_config()
         tts_cfg = self.config.get("tts", {}).get("index_tts", {})

@@ -57,6 +57,11 @@ server:
   library_root: "library"   # 小说库根目录，相对项目根
   host: "127.0.0.1"
   port: 7860
+  cpu_workers: 2              # CPU lane 的并发数；GPU lane 恒为 1，不可配
+  gpu_chunk_size: 8           # 常驻 daemon 后端的切批大小，决定取消的响应粒度
+  monitor_interval_ms: 1000   # 资源监控推送间隔
+  task_retention_days: 7      # 任务记录保留天数
+  drm_card: null              # null = 自动探测；本机是 /sys/class/drm/card1
 
 mixing:
   voice_only: true          # 当前阶段先只做旁白/角色人声成片，跳过环境音/音效

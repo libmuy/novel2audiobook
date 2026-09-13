@@ -19,6 +19,7 @@ import requests
 
 from src.utils import update_chapter_status, load_global_config, list_available_assets
 from src import roles as roles_mod
+from src.pipeline_errors import TaskCancelled
 
 logger = logging.getLogger(__name__)
 
@@ -278,7 +279,8 @@ def build_backend(config: dict):
     return HeuristicBackend()
 
 
-def parse_text_to_json(text: str, backend=None, roles_dir: str = None) -> list:
+def parse_text_to_json(text: str, backend=None, roles_dir: str = None,
+                       progress_cb=None, should_cancel=None) -> list:
     """
     解析长文本为细颗粒度（句子级）的剧本 JSON 数据结构。
 
@@ -299,7 +301,9 @@ def parse_text_to_json(text: str, backend=None, roles_dir: str = None) -> list:
 
     script_segments = []
     seg_id = 1
-    for para in paragraphs:
+    for idx, para in enumerate(paragraphs):
+        if should_cancel and should_cancel():
+            raise TaskCancelled(f"用户取消（已完成 {idx}/{len(paragraphs)} 段）")
         try:
             raw_segments = backend.parse_paragraph(para, manifest, assets)
         except Exception as e:  # noqa: BLE001 - 单段失败不应中断整章解析
@@ -325,10 +329,14 @@ def parse_text_to_json(text: str, backend=None, roles_dir: str = None) -> list:
             })
             seg_id += 1
 
+        if progress_cb:
+            progress_cb(idx + 1, len(paragraphs), f"已解析 {idx + 1}/{len(paragraphs)} 段")
+
     return script_segments
 
 
-def process_chapter_parse(chapter_dir: str, roles_dir: str = None) -> str:
+def process_chapter_parse(chapter_dir: str, roles_dir: str = None,
+                          progress_cb=None, should_cancel=None) -> str:
     """
     读取 raw.txt，生成 script_draft.json
     """
@@ -339,7 +347,8 @@ def process_chapter_parse(chapter_dir: str, roles_dir: str = None) -> str:
     with open(raw_path, "r", encoding="utf-8") as f:
         text = f.read()
 
-    script_draft = parse_text_to_json(text, roles_dir=roles_dir)
+    script_draft = parse_text_to_json(text, roles_dir=roles_dir,
+                                      progress_cb=progress_cb, should_cancel=should_cancel)
 
     draft_path = os.path.join(chapter_dir, "script_draft.json")
     with open(draft_path, "w", encoding="utf-8") as f:

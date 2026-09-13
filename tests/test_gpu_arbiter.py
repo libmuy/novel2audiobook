@@ -21,6 +21,7 @@ def isolated_state(tmp_path, monkeypatch):
     monkeypatch.setattr(gpu_arbiter, "TTS_DAEMON_STATE_PATH", os.path.join(state_dir, "state.json"))
     monkeypatch.setattr(gpu_arbiter, "TTS_DAEMON_SOCKET_PATH", os.path.join(state_dir, "daemon.sock"))
     monkeypatch.setattr(gpu_arbiter, "SWAP_HISTORY_PATH", str(tmp_path / "gpu_arbiter" / "swap_history.json"))
+    monkeypatch.setattr(gpu_arbiter, "LLM_SUSPENDED_PATH", str(tmp_path / "gpu_arbiter" / "llm_suspended.json"))
     return tmp_path
 
 
@@ -130,3 +131,104 @@ class TestPlanSwap:
         monkeypatch.setattr(gpu_arbiter, "get_current_owner", lambda config=None: gpu_arbiter.OWNER_LLM)
         plan = gpu_arbiter.plan_swap(gpu_arbiter.OWNER_TTS)
         assert plan["estimated_seconds"] is None
+
+
+class TestLlmSuspendedForGpuMarker:
+    """测试 LlmSuspendedForGpu 的孤儿恢复标记文件写入/删除"""
+
+    def test_enter_creates_marker_file(self, isolated_state, monkeypatch):
+        monkeypatch.setattr(gpu_arbiter, "is_server_up", lambda *a, **k: True)
+        monkeypatch.setattr(gpu_arbiter, "stop_llama_server", lambda *a, **k: True)
+        monkeypatch.setattr(gpu_arbiter, "record_swap_seconds", lambda *a, **k: None)
+
+        ctx = gpu_arbiter.LlmSuspendedForGpu({"llm": {"serve_port": 8080}})
+        with ctx:
+            assert os.path.exists(gpu_arbiter.LLM_SUSPENDED_PATH)
+            with open(gpu_arbiter.LLM_SUSPENDED_PATH, "r") as f:
+                marker = json.load(f)
+            assert marker["pid"] == os.getpid()
+            assert "model_registry_name" in marker
+
+    def test_exit_deletes_marker_file(self, isolated_state, monkeypatch):
+        monkeypatch.setattr(gpu_arbiter, "is_server_up", lambda *a, **k: True)
+        monkeypatch.setattr(gpu_arbiter, "stop_llama_server", lambda *a, **k: True)
+        monkeypatch.setattr(gpu_arbiter, "record_swap_seconds", lambda *a, **k: None)
+        monkeypatch.setattr(gpu_arbiter, "start_llama_server", lambda *a, **k: True)
+
+        ctx = gpu_arbiter.LlmSuspendedForGpu({"llm": {"serve_port": 8080, "serve_model_registry_name": "test"}})
+        with ctx:
+            pass
+        assert not os.path.exists(gpu_arbiter.LLM_SUSPENDED_PATH)
+
+    def test_exit_deletes_marker_on_exception(self, isolated_state, monkeypatch):
+        monkeypatch.setattr(gpu_arbiter, "is_server_up", lambda *a, **k: True)
+        monkeypatch.setattr(gpu_arbiter, "stop_llama_server", lambda *a, **k: True)
+        monkeypatch.setattr(gpu_arbiter, "record_swap_seconds", lambda *a, **k: None)
+        monkeypatch.setattr(gpu_arbiter, "start_llama_server", lambda *a, **k: True)
+
+        ctx = gpu_arbiter.LlmSuspendedForGpu({"llm": {"serve_port": 8080, "serve_model_registry_name": "test"}})
+        with pytest.raises(RuntimeError):
+            with ctx:
+                raise RuntimeError("test exception")
+        assert not os.path.exists(gpu_arbiter.LLM_SUSPENDED_PATH)
+
+    def test_no_marker_when_server_not_running(self, isolated_state, monkeypatch):
+        monkeypatch.setattr(gpu_arbiter, "is_server_up", lambda *a, **k: False)
+
+        ctx = gpu_arbiter.LlmSuspendedForGpu({"llm": {"serve_port": 8080}})
+        with ctx:
+            assert not os.path.exists(gpu_arbiter.LLM_SUSPENDED_PATH)
+
+
+class TestRecoverOrphanedSuspension:
+    """测试孤儿恢复功能"""
+
+    def test_no_marker_file(self, isolated_state):
+        result = gpu_arbiter.recover_orphaned_suspension()
+        assert result["recovered"] is False
+        assert "无孤儿标记" in result["reason"]
+
+    def test_pid_alive_no_recovery(self, isolated_state, monkeypatch):
+        os.makedirs(os.path.dirname(gpu_arbiter.LLM_SUSPENDED_PATH), exist_ok=True)
+        with open(gpu_arbiter.LLM_SUSPENDED_PATH, "w") as f:
+            json.dump({"pid": os.getpid(), "since": "2026-01-01", "model_registry_name": "test"}, f)
+
+        result = gpu_arbiter.recover_orphaned_suspension()
+        assert result["recovered"] is False
+        assert "仍在运行" in result["reason"]
+        assert os.path.exists(gpu_arbiter.LLM_SUSPENDED_PATH)
+
+    def test_pid_dead_recovers(self, isolated_state, monkeypatch):
+        os.makedirs(os.path.dirname(gpu_arbiter.LLM_SUSPENDED_PATH), exist_ok=True)
+        with open(gpu_arbiter.LLM_SUSPENDED_PATH, "w") as f:
+            json.dump({"pid": 99999999, "since": "2026-01-01", "model_registry_name": "test"}, f)
+
+        start_called = []
+        monkeypatch.setattr(gpu_arbiter, "start_llama_server", lambda *a, **k: start_called.append(True) or True)
+        monkeypatch.setattr(gpu_arbiter, "is_server_up", lambda *a, **k: True)
+
+        result = gpu_arbiter.recover_orphaned_suspension({"llm": {"serve_port": 8080}})
+        assert result["recovered"] is True
+        assert len(start_called) == 1
+        assert not os.path.exists(gpu_arbiter.LLM_SUSPENDED_PATH)
+
+    def test_pid_dead_marker_deleted_even_on_failure(self, isolated_state, monkeypatch):
+        os.makedirs(os.path.dirname(gpu_arbiter.LLM_SUSPENDED_PATH), exist_ok=True)
+        with open(gpu_arbiter.LLM_SUSPENDED_PATH, "w") as f:
+            json.dump({"pid": 99999999, "since": "2026-01-01", "model_registry_name": "test"}, f)
+
+        monkeypatch.setattr(gpu_arbiter, "start_llama_server", lambda *a, **k: False)
+
+        result = gpu_arbiter.recover_orphaned_suspension({"llm": {"serve_port": 8080}})
+        assert result["recovered"] is False
+        assert "失败" in result["reason"]
+        assert not os.path.exists(gpu_arbiter.LLM_SUSPENDED_PATH)
+
+    def test_corrupted_marker_file(self, isolated_state):
+        os.makedirs(os.path.dirname(gpu_arbiter.LLM_SUSPENDED_PATH), exist_ok=True)
+        with open(gpu_arbiter.LLM_SUSPENDED_PATH, "w") as f:
+            f.write("not valid json {{{")
+
+        result = gpu_arbiter.recover_orphaned_suspension()
+        assert result["recovered"] is False
+        assert "损坏" in result["reason"]
