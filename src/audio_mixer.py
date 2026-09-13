@@ -271,18 +271,26 @@ def mix_chapter(chapter_dir: str, timeline_data: dict = None, config: dict = Non
     # 4. 三轨终极混音 (人声 + 闪避后BGM + SFX)
     final_mix = vocal_track.overlay(bgm_track).overlay(sfx_track)
 
-    # 5. 导出成品 MP3 文件
+    # 5. 导出成品文件，格式由 mixing.output_format 决定（默认 mp3，兼容旧行为）
     if output_stem is None:
         base = os.path.basename(os.path.abspath(chapter_dir))
         num = base[3:] if base.startswith("ch_") else base
         output_stem = f"chapter_{num}"
     output_dir = os.path.join(chapter_dir, "output")
     os.makedirs(output_dir, exist_ok=True)
-    output_mp3_path = os.path.join(output_dir, f"{output_stem}.mp3")
+
+    output_format = str(mixing_cfg.get("output_format") or "mp3").lower()
+    if output_format not in ("mp3", "wav", "flac"):
+        output_format = "mp3"
+    output_path = os.path.join(output_dir, f"{output_stem}.{output_format}")
 
     try:
-        final_mix.export(output_mp3_path, format="mp3", bitrate=mixing_cfg.get("bitrate", "192k"))
+        export_kwargs = {"bitrate": mixing_cfg.get("bitrate", "192k")} if output_format == "mp3" else {}
+        final_mix.export(output_path, format=output_format, **export_kwargs)
+        output_mp3_path = output_path
     except Exception:
+        # 目标格式的编码器不可用（比如系统 ffmpeg 没编译 flac 支持）时，
+        # 回退到 wav——pydub/ffmpeg 原生支持，几乎不会失败
         output_wav_path = os.path.join(output_dir, f"{output_stem}.wav")
         final_mix.export(output_wav_path, format="wav")
         output_mp3_path = output_wav_path

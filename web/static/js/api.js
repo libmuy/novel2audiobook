@@ -145,6 +145,10 @@ const API = {
         return this.request('/roles');
     },
 
+    getRoleReferenceUrl(roleId) {
+        return `/api/roles/${roleId}/reference?t=${Date.now()}`;
+    },
+
     async createRole(data) {
         return this.request('/roles', {
             method: 'POST',
@@ -174,10 +178,8 @@ const API = {
         });
     },
 
-    // 角色分类管理（自定义分类 CRUD）：后端目前没有 /role-categories 路由，
-    // 角色库页面现在是从已有角色列表里 derive 出筛选用的分类集合，属于
-    // 🟡 后续迭代，这两个函数不删是为了以后接的时候不用重新设计接口形状，
-    // 但当前没有任何地方调用它们
+    // 角色分类管理（自定义分类 CRUD），存在 roles_manifest.json 顶层的
+    // categories 数组里，跟每个角色自己的 category 字段是分开的两件事
     async getRoleCategories() {
         return this.request('/role-categories');
     },

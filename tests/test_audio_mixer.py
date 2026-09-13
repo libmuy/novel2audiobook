@@ -205,6 +205,40 @@ class TestMixChapter:
 
         assert status_data.get("status") == "completed"
 
+    def test_mix_chapter_respects_output_format_wav(self, tmp_chapter_dir, tmp_roles_dir, sample_timeline_json):
+        """mixing.output_format=wav 时应该真的导出 wav，不是硬编码 mp3"""
+        for item in sample_timeline_json["items"]:
+            audio_path = os.path.join(tmp_chapter_dir, item["audio_path"])
+            create_sample_wav_file(audio_path, duration_ms=1000)
+
+        config = {"mixing": {"voice_only": True, "output_format": "wav"}}
+        output_path = audio_mixer.mix_chapter(tmp_chapter_dir, timeline_data=sample_timeline_json, config=config)
+
+        assert output_path.endswith(".wav")
+        assert os.path.exists(output_path)
+
+    def test_mix_chapter_defaults_to_mp3_when_unset(self, tmp_chapter_dir, tmp_roles_dir, sample_timeline_json):
+        """不配置 output_format 时保持原有行为（默认 mp3）"""
+        for item in sample_timeline_json["items"]:
+            audio_path = os.path.join(tmp_chapter_dir, item["audio_path"])
+            create_sample_wav_file(audio_path, duration_ms=1000)
+
+        config = {"mixing": {"voice_only": True}}
+        output_path = audio_mixer.mix_chapter(tmp_chapter_dir, timeline_data=sample_timeline_json, config=config)
+
+        assert output_path.endswith(".mp3")
+
+    def test_mix_chapter_invalid_output_format_falls_back_to_mp3(self, tmp_chapter_dir, tmp_roles_dir, sample_timeline_json):
+        """不认识的格式名不应该让整个混音失败，退回 mp3"""
+        for item in sample_timeline_json["items"]:
+            audio_path = os.path.join(tmp_chapter_dir, item["audio_path"])
+            create_sample_wav_file(audio_path, duration_ms=1000)
+
+        config = {"mixing": {"voice_only": True, "output_format": "ogg-not-supported"}}
+        output_path = audio_mixer.mix_chapter(tmp_chapter_dir, timeline_data=sample_timeline_json, config=config)
+
+        assert output_path.endswith(".mp3")
+
 
 class TestMixChapterVoiceOnly:
     """纯人声混音模式功能测试（阶段 A3：效果音先延后，避免占位音悄悄混入成片）"""

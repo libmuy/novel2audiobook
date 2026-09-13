@@ -639,6 +639,17 @@ app.component('novel-detail-page', {
                         <h3 class="detail-title">选择节点查看详情</h3>
                     </div>
                 </div>
+
+                <div class="content-section">
+                    <h4 class="section-title">批量任务</h4>
+                    <p class="form-help">范围：{{ scopeLabel }}</p>
+                    <div class="flex gap-2">
+                        <button class="btn btn-secondary" @click="batchParse">批量解析</button>
+                        <button class="btn btn-secondary" @click="batchTTS">批量生成人声</button>
+                        <button class="btn btn-secondary" @click="batchMix">批量混音导出</button>
+                    </div>
+                </div>
+
                 <div class="detail-content">
                     <div v-if="selectedNode && selectedNode.type === 'chapter'">
                         <div class="stats-bar mb-4">
@@ -674,14 +685,6 @@ app.component('novel-detail-page', {
                             </div>
                         </div>
                         
-                        <div class="content-section">
-                            <h4 class="section-title">批量任务</h4>
-                            <div class="flex gap-2">
-                                <button class="btn btn-secondary" @click="batchParse">批量解析</button>
-                                <button class="btn btn-secondary" @click="batchTTS">批量生成人声</button>
-                                <button class="btn btn-secondary" @click="batchMix">批量混音导出</button>
-                            </div>
-                        </div>
                     </div>
                     <div v-else-if="selectedNode">
                         <div class="content-section">
@@ -787,6 +790,20 @@ app.component('novel-detail-page', {
                 .filter((n) => n.type === 'chapter' && selectedNodes.value.includes(n.id))
                 .map((n) => n.id)
         );
+
+        // 批量任务的按钮是常驻的（不依赖具体选中了哪种节点），这里给用户一个
+        // 明确的范围提示，跟 buildTaskScope() 的判断逻辑保持一致
+        const scopeLabel = computed(() => {
+            if (selectedChapterIds.value.length > 0) {
+                return `已选中 ${selectedChapterIds.value.length} 个章节`;
+            }
+            if (selectedNode.value) {
+                const typeLabel = selectedNode.value.type === 'chapter' ? '章节'
+                    : selectedNode.value.type === 'part' ? '部' : '卷';
+                return `${typeLabel}《${selectedNode.value.title}》`;
+            }
+            return '整本小说';
+        });
 
         const statusClass = (status) => {
             if (!status) return 'pending';
@@ -1201,6 +1218,7 @@ app.component('novel-detail-page', {
             treeContainer,
             onReorder,
             statusClass,
+            scopeLabel,
             taskTitle,
             taskStateLabel,
             refreshTree,
@@ -1686,8 +1704,8 @@ app.component('roles-page', {
         
         <div class="content-section">
             <div class="flex gap-2 mb-4">
-                <span 
-                    v-for="category in categories" 
+                <span
+                    v-for="category in allCategories"
                     :key="category"
                     class="category-tag"
                     :class="{ active: selectedCategory === category }"
@@ -1695,13 +1713,38 @@ app.component('roles-page', {
                 >
                     {{ category }}
                 </span>
-                <span 
+                <span
                     class="category-tag"
                     :class="{ active: !selectedCategory }"
                     @click="filterByCategory(null)"
                 >
                     全部
                 </span>
+                <button class="btn btn-secondary btn-sm" @click="showCategoryDialog = true">管理分类</button>
+            </div>
+        </div>
+
+        <div v-if="showCategoryDialog" class="modal-overlay" @click.self="showCategoryDialog = false">
+            <div class="modal">
+                <div class="modal-header">
+                    <h2 class="modal-title">管理角色分类</h2>
+                    <button class="modal-close" @click="showCategoryDialog = false">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="flex gap-2 mb-2">
+                        <input type="text" class="form-input" v-model="newCategoryName" placeholder="新分类名称"
+                               @keyup.enter="addCategory">
+                        <button class="btn btn-secondary" @click="addCategory">添加</button>
+                    </div>
+                    <div v-for="category in categories" :key="category" class="flex gap-2 mb-2" style="align-items:center;">
+                        <span style="flex:1;">{{ category }}</span>
+                        <button class="btn btn-danger btn-sm" @click="removeCategory(category)">删除</button>
+                    </div>
+                    <p v-if="categories.length === 0" class="form-help">还没有自定义分类</p>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-primary" @click="showCategoryDialog = false">完成</button>
+                </div>
             </div>
         </div>
         
@@ -1734,16 +1777,16 @@ app.component('roles-page', {
                     </div>
                 </div>
                 
-                <div v-if="role.reference_audio" class="audio-player">
-                    <audio :src="role.reference_audio" controls></audio>
+                <div v-if="role.has_reference" class="audio-player">
+                    <audio :src="referenceUrl(role.id)" controls></audio>
                 </div>
-                
+
                 <div class="role-stats">
-                    <span class="embedding-status" :class="role.embedding_valid ? 'valid' : 'invalid'">
-                        {{ role.embedding_valid ? '✓ Embedding 有效' : '✗ Embedding 无效' }}
+                    <span class="embedding-status" :class="embeddingClass(role.embedding_status)">
+                        {{ embeddingLabel(role.embedding_status) }}
                     </span>
                     <span class="ml-2">
-                        被 {{ role.novel_count || 0 }} 本小说、{{ role.segment_count || 0 }} 个分块引用
+                        被 {{ (role.novels || []).length }} 本小说、{{ role.segment_count || 0 }} 个分块引用
                     </span>
                 </div>
             </div>
@@ -1763,7 +1806,13 @@ app.component('roles-page', {
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label">分类</label>
-                            <input type="text" class="form-input" v-model="form.category" placeholder="请输入分类">
+                            <select class="form-select" v-model="form.category">
+                                <option value="">未分类</option>
+                                <option v-for="category in categories" :key="category" :value="category">
+                                    {{ category }}
+                                </option>
+                            </select>
+                            <p class="form-help">没有想要的分类？先在上面"管理分类"里加一个</p>
                         </div>
                         <div class="form-group">
                             <label class="form-label">性别</label>
@@ -1798,11 +1847,16 @@ app.component('roles-page', {
         </div>
     `,
     setup() {
+        const showToast = inject('showToast');
+
         const roles = ref([]);
         const loading = ref(true);
         const selectedCategory = ref(null);
         const showDialog = ref(false);
         const editingRole = ref(null);
+        const showCategoryDialog = ref(false);
+        const categories = ref([]); // 管理分类里那份"正式登记"的分类列表
+        const newCategoryName = ref('');
         const form = reactive({
             name: '',
             category: '',
@@ -1812,12 +1866,12 @@ app.component('roles-page', {
             reference_audio: null,
         });
 
-        const categories = computed(() => {
-            const cats = new Set();
+        // 筛选栏用的是"正式分类 + 角色实际在用但没被登记的分类"的并集，
+        // 避免管理分类之前创建的角色因为分类没在列表里就消失
+        const allCategories = computed(() => {
+            const cats = new Set(categories.value);
             roles.value.forEach(role => {
-                if (role.category) {
-                    cats.add(role.category);
-                }
+                if (role.category) cats.add(role.category);
             });
             return Array.from(cats);
         });
@@ -1827,6 +1881,21 @@ app.component('roles-page', {
             return roles.value.filter(role => role.category === selectedCategory.value);
         });
 
+        const referenceUrl = (roleId) => API.getRoleReferenceUrl(roleId);
+
+        const embeddingLabel = (status) => {
+            if (!status) return '⚪ 未知';
+            if (status.valid) return '✓ Embedding 有效';
+            if (!status.exists) return '⚪ 尚未预计算（首次使用时自动生成）';
+            return `✗ Embedding 已过期（${status.stale_reason || '需要重新预计算'}）`;
+        };
+        const embeddingClass = (status) => {
+            if (!status) return 'unknown';
+            if (status.valid) return 'valid';
+            if (!status.exists) return 'pending';
+            return 'invalid';
+        };
+
         const loadRoles = async () => {
             loading.value = true;
             try {
@@ -1835,6 +1904,46 @@ app.component('roles-page', {
                 console.error('加载角色失败:', error);
             } finally {
                 loading.value = false;
+            }
+        };
+
+        const loadCategories = async () => {
+            try {
+                const data = await API.getRoleCategories();
+                categories.value = data.categories || [];
+            } catch (error) {
+                console.error('加载分类失败:', error);
+            }
+        };
+
+        const addCategory = async () => {
+            const name = newCategoryName.value.trim();
+            if (!name || categories.value.includes(name)) {
+                newCategoryName.value = '';
+                return;
+            }
+            try {
+                const { categories: updated } = await API.updateRoleCategories({
+                    categories: [...categories.value, name],
+                });
+                categories.value = updated;
+                newCategoryName.value = '';
+            } catch (error) {
+                console.error('添加分类失败:', error);
+                showToast?.(`添加失败: ${error.message}`, 'error');
+            }
+        };
+
+        const removeCategory = async (name) => {
+            try {
+                const { categories: updated } = await API.updateRoleCategories({
+                    categories: categories.value.filter((c) => c !== name),
+                });
+                categories.value = updated;
+                if (selectedCategory.value === name) selectedCategory.value = null;
+            } catch (error) {
+                console.error('删除分类失败:', error);
+                showToast?.(`删除失败: ${error.message}`, 'error');
             }
         };
 
@@ -1933,6 +2042,7 @@ app.component('roles-page', {
 
         onMounted(() => {
             loadRoles();
+            loadCategories();
         });
 
         return {
@@ -1940,11 +2050,19 @@ app.component('roles-page', {
             loading,
             selectedCategory,
             categories,
+            allCategories,
+            showCategoryDialog,
+            newCategoryName,
             filteredRoles,
             showDialog,
             editingRole,
             form,
+            referenceUrl,
+            embeddingLabel,
+            embeddingClass,
             filterByCategory,
+            addCategory,
+            removeCategory,
             showCreateDialog,
             editRole,
             closeDialog,

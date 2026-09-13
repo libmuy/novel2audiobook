@@ -127,12 +127,19 @@ def get_segment_audio(nid: str, cid: str, seg_id: str):
     return FileResponse(audio_path, media_type="audio/wav")
 
 
+_OUTPUT_MEDIA_TYPES = {".mp3": "audio/mpeg", ".wav": "audio/wav", ".flac": "audio/flac"}
+
+
 @router.get("/{cid}/output.mp3")
 def get_output_audio(nid: str, cid: str):
+    """成品实际格式由 mixing.output_format 决定，不一定是 mp3——
+    URL 路径固定叫 output.mp3 只是为了前端调用方便，这里按实际扩展名找文件、
+    按实际格式设 Content-Type，浏览器 <audio> 播放看的是 Content-Type 不是 URL。"""
     ch_dir = _get_chapter_dir(nid, cid)
     output_dir = os.path.join(ch_dir, "output")
     if os.path.isdir(output_dir):
-        mp3s = [f for f in os.listdir(output_dir) if f.endswith(".mp3")]
-        if mp3s:
-            return FileResponse(os.path.join(output_dir, mp3s[0]), media_type="audio/mpeg")
-    raise HTTPException(404, "还没有生成成品 MP3")
+        for fname in sorted(os.listdir(output_dir)):
+            ext = os.path.splitext(fname)[1].lower()
+            if ext in _OUTPUT_MEDIA_TYPES:
+                return FileResponse(os.path.join(output_dir, fname), media_type=_OUTPUT_MEDIA_TYPES[ext])
+    raise HTTPException(404, "还没有生成成品音频")

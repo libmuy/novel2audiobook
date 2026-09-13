@@ -327,6 +327,56 @@ class TestRolesAPI:
         resp = client.delete("/api/roles/narrator")
         assert resp.status_code == 400
 
+    def test_role_has_embedding_status_and_reference_flag(self, client):
+        role_id = client.post("/api/roles", json={"name": "测试角色"}).json()["role_id"]
+        role = client.get("/api/roles").json()[0]
+        assert role["id"] == role_id
+        assert role["has_reference"] is False
+        assert role["embedding_status"]["exists"] is False
+
+    def test_reference_audio_404_then_served(self, client):
+        role_id = client.post("/api/roles", json={"name": "测试角色2"}).json()["role_id"]
+        assert client.get(f"/api/roles/{role_id}/reference").status_code == 404
+
+        resp = client.put(f"/api/roles/{role_id}/reference",
+                          files={"file": ("ref.wav", b"RIFFfake", "audio/wav")})
+        assert resp.status_code == 200
+
+        resp = client.get(f"/api/roles/{role_id}/reference")
+        assert resp.status_code == 200
+        assert resp.content == b"RIFFfake"
+
+        role = next(r for r in client.get("/api/roles").json() if r["id"] == role_id)
+        assert role["has_reference"] is True
+
+
+class TestRoleCategoriesAPI:
+    def test_empty_by_default(self, client):
+        resp = client.get("/api/role-categories")
+        assert resp.status_code == 200
+        assert resp.json() == {"categories": []}
+
+    def test_put_persists_and_dedupes(self, client):
+        resp = client.put("/api/role-categories", json={"categories": ["主角", "配角", "主角", " ", ""]})
+        assert resp.status_code == 200
+        assert resp.json()["categories"] == ["主角", "配角"]
+
+        resp = client.get("/api/role-categories")
+        assert resp.json()["categories"] == ["主角", "配角"]
+
+    def test_put_rejects_non_list(self, client):
+        resp = client.put("/api/role-categories", json={"categories": "主角"})
+        assert resp.status_code == 400
+
+    def test_deleting_category_does_not_touch_existing_roles(self, client):
+        client.put("/api/role-categories", json={"categories": ["主角"]})
+        role_id = client.post("/api/roles", json={"name": "苏砚", "category": "主角"}).json()["role_id"]
+
+        client.put("/api/role-categories", json={"categories": []})
+
+        role = next(r for r in client.get("/api/roles").json() if r["id"] == role_id)
+        assert role["category"] == "主角"  # 分类被摘掉了，角色自己的字段不受影响
+
 
 class TestTasksAPI:
     def test_list_tasks_empty(self, client):

@@ -3,12 +3,18 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Audio build caches and outputs
-chapters/*/audio_cache/*.wav
-chapters/*/output/*.mp3
-chapters/*/output/*.wav
-chapters/*/output/*.srt
+# Audio build caches and outputs（计划 004 起章节目录搬到了 library/<novel_id>/chapters/
+# 下面，这几条路径如果不跟着改，生成的音频会变成完全没被忽略）
+library/*/chapters/*/audio_cache/*.wav
+library/*/chapters/*/output/*.mp3
+library/*/chapters/*/output/*.wav
+library/*/chapters/*/output/*.srt
+library/*/.trash/
 .venv/
+
+# 后台任务队列状态/日志、角色引用派生索引：都是运行时可重建的缓存，不随代码分发
+.cache/index/
+.cache/tasks/
 
 # IndexTTS-2.5 独立推理环境：官方源码仓库（自行 git clone，见 docs/indextts_setup.md）
 # 与 ROCm venv，均为本机专属大体积产物，不随代码分发
