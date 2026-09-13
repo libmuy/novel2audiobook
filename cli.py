@@ -447,7 +447,6 @@ def main():
     elif args.command == "node":
         if args.node_action == "add":
             novel_data = library.load_novel(args.novel)
-            node_id = f"{args.type[:3]}_{novel_data.get('next_chapter_seq', 1):03d}"
             # 为节点生成唯一 ID
             existing_ids = set()
             def _collect_ids(nodes):

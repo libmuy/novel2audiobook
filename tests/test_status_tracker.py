@@ -178,3 +178,46 @@ class TestGetAllChaptersStatus:
 
         chapter_ids = [item["chapter_id"] for item in result]
         assert chapter_ids == ["ch_0001", "ch_0002", "ch_0003"]
+
+
+class TestGetNovelStatusSummary:
+    """get_novel_status_summary 对多小说树级聚合的测试"""
+
+    def test_empty_novel_has_zero_total(self, tmp_path):
+        from src import library
+        lib = str(tmp_path / "library")
+        nid = library.create_novel("空书", library_dir=lib)
+
+        summary = status_tracker.get_novel_status_summary(nid, library_dir=lib)
+
+        assert summary["total"] == 0
+        assert summary["by_status"] == {}
+        assert summary["chapters"] == []
+
+    def test_aggregates_by_status(self, tmp_path):
+        from src import library
+        lib = str(tmp_path / "library")
+        nid = library.create_novel("聚合测试", library_dir=lib)
+        library.add_chapter(nid, "第一章", "正文一", library_dir=lib)
+        library.add_chapter(nid, "第二章", "正文二", library_dir=lib)
+
+        summary = status_tracker.get_novel_status_summary(nid, library_dir=lib)
+
+        assert summary["total"] == 2
+        assert summary["by_status"] == {"UNKNOWN": 2}
+        assert {c["chapter_id"] for c in summary["chapters"]} == {"ch_0001", "ch_0002"}
+
+    def test_only_counts_this_novels_chapters(self, tmp_path):
+        from src import library
+        lib = str(tmp_path / "library")
+        nid_a = library.create_novel("小说甲", library_dir=lib)
+        nid_b = library.create_novel("小说乙", library_dir=lib)
+        library.add_chapter(nid_a, "第一章", "正文", library_dir=lib)
+        library.add_chapter(nid_b, "第一章", "正文", library_dir=lib)
+        library.add_chapter(nid_b, "第二章", "正文", library_dir=lib)
+
+        summary_a = status_tracker.get_novel_status_summary(nid_a, library_dir=lib)
+        summary_b = status_tracker.get_novel_status_summary(nid_b, library_dir=lib)
+
+        assert summary_a["total"] == 1
+        assert summary_b["total"] == 2

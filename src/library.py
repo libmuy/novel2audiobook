@@ -428,8 +428,6 @@ def delete_chapter(novel_id: str, chapter_id: str, library_dir: str = None) -> N
     lock = _get_novel_lock(novel_id)
     with lock:
         novel_data = load_novel(novel_id, library_dir)
-        ch_id = _utils_get_chapter_dir.__wrapped__(chapter_id) if hasattr(_utils_get_chapter_dir, '__wrapped__') else None
-        # 用 normalize 逻辑
         from src.utils import normalize_chapter_id
         ch_id = normalize_chapter_id(chapter_id)
         affected = tree_delete(novel_data, ch_id)
