@@ -1,6 +1,7 @@
 # 计划 006: Web 前端（小说管理 / 配音工作台 / 角色库 / 系统配置）
 
-> **状态：未开始**
+> **状态：已完成**（OpenCode + MIMO 模型执行，2026-09-13；经 Claude review
+> 发现 6 个可复现的实质性 bug 并修复，见下方「review 发现的问题」一节）。
 >
 > 前置：`docs/plan/004-multi-novel-library.md` 与
 > `docs/plan/005-task-queue-and-api.md` 必须都已完成并验收通过。
@@ -356,3 +357,32 @@ Sortable 用 1.x 的 UMD 构建。
 - **不要编造 GPU 耗时估算**，后端返回 null 就老实显示「未知」。
 - **不要给几十个任务同时拉日志**，只有展开的那一个才拉。
 - 界面文案用中文，与项目其余部分保持一致。
+
+---
+
+## review 发现的问题（已全部修复）
+
+底层模块（`task_queue.py`/`gpu_arbiter.py`/`monitor.py`/`derived_index.py`/
+`preflight.py`/`tts_engine.py` 切批逻辑）质量很高，尤其是"daemon 才切批、一次性
+子进程整批下发"这条最容易出错的约束实现得很仔细。但 `src/api/routers/*.py`
+这一层有 6 个可复现的实质性 bug，`tests/test_api.py` 当时只有 8 个用例、完全
+没碰树操作/章节上传/分块编辑/任务提交/删除确认，所以全部漏网：
+
+1. `POST /nodes` 建部/卷/章节点必现 500（新节点没生成 `id` 字段）
+2. `POST /tasks`、`POST /tasks/preflight` 按"整本/整部/整卷"提交必现 500
+   （把 `iter_chapters` 返回的字符串列表当字典处理）
+3. `DELETE /nodes/{id}?confirm=true` 不会把受影响章节移入 `.trash/`，
+   而是直接 `os.unlink` 删文件——与计划 004 里规定的"两步确认 + 移入回收站"语义不符
+4. `PUT /chapters/{cid}/raw` 重新导入时，新正文会覆盖旧 `raw.txt` 但不会触发
+   `import_chapter_raw`（后者负责清空剧本/时间线/成品 MP3），导致旧数据残留
+5. `PATCH /config` 读取 `global_config.yaml` 后只改内存不写回磁盘
+6. GPU 占用者标记（`gpu_arbiter._orphan_marker_path`）在 `__exit__` 时
+   只删 marker 不恢复 llama-server——如果 `start_llama_server()` 抛异常，llama-server
+   就永远停不下来
+
+另外 `src/api/app.py` 里 `PROJECT_ROOT` 被 `from src.utils import PROJECT_ROOT`
+冻结成 import-time 的绝对路径，导致所有 router 在单元测试（`chdir` 到临时目录）
+里都找不到 `library_root`。修复方案：所有 router 改用 `resolve_path()` 在调用时
+动态解析路径，不再依赖冻结常量。
+
+测试用例从 8 个扩充到 29 个，覆盖上述全部 6 个 bug 路径。
