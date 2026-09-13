@@ -524,6 +524,11 @@ body {
     margin-bottom: 8px;
     cursor: pointer;
     transition: all 0.2s;
+    /* 固定高度是虚拟滚动能用固定行高计算 spacer 高度的前提，
+       改这个值要同步改 app.js 里 workbench-page 的 ROW_HEIGHT 常量 */
+    height: 80px;
+    box-sizing: border-box;
+    overflow: hidden;
 }
 
 .segment-card:hover {

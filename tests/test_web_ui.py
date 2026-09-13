@@ -422,52 +422,64 @@ class TestBatchTaskFlow:
 
 
 # ---------------------------------------------------------------------------
-# 7. 长章节不卡 — virtual scrolling performance
+# 7. 长章节不卡 — 虚拟滚动
+#
+# 之前的版本只上传了 raw.txt、从没跑过 parse，工作台里其实是"暂无分块"的
+# 空状态——350 行文本渲染 0 张卡片当然"不卡"，这个测试测不出虚拟滚动
+# 有没有做。直接写 script_final.json（跳过真实 parse，更快更确定）造出
+# 500 个分块，检查 DOM 里实际渲染的 .segment-card 数量是否远小于 500。
 class TestLongChapter:
-    def test_long_chapter_loads(self, page, server):
-        """A chapter with many segments should load without errors."""
+    def test_long_chapter_uses_virtual_scroll(self, page, server):
+        """500 个分块的章节，DOM 里同时存在的卡片数应该远小于 500，
+        且滚动到底部后能看到最后一个分块、看不到第一个（证明是真的虚拟滚动，
+        不是只截断了统计数字）。"""
         import httpx
+        import json as _json
         base = f"http://127.0.0.1:{server['port']}"
 
-        # Create novel + chapter
         novel_resp = httpx.post(f"{base}/api/novels", json={
-            "title": "长章节测试",
-            "description": "",
-            "levels": {"part": False, "volume": False},
+            "title": "长章节测试", "description": "", "levels": {"part": False, "volume": False},
         })
         nid = novel_resp.json()["novel_id"]
-
-        ch_resp = httpx.post(f"{base}/api/novels/{nid}/nodes", json={
-            "type": "chapter",
-            "title": "超长章节",
-        })
+        ch_resp = httpx.post(f"{base}/api/novels/{nid}/nodes", json={"type": "chapter", "title": "超长章节"})
         cid = ch_resp.json()["node_id"]
 
-        # Upload 300+ lines of text (each line becomes a segment)
-        lines = [f"这是第{i+1}行测试文本，用于验证虚拟滚动性能" for i in range(350)]
-        raw_text = "\n".join(lines)
+        n = 500
+        script = [{"seg_id": i + 1, "speaker": "narrator", "text": f"第{i+1}句测试文本", "emotion": "neutral"}
+                  for i in range(n)]
+        raw_text = "\n\n".join(s["text"] for s in script)
         upload_resp = httpx.put(
             f"{base}/api/novels/{nid}/chapters/{cid}/raw?confirm=1",
             files={"file": ("raw.txt", raw_text.encode(), "text/plain")},
         )
         assert upload_resp.status_code == 200
+        script_path = os.path.join(server["library_dir"], nid, "chapters", cid, "script_final.json")
+        with open(script_path, "w", encoding="utf-8") as f:
+            _json.dump(script, f, ensure_ascii=False)
 
-        # Navigate to workbench — should not crash
         start = time.time()
-        page.goto(f"http://127.0.0.1:{server['port']}/#/novels/{nid}/chapters/{cid}")
+        page.goto(f"{base}/#/novels/{nid}/chapters/{cid}")
         page.wait_for_load_state("networkidle")
+        time.sleep(0.5)
         elapsed = time.time() - start
-
-        # Page should load within reasonable time (10s for 350 segments)
         assert elapsed < 10, f"Long chapter took {elapsed:.1f}s to load"
 
-        # Check no JS errors
-        errors = []
-        page.on("pageerror", lambda err: errors.append(str(err)))
-        time.sleep(1)
-        # The page should have rendered segment cards
-        content = page.content()
-        assert "segment" in content.lower() or "分块" in content
+        assert f"{n}" in page.locator(".stat-value").first.text_content(), "顶部总分块数应该是完整的 500"
+
+        rendered = page.locator(".segment-card").count()
+        assert 0 < rendered < 100, (
+            f"500 个分块，DOM 里同时渲染了 {rendered} 张卡片——"
+            "应该远小于 500，否则不算虚拟滚动"
+        )
+        assert "第1句" in page.content()
+        assert "第500句" not in page.content(), "刚打开时不该已经渲染到最后一条"
+
+        page.evaluate("document.querySelector('.segment-list-content').scrollTop = "
+                       "document.querySelector('.segment-list-content').scrollHeight")
+        time.sleep(0.5)
+        assert "第500句" in page.content(), "滚动到底部后应该能看到最后一个分块"
+        rendered_at_bottom = page.locator(".segment-card").count()
+        assert 0 < rendered_at_bottom < 100
 
 
 # ---------------------------------------------------------------------------

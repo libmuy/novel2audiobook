@@ -1287,7 +1287,7 @@ app.component('workbench-page', {
                         </button>
                     </div>
                 </div>
-                <div class="segment-list-content" ref="segmentList">
+                <div class="segment-list-content" ref="segmentList" @scroll="onSegmentListScroll">
                     <div v-if="loading" class="empty-state">
                         <div class="loading-spinner"></div>
                     </div>
@@ -1297,11 +1297,14 @@ app.component('workbench-page', {
                         <p class="empty-state-description">请先解析该章节</p>
                     </div>
                     <div v-else>
-                        <div 
-                            v-for="segment in segments" 
+                        <!-- 虚拟滚动：只渲染可视区域附近的卡片，上下用等高的空白 div
+                             撑住总滚动高度，长章节（几百上千分块）不会全部塞进 DOM -->
+                        <div :style="{ height: topSpacerHeight + 'px' }"></div>
+                        <div
+                            v-for="segment in visibleSegments"
                             :key="segment.seg_id"
                             class="segment-card"
-                            :class="{ 
+                            :class="{
                                 selected: selectedSegments.includes(segment.seg_id),
                                 unbound: !segment.speaker
                             }"
@@ -1316,6 +1319,7 @@ app.component('workbench-page', {
                                 {{ segment.speaker || '⚠ 未绑定' }}
                             </div>
                         </div>
+                        <div :style="{ height: bottomSpacerHeight + 'px' }"></div>
                     </div>
                 </div>
                 <div v-if="selectedSegments.length > 0" class="batch-actions-bar">
@@ -1431,6 +1435,38 @@ app.component('workbench-page', {
         const audioUrl = ref('');
         const segmentList = ref(null);
         const dubbedCount = ref(0); // 来自 timeline.json，不是分块自身的字段
+
+        // 虚拟滚动：长章节（100+ 分块）不能把所有卡片都塞进 DOM，否则滚动会卡。
+        // 固定行高（跟 CSS 里 .segment-card 的 height 保持一致）+ 只渲染可视区域
+        // 附近的卡片，上下各留一段空白 spacer div 撑住总滚动高度，这样滚动条
+        // 长度/位置看起来跟真的渲染了全部卡片一样。
+        const ROW_HEIGHT = 88; // 必须跟 app.css 里 .segment-card 的 height 对应
+        const ROW_BUFFER = 6; // 可视区域上下各多渲染几行，减少快速滚动时的白屏
+        const scrollTop = ref(0);
+        const viewportHeight = ref(600);
+
+        const visibleRange = computed(() => {
+            const total = segments.value.length;
+            if (total === 0) return { start: 0, end: 0 };
+            const start = Math.max(0, Math.floor(scrollTop.value / ROW_HEIGHT) - ROW_BUFFER);
+            const visibleCount = Math.ceil(viewportHeight.value / ROW_HEIGHT) + ROW_BUFFER * 2;
+            const end = Math.min(total, start + visibleCount);
+            return { start, end };
+        });
+        const visibleSegments = computed(() =>
+            segments.value.slice(visibleRange.value.start, visibleRange.value.end)
+        );
+        const topSpacerHeight = computed(() => visibleRange.value.start * ROW_HEIGHT);
+        const bottomSpacerHeight = computed(() =>
+            Math.max(0, segments.value.length - visibleRange.value.end) * ROW_HEIGHT
+        );
+
+        const onSegmentListScroll = () => {
+            if (segmentList.value) scrollTop.value = segmentList.value.scrollTop;
+        };
+        const updateViewportHeight = () => {
+            if (segmentList.value) viewportHeight.value = segmentList.value.clientHeight || 600;
+        };
 
         const editForm = reactive({
             text: '',
@@ -1659,6 +1695,11 @@ app.component('workbench-page', {
 
         onMounted(async () => {
             await Promise.all([loadSegments(), loadRoles()]);
+            nextTick(() => updateViewportHeight());
+            window.addEventListener('resize', updateViewportHeight);
+        });
+        onUnmounted(() => {
+            window.removeEventListener('resize', updateViewportHeight);
         });
 
         return {
@@ -1673,6 +1714,10 @@ app.component('workbench-page', {
             selectedRoleName,
             stats,
             segmentList,
+            visibleSegments,
+            topSpacerHeight,
+            bottomSpacerHeight,
+            onSegmentListScroll,
             selectSegment,
             selectAllUnbound,
             selectRole,
