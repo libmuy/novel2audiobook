@@ -1,6 +1,9 @@
 # 计划 004: 多小说数据层 + 拆除旧界面 + parse 语义变更
 
-> **状态：未开始**
+> **状态：已实现**（本地 Qwen3.8 + OpenCode 执行，2026-09-13；经 Claude review
+> 并修复两处死代码、补齐 `get_novel_status_summary` 测试覆盖，见
+> `10f16f9` 提交）。经 297+3 个 pytest 用例、`cli.py test --all`、以及真实
+> GPU 环境下两本小说 parse → 人工定稿 → tts → mix 全链路手工验证通过。
 >
 > 本计划是「多小说 Web 管理界面」三部曲的第一步，后续见
 > `docs/plan/005-task-queue-and-api.md`、`docs/plan/006-web-frontend.md`。
