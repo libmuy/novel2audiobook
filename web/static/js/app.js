@@ -707,8 +707,8 @@ app.component('novel-detail-page', {
             </div>
         </div>
 
-        <input type="file" ref="chapterFileInput" accept=".txt" style="display:none" @change="onChapterFileSelected">
-        <input type="file" ref="reimportFileInput" accept=".txt" style="display:none" @change="onReimportFileSelected">
+        <input type="file" ref="chapterFileInput" accept=".txt,.md" style="display:none" @change="onChapterFileSelected">
+        <input type="file" ref="reimportFileInput" accept=".txt,.md" style="display:none" @change="onReimportFileSelected">
 
         <div class="task-panel" v-if="tasks.length > 0">
             <div class="task-panel-header" @click="toggleTaskPanel">

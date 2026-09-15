@@ -250,7 +250,7 @@ def main():
 
     # 8. webui
     parser_webui = subparsers.add_parser("webui", help="启动 FastAPI 管理界面")
-    parser_webui.add_argument("--host", default="127.0.0.1", help="监听地址（默认 127.0.0.1）")
+    parser_webui.add_argument("--host", default="0.0.0.0", help="监听地址（默认 0.0.0.0）")
     parser_webui.add_argument("--port", type=int, default=7860, help="监听端口（默认 7860）")
 
     # 9. novel

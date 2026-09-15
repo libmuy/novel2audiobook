@@ -1,0 +1,22 @@
+schema_version: 1
+novel_id: nv_cang_xuan
+title: 苍玄
+description: ''
+levels:
+  part: true
+  volume: true
+next_chapter_seq: 2
+created_at: '2026-09-13 23:11:44'
+updated_at: '2026-09-13 23:12:39'
+tree:
+- type: part
+  id: par_001
+  title: 第一部
+  children:
+  - type: volume
+    id: vol_001
+    title: 第一卷
+    children:
+    - type: chapter
+      id: ch_0001
+      title: '1'
