@@ -22,6 +22,7 @@
 管线不中断（并在 meta 里记录 used_fallback，供 `assets list` 排查）。
 """
 import os
+import re
 import json
 import math
 import logging
@@ -185,6 +186,10 @@ class MockAudioGenBackend:
 
     name = "mock"
 
+    def __init__(self, config: dict = None):
+        # 注册表按 cls(config) 统一构造；Mock 不需要配置
+        pass
+
     def is_available(self) -> bool:
         return True
 
@@ -334,20 +339,65 @@ class AudioLDMBackend(SubprocessAudioGenBackend):
     config_key = "audioldm"
 
 
-def build_asset_gen_backend(kind: str, config: dict = None):
-    """按配置为指定 kind（ambience/sfx）选择生成后端；专用推理环境未就绪时自动回退 Mock，保证管线不中断"""
+# 引擎 id -> 后端类；id 就是各子类已有的 name / config_key。
+ASSET_BACKENDS = {
+    "audioldm": AudioLDMBackend,
+    "tangoflux": TangoFluxBackend,
+    "ace_step": AceStepBackend,
+    "mock": MockAudioGenBackend,
+}
+
+# 每个 kind 的默认引擎：配置缺省/写了认不出的值时沿用（也是这次改动之前的硬编码行为）
+DEFAULT_ENGINES = {"ambience": "audioldm", "sfx": "tangoflux"}
+
+
+def resolve_engine_id(name) -> str:
+    """把配置里的引擎名解析成注册表 id；认不出返回 None。
+    既接受 id（audioldm / tangoflux / ace_step / mock），也接受配置里一直在用的展示串
+    （"AudioLDM-S-Full-v2"、"TangoFlux"、"ACE-Step 1.5"）——现有 global_config.yaml 零迁移。
+    比较前去掉大小写和所有非字母数字字符。"""
+    key = re.sub(r"[^a-z0-9]", "", str(name or "").lower())
+    if not key:
+        return None
+    if key == "mock":
+        return "mock"
+    for engine_id in ("audioldm", "tangoflux", "acestep"):
+        if engine_id in key:
+            return "ace_step" if engine_id == "acestep" else engine_id
+    return None
+
+
+def expected_engine(kind: str, config: dict = None) -> str:
+    """当前配置下 kind 应该用哪个引擎（注册表 id）。配置缺省或写了认不出的值时回落到默认。"""
     if config is None:
         config = load_global_config()
-    gen_cfg = config.get("asset_gen", {})
-    engine_name = gen_cfg.get("ambience_engine" if kind == "ambience" else "sfx_engine", "")
+    raw = (config.get("asset_gen") or {}).get("ambience_engine" if kind == "ambience" else "sfx_engine", "")
+    engine_id = resolve_engine_id(raw)
+    if engine_id is None:
+        if raw:
+            logger.warning("asset_gen.%s_engine=%r 不是已知引擎（%s），沿用默认 %s",
+                           kind, raw, " / ".join(ASSET_BACKENDS), DEFAULT_ENGINES[kind])
+        return DEFAULT_ENGINES[kind]
+    return engine_id
 
-    backend_cls = AudioLDMBackend if kind == "ambience" else TangoFluxBackend
-    backend = backend_cls(config)
+
+def build_asset_gen_backend(kind: str, config: dict = None, engine: str = None):
+    """按配置为指定 kind（ambience/sfx）选择生成后端；专用推理环境未就绪时自动回退 Mock，保证管线不中断。
+    engine 显式传入时（CLI --backend）覆盖配置。"""
+    if config is None:
+        config = load_global_config()
+    engine_id = resolve_engine_id(engine) if engine else expected_engine(kind, config)
+    if engine_id is None:
+        raise ValueError(f"未知素材生成引擎: {engine!r}（可选: {' / '.join(ASSET_BACKENDS)}）")
+
+    if engine_id == "mock":
+        return MockAudioGenBackend()
+    backend = ASSET_BACKENDS[engine_id](config)
     if backend.is_available():
         return backend
     logger.warning(
         "配置要求为 %s 使用 %s，但推理环境未就绪（venv/权重缺失），回退到 Mock 占位生成",
-        kind, engine_name or backend.name,
+        kind, engine_id,
     )
     return MockAudioGenBackend()
 
@@ -394,14 +444,17 @@ def generate_assets(specs: dict = None, assets_dir: str = None, kinds: list = No
     summary = {"generated": [], "fallback": [], "skipped": [], "error": []}
 
     # 先算出各 kind 待生成的条目（纯文件系统 + 哈希比较，很便宜），这样进度条
-    # 一开始就有真实的分母，而不是跑完一个 kind 才知道总数
+    # 一开始就有真实的分母，而不是跑完一个 kind 才知道总数。
+    # 后端要在规划阶段就构造出来：缓存判断需要知道这次实际用的是不是 Mock。
     plans = {}
+    backends = {}
     for kind in kinds:
         kind_specs = specs.get(kind, {})
         if only:
             kind_specs = {name: spec for name, spec in kind_specs.items() if name in only}
         if not kind_specs:
             continue
+        backends[kind] = backend_map.get(kind) or build_asset_gen_backend(kind, config)
         out_dir = os.path.join(assets_dir, kind)
         pending = {}
         for name, spec in kind_specs.items():
@@ -414,7 +467,11 @@ def generate_assets(specs: dict = None, assets_dir: str = None, kinds: list = No
                         old_meta = json.load(f)
                 except (json.JSONDecodeError, OSError):
                     old_meta = {}
-                if old_meta.get("spec_hash") == spec_hash:
+                # 上次是 Mock 占位（used_fallback）而这次有真实引擎可用：不算缓存命中，重试。
+                # 预检早就承诺「当前是 Mock 占位，将尝试用真实引擎重新生成」，之前生成这一侧
+                # 却把它当缓存跳过了。这次仍是 Mock 就照旧命中缓存（否则每次运行都白重铺一遍占位音）。
+                retry_placeholder = old_meta.get("used_fallback") and backends[kind].name != "mock"
+                if old_meta.get("spec_hash") == spec_hash and not retry_placeholder:
                     summary["skipped"].append(name)
                     continue
             pending[name] = (spec, spec_hash, wav_path, meta_path)
@@ -433,7 +490,7 @@ def generate_assets(specs: dict = None, assets_dir: str = None, kinds: list = No
         _check_cancel()
         os.makedirs(out_dir, exist_ok=True)
 
-        backend = backend_map.get(kind) or build_asset_gen_backend(kind, config)
+        backend = backends[kind]
         backend_is_mock = backend.name == "mock"
 
         with tempfile.TemporaryDirectory(prefix="n2a_assetgen_raw_") as raw_dir:
@@ -497,20 +554,29 @@ def generate_assets(specs: dict = None, assets_dir: str = None, kinds: list = No
 # 状态查看（供 `cli.py assets list` 使用，风格对齐 src/status_tracker.py）
 # --------------------------------------------------------------------------
 
-def get_asset_status_list(specs: dict = None, assets_dir: str = None) -> list:
-    """返回每条 spec 的当前状态：MISSING（未生成）/ STALE（spec 已变更需重新生成）/ OK"""
+def get_asset_status_list(specs: dict = None, assets_dir: str = None, config: dict = None) -> list:
+    """返回每条 spec 的当前状态：MISSING（未生成）/ STALE（规格或引擎已变更，需重新生成）/ OK。
+
+    引擎漂移单独判定，**不进 spec_hash**：把引擎放进哈希会让整个已有素材库在这次改动
+    落地的那一刻全部失效。规则：meta.engine 既不是当前配置的引擎、也不是 mock（占位音有
+    自己的 OK(占位/Mock) 状态）、也不是缺失（旧 meta 没这个字段）→ STALE(引擎已变更)。
+    显式把引擎配成 mock 时不判漂移——没人想把真实素材换成占位音。"""
     specs = specs if specs is not None else load_asset_specs()
     assets_dir = assets_dir or resolve_path("assets")
+    if config is None:
+        config = load_global_config()
 
     rows = []
     for kind in VALID_KINDS:
+        want = expected_engine(kind, config)
         for name, spec in sorted(specs.get(kind, {}).items()):
             out_dir = os.path.join(assets_dir, kind)
             wav_path = os.path.join(out_dir, f"{name}.wav")
             meta_path = os.path.join(out_dir, f"{name}.meta.json")
 
             if not os.path.exists(wav_path):
-                rows.append({"name": name, "kind": kind, "status": "MISSING", "engine": "-", "duration_ms": None})
+                rows.append({"name": name, "kind": kind, "status": "MISSING", "engine": "-",
+                             "expected_engine": want, "duration_ms": None})
                 continue
 
             meta = {}
@@ -522,16 +588,20 @@ def get_asset_status_list(specs: dict = None, assets_dir: str = None) -> list:
                     meta = {}
 
             spec_hash = compute_spec_hash(spec)
+            made_by = meta.get("engine")
             if meta.get("spec_hash") != spec_hash:
                 status = "STALE(spec已变更)"
             elif meta.get("used_fallback"):
                 status = "OK(占位/Mock)"
+            elif made_by and want != "mock" and made_by not in (want, "mock"):
+                status = "STALE(引擎已变更)"
             else:
                 status = "OK"
 
             rows.append({
                 "name": name, "kind": kind, "status": status,
-                "engine": meta.get("engine", "unknown"),
+                "engine": made_by or "unknown",
+                "expected_engine": want,
                 "duration_ms": meta.get("duration_ms"),
             })
     return rows

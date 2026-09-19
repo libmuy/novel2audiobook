@@ -25,6 +25,7 @@ def _rows(kind: str = None) -> list:
                 "kind": k, "name": name, **spec,
                 "status": st.get("status", "MISSING"),
                 "engine": st.get("engine", "-"),
+                "expected_engine": st.get("expected_engine"),
                 "duration_ms": st.get("duration_ms"),
             })
     return rows

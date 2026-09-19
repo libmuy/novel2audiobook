@@ -2622,7 +2622,10 @@ app.component('assets-page', {
                        class="asset-audio" controls preload="none"
                        :src="API.getAssetAudioUrl(spec.kind, spec.name)" @play="onAudioPlay"></audio>
                 <div v-else class="asset-meta">尚未生成，生成后可在这里试听</div>
-                <div v-if="spec.status && spec.status.startsWith('STALE')" class="asset-meta">
+                <div v-if="spec.status === 'STALE(引擎已变更)'" class="asset-meta asset-engine-drift">
+                    这条是 {{ spec.engine }} 生成的，当前配置的引擎是 {{ spec.expected_engine }}——旧音频仍可听，点「重新生成」才会用新引擎重做
+                </div>
+                <div v-else-if="spec.status && spec.status.startsWith('STALE')" class="asset-meta">
                     播放的是规格变更前生成的旧音频，重新生成后才是新的
                 </div>
                 <div class="card-footer">
@@ -2731,6 +2734,7 @@ app.component('assets-page', {
         const statusInfo = (status) => {
             if (status === 'OK') return { label: '已生成', cls: 'badge-success' };
             if (status === 'OK(占位/Mock)') return { label: '占位音', cls: 'badge-warning' };
+            if (status === 'STALE(引擎已变更)') return { label: '引擎已变更', cls: 'badge-warning' };
             if (status && status.startsWith('STALE')) return { label: '规格已变更', cls: 'badge-warning' };
             return { label: '未生成', cls: 'badge-neutral' };
         };
@@ -2826,7 +2830,10 @@ app.component('assets-page', {
         });
 
         const generate = async (spec) => {
-            const params = spec ? { only: [spec.name], force: spec.status !== 'MISSING' && !spec.status.startsWith('STALE') } : {};
+            // 单条「重新生成」要强制：已生成的（含占位音、引擎已变更）不强制会被当缓存跳过。
+            // 只有「规格已变更」和「未生成」不需要——哈希对不上本来就会重做
+            const needsForce = (st) => st === 'OK' || st === 'OK(占位/Mock)' || st === 'STALE(引擎已变更)';
+            const params = spec ? { only: [spec.name], force: needsForce(spec.status) } : {};
             try {
                 const pre = await API.preflightTask({ type: 'asset_gen', params });
                 if (pre.summary.create + pre.summary.overwrite === 0) {

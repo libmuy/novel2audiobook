@@ -1150,3 +1150,39 @@ class TestPrecomputeEmbeddingUi:
         assert tasks and tasks[0]["params"] == {"role_id": rid}
         assert tasks[0]["state"] == "failed" and "未就绪" in tasks[0]["error"]  # 不是 succeeded
         expect(btn).to_have_text("预计算音色")  # 失败后按钮恢复，可以重试
+
+
+# ---------------------------------------------------------------------------
+# 16. 计划 010 阶段 5：素材引擎漂移在界面上可见，「重新生成」能用新引擎重做
+class TestAssetEngineDrift:
+    def test_drifted_asset_is_flagged_and_regenerate_redoes_it(self, page, server):
+        import httpx
+        import json as _json
+        base = _api(server)
+        spec = {"kind": "sfx", "name": "e2e_drift", "prompt": "drift", "duration_sec": 1, "seed": 3}
+        httpx.post(f"{base}/api/asset-specs", json=spec)
+        # 模拟「别的引擎生成过、之后配置换了引擎」：meta 里是 ace_step，当前配置期望 tangoflux
+        d = os.path.join(server["tmp"], "assets", "sfx")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "e2e_drift.wav"), "wb") as f:
+            f.write(b"RIFFfake")
+        row = [s for s in httpx.get(f"{base}/api/asset-specs?kind=sfx").json()["specs"] if s["name"] == "e2e_drift"][0]
+        from src import asset_gen
+        spec_hash = asset_gen.compute_spec_hash(row)
+        with open(os.path.join(d, "e2e_drift.meta.json"), "w", encoding="utf-8") as f:
+            _json.dump({"name": "e2e_drift", "kind": "sfx", "spec_hash": spec_hash,
+                        "engine": "ace_step", "used_fallback": False}, f)
+
+        page.goto(f"{base}/#/assets")
+        page.wait_for_load_state("networkidle")
+        card = page.locator(".asset-card", has_text="e2e_drift")
+        expect(card.locator(".badge")).to_have_text("引擎已变更")
+        expect(card.locator(".asset-engine-drift")).to_contain_text("ace_step")
+        expect(card.locator(".asset-engine-drift")).to_contain_text("tangoflux")
+        expect(card.locator("audio")).to_have_count(1)  # 旧音频仍可试听
+
+        # 重新生成：必须强制（哈希没变，不强制会被当缓存跳过、什么都不会发生）
+        card.get_by_role("button", name="重新生成").click()
+        _confirm(page, "开始生成")
+        expect(card.locator(".badge")).to_have_text("占位音", timeout=20000)  # 测试环境没有真实引擎 -> Mock 占位
+        httpx.delete(f"{base}/api/asset-specs/sfx/e2e_drift?delete_files=true")

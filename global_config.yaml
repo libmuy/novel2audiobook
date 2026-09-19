@@ -31,12 +31,15 @@ asset_gen:
   ambience_loop_crossfade_ms: 2000   # ambience 素材首尾等功率交叉淡化时长，用于无缝循环
   ambience_target_dbfs: -20.0        # ambience 素材归一化的平均响度（dBFS）
   sfx_target_dbfs: -6.0              # sfx 素材归一化的峰值响度（dBFS）
-  ambience_engine: "AudioLDM-S-Full-v2"  # 仅用于日志展示；实际选型见下方 audioldm 配置段
+  ambience_engine: "AudioLDM-S-Full-v2"  # 选用哪个引擎（可写 audioldm / tangoflux / ace_step / mock，或下面这类展示串），
+                                   # 各引擎的路径/超时见下方同名配置段；环境没就绪时自动回退 Mock。
+                                   # 换引擎不会让已生成的素材失效（不进 spec_hash），而是显示「引擎已变更」，
+                                   # 用「强制重新生成」才会用新引擎重做
                                    # （原用 ACE-Step 1.5，但它是音乐生成模型，生成写实环境音
                                    #  会带出音乐化调性，诊断后换成训练数据为真实音频事件的
                                    #  AudioLDM，见 docs/audioldm_setup.md；ace_step 配置段保留
                                    #  未删除，AceStepBackend 仍可用，只是不再被默认选用）
-  sfx_engine: "TangoFlux"          # 仅用于日志展示；实际选型见下方 tangoflux 配置段
+  sfx_engine: "TangoFlux"          # 同上：选用哪个引擎
                                    # （原计划用 Stable Audio 3 Small SFX，但它是 HuggingFace
                                    # gated repo 且审批不顺畅，改用公开、无需申请的 TangoFlux）
   ace_step:

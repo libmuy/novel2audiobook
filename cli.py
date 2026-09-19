@@ -15,7 +15,7 @@ from src.tts_engine import process_chapter_tts, generate_tts_incremental, MockTT
 from src.audio_mixer import mix_chapter
 from src.asset_gen import (
     generate_assets, load_asset_specs, print_asset_status_table,
-    MockAudioGenBackend, VALID_KINDS,
+    MockAudioGenBackend, VALID_KINDS, ASSET_BACKENDS, build_asset_gen_backend,
 )
 from src import library
 
@@ -239,7 +239,7 @@ def main():
     parser_assets.add_argument("--kind", choices=list(VALID_KINDS), help="仅处理 ambience（BGM）或 sfx 一类")
     parser_assets.add_argument("--only", help="逗号分隔的素材名列表，仅生成/刷新指定几条")
     parser_assets.add_argument("--force", action="store_true", help="忽略增量缓存，全部重新生成")
-    parser_assets.add_argument("--backend", choices=["mock"], help="强制使用指定后端（目前仅支持 mock，用于离线自检/占位铺库）")
+    parser_assets.add_argument("--backend", choices=list(ASSET_BACKENDS), help="强制使用指定引擎（覆盖 global_config.yaml 里的 asset_gen.*_engine；mock 用于离线自检/占位铺库）")
 
     # 7. tts-serve
     parser_tts_serve = subparsers.add_parser(
@@ -374,9 +374,8 @@ def main():
             kinds = [args.kind] if args.kind else None
             only = set(args.only.split(",")) if args.only else None
             backend_map = None
-            if args.backend == "mock":
-                mock = MockAudioGenBackend()
-                backend_map = {"ambience": mock, "sfx": mock}
+            if args.backend:
+                backend_map = {k: build_asset_gen_backend(k, engine=args.backend) for k in VALID_KINDS}
             try:
                 summary = generate_assets(kinds=kinds, only=only, force=args.force, backend_map=backend_map)
                 print(

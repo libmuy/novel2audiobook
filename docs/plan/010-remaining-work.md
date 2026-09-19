@@ -59,3 +59,11 @@
   现在记下已见过终态的任务 id，响应晚到不再写回。素材库页的 `genTask` 有同样写法，一并修了。
 - 测试：handler 单测（失败变任务失败且带原因、成功也在换手内、环境未就绪不碰 GPU、缺 role_id 不再静默、经真实队列端到端为 failed）、`TestPrecomputeTimeout`、`TestEmbeddingPrecondition`、API 缺 role_id 400；
   E2E 在无 IndexTTS 的环境里断言「任务以 failed + 原因结束、toast 带原因、按钮恢复可重试」以及「无参考音频时禁用」。
+### 阶段 5
+- **引擎按配置选择**：`asset_gen.py` 新增 `ASSET_BACKENDS` 注册表（`audioldm / tangoflux / ace_step / mock`，键 = 各子类已有的 `name`）、`resolve_engine_id`（同时接受 id 和现有配置里的展示串 `"AudioLDM-S-Full-v2"` / `"TangoFlux"` / `"ACE-Step 1.5"`，**现有 `global_config.yaml` 零迁移**）、`expected_engine(kind, config)`（缺省或认不出 → 回落到此前硬编码的默认 + 警告）。
+  之前 `build_asset_gen_backend` 写死 `AudioLDM if kind == "ambience" else TangoFlux`，配置值只进日志。`MockAudioGenBackend` 接受可选 `config`，构造统一；`--repo-dir` 对 `ace_step` 确认会传（配置了 `repo_dir` 就传）。
+- **引擎漂移选方案 (b)**：不动 `compute_spec_hash`（加进哈希会让整个已有素材库在提交那一刻全部失效）；`get_asset_status_list` 新增 `STALE(引擎已变更)`——`meta.engine` 既不是当前引擎、也不是 `mock`（占位音有自己的 `OK(占位/Mock)`）、也不是缺失（旧 meta）；显式配成 `mock` 不判漂移。
+  漂移**不会**被自动重生成（否则一改配置就整库重做），只有 `force` 才用新引擎重做；预检与此一致（无 `force` → skip 并说明原因，有 `force` → overwrite）。界面卡片显示「引擎已变更」及「这条是 X 生成的，当前配置是 Y」，单条「重新生成」自动带 `force`。已核对：真实素材库 12 条全部仍是 `OK`，没有被误判。
+- **顺带修一个发现的不一致**：预检对 `OK(占位/Mock)` 早就承诺「将尝试用真实引擎重新生成」，但 `generate_assets` 的缓存判断把占位音当命中跳过。现在「上次是占位、这次有真实引擎可用」算未命中重试；这次仍是 Mock 则照旧命中（自检的缓存回归和「别每次都白重铺占位音」靠这条）。为此后端改为在规划阶段就构造。
+- `cli.py assets --backend` 的 choices 由 `["mock"]` 改为注册表全部 id，并真正生效（覆盖配置）；`global_config.yaml` 里「仅用于日志展示」的注释改成真实语义。
+- 测试：新增 `tests/test_asset_engines.py`（37 个；此前工厂**零覆盖**）——id/展示串解析、配置真的选引擎、缺省与未知值、可用/不可用/显式 mock、`engine` 参数覆盖、漂移各分支、漂移不进哈希（无 `force` 保留、`force` 重做）、占位重试与仍为 Mock 时的缓存、预检一致性；E2E 断言漂移徽章/提示/旧音频仍可听/「重新生成」后被重做。

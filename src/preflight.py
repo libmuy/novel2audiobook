@@ -83,6 +83,13 @@ def preflight_assets(params: dict = None) -> dict:
         status = row["status"]
         if status == "MISSING":
             action, reason = "create", "尚未生成"
+        elif status == "STALE(引擎已变更)":
+            # 哈希没变，generate_assets 不会自动重做它（否则一改配置就整库重生成）；
+            # 只有强制重新生成才会用新引擎重做，预检要跟实际行为一致
+            if force:
+                action, reason = "overwrite", "引擎已变更，将用新引擎重新生成"
+            else:
+                action, reason = "skip", "引擎已变更（旧音频仍可用），需「强制重新生成」才会用新引擎重做"
         elif status.startswith("STALE"):
             action, reason = "overwrite", "规格已变更，将重新生成"
         elif status == "OK(占位/Mock)":
