@@ -204,6 +204,12 @@ class TestOfflineAvailable:
         sortable = page.evaluate("typeof Sortable !== 'undefined'")
         assert sortable, "SortableJS did not load"
 
+    def test_category_tree_module_loads_before_app(self, page, server):
+        """分类树逻辑在独立脚本里，必须先于 app.js 加载（app.js 里的页面组件在 setup 时就要用它）"""
+        assert page.evaluate("typeof CategoryTree !== 'undefined' && typeof CategoryTree.useCategoryTree") == "function"
+        order = page.evaluate("[...document.scripts].map(s => s.getAttribute('src')).filter(Boolean)")
+        assert order.index("js/category-tree.js") < order.index("js/app.js")
+
 
 # ---------------------------------------------------------------------------
 # 3. 页面记忆 — route remembered in localStorage

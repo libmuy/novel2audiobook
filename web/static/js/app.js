@@ -2156,6 +2156,87 @@ app.component('workbench-page', {
     },
 });
 
+// 嵌套分类树的左栏：行列表 + 新建/改名对话框。树的状态与增删改逻辑在
+// category-tree.js 的 useCategoryTree 里，页面把 rows/collapsed/save 传进来。
+// 对话框放在组件内部——它只关心「输入一个名字」，保存由页面给的 save(mode, row, title)
+// 完成（返回 false 表示服务端拒绝了，如重名，对话框留着让用户改）。
+app.component('category-tree-pane', {
+    props: {
+        rows: { type: Array, required: true },
+        selectedPath: { type: String, default: null },
+        collapsed: { type: Object, default: () => ({}) },
+        allLabel: { type: String, default: '全部' },
+        addLabel: { type: String, default: '+ 新建分类' },
+        // 后端 category_tree.MAX_DEPTH：最多 4 层，第 4 层（depth 3）不能再建子分类
+        maxDepth: { type: Number, default: 4 },
+        save: { type: Function, required: true },
+    },
+    emits: ['update:selectedPath', 'toggle-collapse', 'remove'],
+    template: `
+        <div class="category-pane">
+            <div class="category-list">
+                <div class="category-row" :class="{ active: selectedPath === null }" @click="$emit('update:selectedPath', null)">
+                    <span class="category-row-title">{{ allLabel }}</span>
+                </div>
+                <div v-for="row in rows" :key="row.id" class="category-row"
+                     :class="{ active: selectedPath === row.path }"
+                     :style="{ paddingLeft: (10 + row.depth * 18) + 'px' }"
+                     :data-category-path="row.path"
+                     @click="$emit('update:selectedPath', row.path)">
+                    <button class="tree-toggle" @click.stop="$emit('toggle-collapse', row.id)" :style="{ visibility: row.hasChildren ? 'visible' : 'hidden' }">
+                        {{ collapsed[row.id] ? '▸' : '▾' }}
+                    </button>
+                    <span class="category-row-title">{{ row.title }}</span>
+                    <button v-if="row.depth < maxDepth - 1" class="action-btn" title="新建子分类" @click.stop="openDialog('create', row)">＋</button>
+                    <button class="action-btn" @click.stop="openDialog('rename', row)">改</button>
+                    <button class="action-btn danger" @click.stop="$emit('remove', row)">删</button>
+                </div>
+                <div class="tree-add-row">
+                    <button class="tree-add-btn" @click="openDialog('create', null)">{{ addLabel }}</button>
+                </div>
+            </div>
+        </div>
+
+        <div v-if="dialog" class="modal-overlay" @click.self="dialog = null">
+            <div class="modal">
+                <div class="modal-header">
+                    <h2 class="modal-title">{{ dialogTitle }}</h2>
+                    <button class="modal-close" @click="dialog = null">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label class="form-label">分类名称</label>
+                        <input type="text" class="form-input category-name-input" v-model="dialog.title"
+                               @keyup.enter="submit" placeholder="不能包含 /">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @click="dialog = null">取消</button>
+                    <button class="btn btn-primary" @click="submit" :disabled="!dialog.title.trim()">保存</button>
+                </div>
+            </div>
+        </div>
+    `,
+    setup(props) {
+        const dialog = ref(null);
+        const openDialog = (mode, row) => {
+            dialog.value = { mode, row, title: mode === 'rename' ? row.title : '' };
+        };
+        const dialogTitle = computed(() => {
+            const d = dialog.value;
+            if (!d) return '';
+            if (d.mode === 'rename') return '重命名分类';
+            return d.row ? '新建子分类（' + d.row.path + '）' : '新建分类';
+        });
+        const submit = async () => {
+            const d = dialog.value;
+            if (!d || !d.title.trim()) return;
+            if (await props.save(d.mode, d.row, d.title)) dialog.value = null;
+        };
+        return { dialog, openDialog, dialogTitle, submit };
+    },
+});
+
 // 角色库：左侧嵌套分类树（GET/PUT /role-category-tree，整树替换）+ 右侧角色卡片。
 // 角色自己的 category 字段存分类"路径"字符串（如 "主角/男主"，旧数据是扁平名字如
 // "主角"）；按分类筛选时匹配路径本身及其子路径。删除/改名分类节点不会改动角色
@@ -2171,29 +2252,14 @@ app.component('roles-page', {
         </div>
 
         <div class="two-pane-layout">
-            <div class="category-pane">
-                <div class="category-list">
-                    <div class="category-row" :class="{ active: selectedPath === null }" @click="selectedPath = null">
-                        <span class="category-row-title">全部</span>
-                    </div>
-                    <div v-for="row in flatRows" :key="row.id" class="category-row"
-                         :class="{ active: selectedPath === row.path }"
-                         :style="{ paddingLeft: (10 + row.depth * 18) + 'px' }"
-                         :data-category-path="row.path"
-                         @click="selectedPath = row.path">
-                        <button class="tree-toggle" @click.stop="toggleCollapse(row.id)" :style="{ visibility: row.hasChildren ? 'visible' : 'hidden' }">
-                            {{ collapsed[row.id] ? '▸' : '▾' }}
-                        </button>
-                        <span class="category-row-title">{{ row.title }}</span>
-                        <button v-if="row.depth < 3" class="action-btn" title="新建子分类" @click.stop="openCategoryDialog('create', row)">＋</button>
-                        <button class="action-btn" @click.stop="openCategoryDialog('rename', row)">改</button>
-                        <button class="action-btn danger" @click.stop="removeCategory(row)">删</button>
-                    </div>
-                    <div class="tree-add-row">
-                        <button class="tree-add-btn" @click="openCategoryDialog('create', null)">+ 新建分类</button>
-                    </div>
-                </div>
-            </div>
+            <category-tree-pane
+                :rows="flatRows"
+                v-model:selectedPath="selectedPath"
+                :collapsed="collapsed"
+                :save="saveNode"
+                @toggle-collapse="toggleCollapse"
+                @remove="removeNode"
+            ></category-tree-pane>
 
             <div class="content-pane">
                 <div class="content-pane-header">
@@ -2247,26 +2313,6 @@ app.component('roles-page', {
                             </span>
                         </div>
                     </div>
-                </div>
-            </div>
-        </div>
-
-        <div v-if="categoryDialog" class="modal-overlay" @click.self="categoryDialog = null">
-            <div class="modal">
-                <div class="modal-header">
-                    <h2 class="modal-title">{{ categoryDialog.mode === 'rename' ? '重命名分类' : (categoryDialog.parent ? '新建子分类（' + categoryDialog.parent.path + '）' : '新建分类') }}</h2>
-                    <button class="modal-close" @click="categoryDialog = null">&times;</button>
-                </div>
-                <div class="modal-body">
-                    <div class="form-group">
-                        <label class="form-label">分类名称</label>
-                        <input type="text" class="form-input category-name-input" v-model="categoryDialog.title"
-                               @keyup.enter="saveCategoryDialog" placeholder="不能包含 /">
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button class="btn btn-secondary" @click="categoryDialog = null">取消</button>
-                    <button class="btn btn-primary" @click="saveCategoryDialog" :disabled="!categoryDialog.title.trim()">保存</button>
                 </div>
             </div>
         </div>
@@ -2340,9 +2386,6 @@ app.component('roles-page', {
 
         const roles = ref([]);
         const loading = ref(true);
-        const tree = ref([]);
-        const collapsed = reactive({});
-        const selectedPath = ref(null);
         const tagStats = ref([]);
         const tagFilters = ref([]);
 
@@ -2354,148 +2397,23 @@ app.component('roles-page', {
             tags: [], reference_audio: null,
         });
 
-        // ---- 分类树 ----
-        // 把嵌套树摊平成带缩进深度和路径的行；折叠的节点不展开子级
-        const flatRows = computed(() => {
-            const out = [];
-            const walk = (nodes, depth, prefix) => {
-                for (const n of nodes) {
-                    const path = prefix ? `${prefix}/${n.title}` : n.title;
-                    const hasChildren = !!(n.children && n.children.length);
-                    out.push({ id: n.id, title: n.title, path, depth, hasChildren });
-                    if (hasChildren && !collapsed[n.id]) walk(n.children, depth + 1, path);
-                }
-            };
-            walk(tree.value, 0, '');
-            return out;
+        // ---- 分类树（逻辑在 category-tree.js，界面是 category-tree-pane）----
+        const {
+            tree, collapsed, selectedPath, flatRows, pathOptions, matchesPath,
+            toggleCollapse, reload: loadTree, saveNode, removeNode,
+        } = CategoryTree.useCategoryTree({
+            load: () => API.getRoleCategoryTree(),
+            save: (t) => API.putRoleCategoryTree(t),
+            showToast,
+            showConfirm,
+            deleteWarning: '已经使用这些分类的角色不会被清空——它们保留原来的分类名，只是不再出现在分类树里（编辑时显示为「未登记」）。',
         });
-
-        // 全部路径（不受折叠影响）：角色表单的分类下拉用
-        const allPaths = computed(() => {
-            const out = [];
-            const walk = (nodes, depth, prefix) => {
-                for (const n of nodes) {
-                    const path = prefix ? `${prefix}/${n.title}` : n.title;
-                    out.push({ value: path, label: '　'.repeat(depth) + n.title });
-                    walk(n.children || [], depth + 1, path);
-                }
-            };
-            walk(tree.value, 0, '');
-            return out;
-        });
-
-        // 角色身上还挂着、但已经不在树里的分类名（旧数据 / 树节点被删过）：
-        // 也要出现在下拉里，否则编辑这种角色会把它的分类悄悄清空
-        const categoryOptions = computed(() => {
-            const known = new Set(allPaths.value.map((p) => p.value));
-            const extra = [];
-            for (const r of roles.value) {
-                if (r.category && !known.has(r.category) && !extra.includes(r.category)) extra.push(r.category);
-            }
-            return [
-                ...allPaths.value,
-                ...extra.map((c) => ({ value: c, label: `${c}（未登记）` })),
-            ];
-        });
-
-        const toggleCollapse = (id) => { collapsed[id] = !collapsed[id]; };
-
-        const loadTree = async () => {
-            try {
-                tree.value = (await API.getRoleCategoryTree()).tree || [];
-            } catch (error) {
-                console.error('加载分类树失败:', error);
-            }
-        };
-
-        // 任何树变更都是"改一份克隆、整树 PUT、用响应覆盖本地"，服务端负责校验
-        // （重名/含 "/"/超深度会 400）和补 id
-        const commitTree = async (mutate) => {
-            const next = JSON.parse(JSON.stringify(tree.value));
-            mutate(next);
-            try {
-                const res = await API.putRoleCategoryTree(next);
-                tree.value = res.tree;
-                return true;
-            } catch (error) {
-                showToast?.(`保存分类失败: ${error.message}`, 'error');
-                return false;
-            }
-        };
-
-        const findNode = (nodes, id) => {
-            for (const n of nodes) {
-                if (n.id === id) return n;
-                const hit = findNode(n.children || [], id);
-                if (hit) return hit;
-            }
-            return null;
-        };
-
-        const categoryDialog = ref(null);
-        const openCategoryDialog = (mode, row) => {
-            categoryDialog.value = {
-                mode,
-                parent: mode === 'create' ? row : null,
-                target: mode === 'rename' ? row : null,
-                title: mode === 'rename' ? row.title : '',
-            };
-        };
-        const saveCategoryDialog = async () => {
-            const d = categoryDialog.value;
-            const title = d.title.trim();
-            if (!title) return;
-            const oldSelected = selectedPath.value;
-            const ok = await commitTree((t) => {
-                if (d.mode === 'rename') {
-                    findNode(t, d.target.id).title = title;
-                } else if (d.parent) {
-                    const p = findNode(t, d.parent.id);
-                    (p.children = p.children || []).push({ title, children: [] });
-                } else {
-                    t.push({ title, children: [] });
-                }
-            });
-            if (ok) {
-                categoryDialog.value = null;
-                // 改名后路径变了：选中的是被改名节点（或其子孙）就重置回"全部"，
-                // 避免筛选停在一个已经不存在的路径上
-                if (d.mode === 'rename' && oldSelected &&
-                    (oldSelected === d.target.path || oldSelected.startsWith(d.target.path + '/'))) {
-                    selectedPath.value = null;
-                }
-            }
-        };
-
-        const removeCategory = async (row) => {
-            const confirmed = await showConfirm({
-                title: '删除分类',
-                message: `确定删除分类「${row.path}」及其所有子分类吗？`,
-                warning: '已经使用这些分类的角色不会被清空——它们保留原来的分类名，只是不再出现在分类树里（编辑时显示为「未登记」）。',
-                confirmText: '删除',
-                confirmClass: 'btn-danger',
-            });
-            if (!confirmed) return;
-            const ok = await commitTree((t) => {
-                const remove = (nodes) => {
-                    const i = nodes.findIndex((n) => n.id === row.id);
-                    if (i >= 0) { nodes.splice(i, 1); return true; }
-                    return nodes.some((n) => remove(n.children || []));
-                };
-                remove(t);
-            });
-            if (ok && selectedPath.value &&
-                (selectedPath.value === row.path || selectedPath.value.startsWith(row.path + '/'))) {
-                selectedPath.value = null;
-            }
-        };
+        // 角色身上还挂着、但已经不在树里的分类名也要出现在下拉里
+        const categoryOptions = computed(() => pathOptions(roles.value.map((r) => r.category)));
 
         // ---- 角色列表 / 筛选 ----
         const filteredRoles = computed(() => roles.value.filter((r) => {
-            if (selectedPath.value !== null) {
-                const c = r.category || '';
-                if (c !== selectedPath.value && !c.startsWith(selectedPath.value + '/')) return false;
-            }
+            if (!matchesPath(r.category)) return false;
             if (tagFilters.value.length && !tagFilters.value.some((t) => (r.tags || []).includes(t))) return false;
             return true;
         }));
@@ -2712,8 +2630,8 @@ app.component('roles-page', {
 
         return {
             roles, loading, tree, collapsed, flatRows, selectedPath, tagStats, tagFilters,
-            filteredRoles, categoryOptions, categoryDialog, showDialog, editingRole, form, tagInput,
-            toggleCollapse, openCategoryDialog, saveCategoryDialog, removeCategory,
+            filteredRoles, categoryOptions, showDialog, editingRole, form, tagInput,
+            toggleCollapse, saveNode, removeNode,
             toggleTagFilter, genderLabel, referenceUrl, embeddingLabel, embeddingClass,
             showCreateDialog, editRole, closeDialog, addTag, removeTag, handleFileUpload,
             saveRole, deleteRole,

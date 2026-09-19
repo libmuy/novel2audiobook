@@ -102,3 +102,12 @@
 - 对比表新增「分块 / 已合成 / 未绑定」三列；未绑定 > 0 时标红（`.table-wrap td.danger`）。「已合成」= timeline 条目数，与工作台统计口径一致。
 - **记入但本次不做**：`novels-page.loadNovels` 每本书一次 `getNovelTree` 是 N+1，真正的修法是 `GET /novels/summary` 一次返回各书的章节计数；`chapter-stats` 也不该被往那里塞。
 - 测试：API 5 条（数字口径、缺文件为 0、损坏 JSON、未知小说 404、无章节）；E2E 断言未选/选一个时**零请求**、两个以上后数字出现、未绑定标红、无 script 的章节显示真实 0。
+### 阶段 10
+行为等价的重构，为阶段 11（素材分类）铺路；**零既有测试修改**（角色页钉死的选择器全部通过）。
+- 新增 `web/static/js/category-tree.js`（`window.CategoryTree.useCategoryTree({load, save, showToast, showConfirm, deleteWarning})`，`index.html` 里排在 `app.js` 之前）。它不调用 `app.component`——Vue 应用实例在 `app.js` 里创建，所以 `category-tree-pane` 仍在 `app.js` 里注册。
+  返回 `tree / collapsed / selectedPath / flatRows / allPaths / pathOptions(extraValues) / matchesPath / toggleCollapse / reload / saveNode / removeNode`。
+- `categoryOptions` 是**使用方**逻辑（要扫描角色补「未登记」分类），变成 `pathOptions(extraValues)`，由角色页传 `roles.map(r => r.category)`；筛选谓词抽成 `matchesPath`。
+- `category-tree-pane` 组件：props `rows / selectedPath(v-model) / collapsed / allLabel / addLabel / maxDepth / save`，emits `toggle-collapse / remove`；新建/改名对话框放在组件内部。
+  与计划稿相比有一处偏差：计划里 emits 还有 `create/rename`，实际改成页面传一个 `save(mode, row, title) → Promise<boolean>`——保存要等服务端校验（重名/超深度会 400）再决定关不关对话框，事件表达不了「等结果」。
+- 硬编码的 `row.depth < 3` 换成 `maxDepth`（默认 4，对应 `category_tree.MAX_DEPTH`）；删除警告文案由页面传入。CSS 不用改。
+- 新增一条测试确认 `category-tree.js` 已加载且排在 `app.js` 之前。
