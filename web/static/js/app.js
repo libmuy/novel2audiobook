@@ -2845,6 +2845,11 @@ app.component('settings-page', {
                     </select>
                     <p class="form-help">语速/音调是每个角色单独的参数（角色库页面设置），不是全局配置</p>
                 </div>
+                <div class="form-group">
+                    <label class="form-label">句间静音（毫秒）</label>
+                    <input type="number" class="form-input setting-segment-gap" v-model.number="form.segment_gap_ms" min="0" max="2000" step="50">
+                    <p class="form-help">相邻两句之间插入的静音，默认 200。它在配音时被写进时间线，改动后需要重新执行「批量生成人声」才生效（已合成的语音会命中缓存，只重算时间线，很快）。</p>
+                </div>
             </div>
 
             <div class="settings-section">
@@ -2897,6 +2902,40 @@ app.component('settings-page', {
                     </div>
                 </div>
             </div>
+
+            <div class="settings-section">
+                <h3 class="settings-section-title">混音参数</h3>
+                <div class="settings-section-divider"></div>
+                <p class="form-help mb-4">只在叠加背景音/音效时生效（纯人声混音不受影响）。电平单位都是 dB，数值越小声音越轻。</p>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">闪避触发阈值（dBFS）</label>
+                        <input type="number" class="form-input setting-ducking-threshold" v-model.number="form.ducking_threshold" min="-60" max="0" step="1">
+                        <p class="form-help">人声响度超过它时压低背景音，范围 −60 ~ 0，默认 −20</p>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">闪避衰减量（dB）</label>
+                        <input type="number" class="form-input setting-ducking-gain" v-model.number="form.ducking_gain_db" min="-40" max="0" step="0.5">
+                        <p class="form-help">闪避时背景音降低多少，填负数或 0（−10.5 ≈ 降到 30% 音量）</p>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">闪避渐变时长（毫秒）</label>
+                        <input type="number" class="form-input setting-ducking-fade" v-model.number="form.ducking_fade_ms" min="0" max="5000" step="50">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">背景音基础电平（dBFS）</label>
+                        <input type="number" class="form-input setting-ambience-gain" v-model.number="form.ambience_gain_db" min="-60" max="0" step="1">
+                        <p class="form-help">整条背景音轨的目标电平，默认 −18</p>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">音效峰值限幅（dBFS）</label>
+                    <input type="number" class="form-input setting-sfx-limit" v-model.number="form.sfx_limit_dbfs" min="-60" max="0" step="0.5">
+                    <p class="form-help">音效超过它就被压到它，防止叠加人声后爆音，默认 −3</p>
+                </div>
+            </div>
             
             <div class="settings-section">
                 <h3 class="settings-section-title">监控设置</h3>
@@ -2915,31 +2954,71 @@ app.component('settings-page', {
         </div>
     `,
     setup() {
+        const showToast = inject('showToast');
         const loading = ref(true);
         const form = reactive({
             tts_engine: 'indextts',
+            segment_gap_ms: 200,
             library_root: '',
             cpu_workers: 2,
             audio_format: 'mp3',
             mix_bitrate: '192k',
             mix_with_assets: false,
+            ducking_threshold: -20,
+            ducking_gain_db: -10.46,
+            ducking_fade_ms: 300,
+            ambience_gain_db: -18,
+            sfx_limit_dbfs: -3,
             monitor_interval: 1,
         });
 
         const originalForm = reactive({});
 
+        // 表单字段 -> 后端点分路径键（PATCH /config 只认白名单里的点分键）+ 转换。
+        // number: true 的字段清空后 v-model.number 会给出 ''，Number('') 是 0，
+        // 会把「没填」悄悄存成 0——所以数值字段保存前先挡住空值。
+        const FIELDS = [
+            { field: 'tts_engine', key: 'tts.engine', label: 'TTS 引擎' },
+            { field: 'segment_gap_ms', key: 'tts.segment_gap_ms', label: '句间静音', number: true },
+            { field: 'library_root', key: 'server.library_root', label: '文件输出根目录' },
+            { field: 'cpu_workers', key: 'server.cpu_workers', label: '后台并发任务数', number: true },
+            { field: 'audio_format', key: 'mixing.output_format', label: '音频输出格式' },
+            { field: 'mix_bitrate', key: 'mixing.bitrate', label: '混音码率' },
+            // 配置里存的是 voice_only（默认 true），界面上反过来问「是否叠加素材」
+            { field: 'mix_with_assets', key: 'mixing.voice_only', label: '混音叠加素材', toApi: (v) => !v },
+            { field: 'ducking_threshold', key: 'mixing.ducking_threshold', label: '闪避触发阈值', number: true },
+            { field: 'ducking_gain_db', key: 'mixing.ducking_gain_db', label: '闪避衰减量', number: true },
+            { field: 'ducking_fade_ms', key: 'mixing.ducking_fade_ms', label: '闪避渐变时长', number: true },
+            { field: 'ambience_gain_db', key: 'mixing.ambience_gain_db', label: '背景音基础电平', number: true },
+            { field: 'sfx_limit_dbfs', key: 'mixing.sfx_limit_dbfs', label: '音效峰值限幅', number: true },
+            // monitor_interval 界面是"秒"，后端存的是毫秒
+            { field: 'monitor_interval', key: 'server.monitor_interval_ms', label: '监控刷新间隔', number: true,
+              toApi: (v) => Math.round(Number(v) * 1000) },
+        ];
+
         // 后端 GET /config 返回的是 global_config.yaml 原始的嵌套结构
         // {server:{...}, tts:{...}, mixing:{...}}，不能直接 Object.assign
         // 到这个扁平 form 上——那样嵌套对象只会作为多余字段挂上去，
-        // 扁平字段永远还是初始值。
+        // 扁平字段永远还是初始值。数值字段必须用 ?? 而不是 ||：0 dB / 0 ms 是合法值，
+        // 但在 || 里是假值，会被悄悄换回默认。
         const fillFormFromConfig = (config) => {
+            const mixing = config.mixing || {};
             form.tts_engine = config.tts?.engine || form.tts_engine;
+            form.segment_gap_ms = config.tts?.segment_gap_ms ?? 200;
             form.library_root = config.server?.library_root ?? form.library_root;
             form.cpu_workers = config.server?.cpu_workers ?? form.cpu_workers;
-            form.audio_format = config.mixing?.output_format || form.audio_format;
-            form.mix_bitrate = config.mixing?.bitrate || form.mix_bitrate;
-            // 配置里存的是 voice_only（默认 true），界面上反过来问「是否叠加素材」
-            form.mix_with_assets = config.mixing?.voice_only === false;
+            form.audio_format = mixing.output_format || form.audio_format;
+            form.mix_bitrate = mixing.bitrate || form.mix_bitrate;
+            form.mix_with_assets = mixing.voice_only === false;
+            form.ducking_threshold = mixing.ducking_threshold ?? -20;
+            // 没设过 ducking_gain_db 时，用旧的线性比例 ducking_volume_ratio 换算出当前
+            // 实际生效的衰减量来显示（0.3 → −10.46 dB），这样界面上看到的就是真实值
+            const ratio = mixing.ducking_volume_ratio ?? 0.3;
+            form.ducking_gain_db = mixing.ducking_gain_db
+                ?? (ratio > 0 ? Math.round(20 * Math.log10(ratio) * 100) / 100 : -10);
+            form.ducking_fade_ms = mixing.ducking_fade_ms ?? 300;
+            form.ambience_gain_db = mixing.ambience_gain_db ?? -18;
+            form.sfx_limit_dbfs = mixing.sfx_limit_dbfs ?? -3;
             const intervalMs = config.server?.monitor_interval_ms;
             form.monitor_interval = intervalMs ? intervalMs / 1000 : form.monitor_interval;
         };
@@ -2952,6 +3031,7 @@ app.component('settings-page', {
                 Object.assign(originalForm, form);
             } catch (error) {
                 console.error('加载配置失败:', error);
+                showToast?.(`加载配置失败: ${error.message}`, 'error');
             } finally {
                 loading.value = false;
             }
@@ -2962,28 +3042,40 @@ app.component('settings-page', {
         };
 
         const saveConfig = async () => {
+            // 只提交改动过的字段：不然每次保存都会把「界面上显示的默认值」实体化写进
+            // 配置文件（比如从旧比例换算出来的 ducking_gain_db），悄悄改变配置来源
+            const payload = {};
+            const changed = [];
+            for (const f of FIELDS) {
+                if (form[f.field] === originalForm[f.field]) continue;
+                if (f.number && (form[f.field] === '' || form[f.field] === null || Number.isNaN(Number(form[f.field])))) {
+                    showToast?.(`「${f.label}」不能为空，请填写数字`, 'error');
+                    return;
+                }
+                payload[f.key] = f.toApi ? f.toApi(form[f.field]) : (f.number ? Number(form[f.field]) : form[f.field]);
+                changed.push(f);
+            }
+            if (changed.length === 0) {
+                showToast?.('没有需要保存的改动', 'success');
+                return;
+            }
             try {
-                // 后端 PATCH /config 只认白名单里的点分路径键名，扁平字段要转一遍；
-                // monitor_interval 这里是"秒"，后端存的是毫秒
-                const payload = {
-                    'tts.engine': form.tts_engine,
-                    'server.library_root': form.library_root,
-                    'server.cpu_workers': Number(form.cpu_workers),
-                    'mixing.output_format': form.audio_format,
-                    'mixing.bitrate': form.mix_bitrate,
-                    'mixing.voice_only': !form.mix_with_assets,
-                    'server.monitor_interval_ms': Math.round(Number(form.monitor_interval) * 1000),
-                };
                 const result = await API.updateConfig(payload);
-                Object.assign(originalForm, form);
-                if (result.rejected_keys && result.rejected_keys.length > 0) {
-                    alert(`以下配置未能保存（不在白名单内）：${result.rejected_keys.join('、')}`);
+                // 只把真的写进去的字段记为「已保存」，被拒的仍然算未保存
+                const applied = new Set(result.applied_keys || []);
+                for (const f of changed) {
+                    if (applied.has(f.key)) originalForm[f.field] = form[f.field];
+                }
+                const rejected = result.rejected || (result.rejected_keys || []).map((key) => ({ key, reason: '被拒绝' }));
+                if (rejected.length > 0) {
+                    const labelOf = (key) => (FIELDS.find((f) => f.key === key) || {}).label || key;
+                    showToast?.('以下配置未能保存：' + rejected.map((r) => `${labelOf(r.key)}（${r.reason}）`).join('；'), 'error');
                 } else {
-                    alert('配置已保存');
+                    showToast?.('配置已保存', 'success');
                 }
             } catch (error) {
                 console.error('保存配置失败:', error);
-                alert('保存配置失败: ' + error.message);
+                showToast?.('保存配置失败: ' + error.message, 'error');
             }
         };
 

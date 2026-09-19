@@ -40,3 +40,10 @@
 - 响应形状 `{ok, applied_keys, rejected_keys}` 与「全部被拒仍 HTTP 200」不变，新增附加字段 `rejected: [{key, reason}]`。先落盘再改内存，写盘失败时内存不会与磁盘不一致。
 - 删除死代码 `ConfigPatch`（无法表达点分键，无人引用）。
 - 测试：`tests/test_config_store.py`（真实文件字节往返、只改一行、缺失层级/文件、无残留 tmp）+ `TestSystemAPI` 新增（真实配置改后注释保留、7 种非法值拒绝且文件字节不变、合法/非法混合只应用合法的）。
+### 阶段 3
+- 设置页新增「混音参数」区：闪避触发阈值（`mixing.ducking_threshold`）、闪避衰减量（`mixing.ducking_gain_db`，dB）、闪避渐变时长、背景音基础电平（`ambience_gain_db`）、音效峰值限幅（`sfx_limit_dbfs`）；TTS 区新增句间静音（`tts.segment_gap_ms`）。后端白名单 + 范围校验同步（阶段 2 的 `_CONFIG_SPEC`，新增 `float` 类型）。
+- **有意不暴露 `ducking_volume_ratio`**：它是线性比例不是 dB，用户在「闪避」字段填 `-10` 会因混音器 `ratio > 0` 的 else 分支恰好得到 −10 dB，误以为单位是 dB。改为新增面向 UI 的 `mixing.ducking_gain_db`，`audio_mixer` 里**优先于**旧比例（用 `is not None` 判断，`0 dB` 是合法值）；没设过时界面显示由旧比例换算出的实际衰减量（0.3 → −10.46）。有测试断言旧键不在白名单。
+- `tts.segment_gap_ms` 取代 `tts_engine.py` 里硬编码的 `200.0`，缺省行为不变；它被烘焙进 `timeline.json`，改后需重跑 TTS（wav 命中缓存，只重算时间线），帮助文字里写明。
+- 设置页三处 `alert()` 全部换成 toast，被拒的键带上原因（`音效峰值限幅（超出范围（-60.0–0.0））`）；`saveConfig` 改为**只提交改动过的键**（不然每次保存都会把界面显示的默认值——如从旧比例换算出的 `ducking_gain_db`——实体化写进配置文件）；数值字段清空时前端直接拦截（`Number('') === 0` 会把「没填」悄悄存成 0）；`fillFormFromConfig` 数值一律用 `??`（0 dB / 0 ms 是假值，`||` 会换回默认）。
+- `global_config.yaml` 里给两个新键写了注释文档（可选键，未启用）。
+- 测试：后端 `test_tts_engine`（句间静音三种取值）、`test_audio_mixer::TestDuckingGainPrecedence`、`TestSystemAPI`（新键接受/拒绝/旧键不暴露）；E2E `TestSettingsMixingParams`（显示换算值、只写改动的键、`0` 不回退、越界带原因 toast、空值拦截、句间静音落在 tts 段）。

@@ -12,6 +12,7 @@ llm:
 tts:
   engine: "Index-TTS-2.5"
   sample_rate: 24000
+  # segment_gap_ms: 200     # 可选：句与句之间的静音（毫秒）。烘焙进 timeline.json，改后需重跑 tts（wav 命中缓存，很快）
   channels: 1
   format: "wav"
   index_tts:
@@ -68,7 +69,9 @@ mixing:
                              # 叠加与自动闪避（效果音流水线待后续阶段再打通）；
                              # `python cli.py mix --with-assets` 可单次覆盖为 false
   ducking_threshold: -20.0  # dBFS RMS 阈值
-  ducking_volume_ratio: 0.3 # BGM 闪避时降低到的音量比例 (30%)
+  ducking_volume_ratio: 0.3 # BGM 闪避时降低到的音量比例 (30%)。注意是线性比例，不是 dB；
+                             # 设置页改用下面的 ducking_gain_db，两者都有时 ducking_gain_db 优先
+  # ducking_gain_db: -10.5  # 可选：BGM 闪避时的衰减量（dB，≤0）。未设置时回落到 ducking_volume_ratio
   ducking_fade_ms: 300      # 渐变过渡毫秒数
   ambience_gain_db: -18.0   # 环境音基础电平（相对满幅 dBFS），避免盖过人声
   sfx_limit_dbfs: -3.0      # 音效峰值限幅，防止叠加人声后爆音

@@ -1023,3 +1023,79 @@ class TestTaskPanel:
         expect(glob.locator(".task-log")).to_contain_text("生成", timeout=10000)
         glob.locator(".task-log-btn").click()
         expect(glob.locator(".task-log")).to_have_count(0)
+
+
+# ---------------------------------------------------------------------------
+# 14. 计划 010 阶段 3：设置页混音参数 + toast 取代 alert
+class TestSettingsMixingParams:
+    def _open(self, page, server):
+        page.goto(f"{_api(server)}/#/settings")
+        page.wait_for_load_state("networkidle")
+
+    def test_unset_ducking_shows_effective_value_and_save_only_writes_changed_keys(self, page, server):
+        import httpx
+        base = _api(server)
+        self._open(page, server)
+        # 配置里没设过 ducking_gain_db：界面显示由旧线性比例 0.3 换算出的实际衰减量（−10.46 dB）
+        expect(page.locator(".setting-ducking-gain")).to_have_value("-10.46")
+
+        # 只改码率保存：不该顺手把显示用的默认值（ducking_gain_db 等）实体化写进配置
+        page.locator(".settings-section select").nth(2).select_option("256k")  # 音频区：格式、码率
+        page.get_by_role("button", name="保存配置").click()
+        expect(page.locator(".toast.success")).to_contain_text("配置已保存")
+        mixing = httpx.get(f"{base}/api/config").json()["mixing"]
+        assert mixing["bitrate"] == "256k"
+        assert "ducking_gain_db" not in mixing and "ambience_gain_db" not in mixing
+
+        # 再点一次保存：没有改动 -> 明确告知，不发请求
+        page.get_by_role("button", name="保存配置").click()
+        expect(page.locator(".toast", has_text="没有需要保存的改动")).to_be_visible()
+
+    def test_zero_is_a_real_value_not_reset_to_default(self, page, server):
+        """0 dB 是合法值；用 || 取默认会把它悄悄换回 −18，所以填充必须用 ??"""
+        import httpx
+        base = _api(server)
+        self._open(page, server)
+        page.locator(".setting-ambience-gain").fill("0")
+        page.get_by_role("button", name="保存配置").click()
+        expect(page.locator(".toast.success")).to_be_visible()
+        assert httpx.get(f"{base}/api/config").json()["mixing"]["ambience_gain_db"] == 0
+
+        page.reload()
+        page.wait_for_load_state("networkidle")
+        expect(page.locator(".setting-ambience-gain")).to_have_value("0")
+
+        page.locator(".setting-ambience-gain").fill("-18")  # 还原
+        page.get_by_role("button", name="保存配置").click()
+        expect(page.locator(".toast.success").last).to_be_visible()
+
+    def test_out_of_range_value_is_rejected_with_reason_toast_and_not_saved(self, page, server):
+        import httpx
+        base = _api(server)
+        self._open(page, server)
+        before = httpx.get(f"{base}/api/config").json()["mixing"].get("sfx_limit_dbfs")
+        page.locator(".setting-sfx-limit").fill("5")  # 正的 dBFS：越界
+        page.get_by_role("button", name="保存配置").click()
+        toast = page.locator(".toast.error")
+        expect(toast).to_contain_text("音效峰值限幅")
+        expect(toast).to_contain_text("超出范围")
+        assert httpx.get(f"{base}/api/config").json()["mixing"].get("sfx_limit_dbfs") == before
+
+    def test_empty_numeric_field_is_blocked_client_side_not_saved_as_zero(self, page, server):
+        import httpx
+        base = _api(server)
+        self._open(page, server)
+        before = httpx.get(f"{base}/api/config").json()["tts"].get("segment_gap_ms")
+        page.locator(".setting-segment-gap").fill("")
+        page.get_by_role("button", name="保存配置").click()
+        expect(page.locator(".toast.error")).to_contain_text("句间静音")
+        assert httpx.get(f"{base}/api/config").json()["tts"].get("segment_gap_ms") == before
+
+    def test_segment_gap_saved_under_tts_section(self, page, server):
+        import httpx
+        base = _api(server)
+        self._open(page, server)
+        page.locator(".setting-segment-gap").fill("350")
+        page.get_by_role("button", name="保存配置").click()
+        expect(page.locator(".toast.success")).to_be_visible()
+        assert httpx.get(f"{base}/api/config").json()["tts"]["segment_gap_ms"] == 350

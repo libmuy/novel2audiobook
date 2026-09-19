@@ -458,3 +458,37 @@ class TestValidateTimelineAssets:
         """空 item 列表"""
         # 不应该抛异常
         audio_mixer._validate_timeline_assets([], tmp_chapter_dir)
+
+
+class TestDuckingGainPrecedence:
+    """mixing.ducking_gain_db（dB）优先于旧的 ducking_volume_ratio（线性比例，不是 dB）"""
+
+    def _run(self, tmp_chapter_dir, monkeypatch, mixing_cfg):
+        seen = {}
+
+        def fake_duck(bgm_track, intervals, db_change, fade_ms, total_ms):
+            seen["db"] = db_change
+            return bgm_track
+
+        monkeypatch.setattr(audio_mixer, "_apply_ducking", fake_duck)
+        audio_path = os.path.join(tmp_chapter_dir, "audio_cache", "a.wav")
+        create_sample_wav_file(audio_path, duration_ms=1000)
+        timeline = {"chapter_id": "x", "total_duration_ms": 1000, "items": [
+            {"seg_id": 1, "audio_path": "audio_cache/a.wav", "start_time_ms": 0.0,
+             "duration_ms": 1000.0, "sfx": None, "bgm": None}]}
+        audio_mixer.mix_chapter(tmp_chapter_dir, timeline_data=timeline,
+                                config={"mixing": mixing_cfg}, voice_only=False)
+        return seen["db"]
+
+    def test_gain_db_wins_over_ratio(self, tmp_chapter_dir, monkeypatch):
+        assert self._run(tmp_chapter_dir, monkeypatch,
+                         {"ducking_gain_db": -6.0, "ducking_volume_ratio": 0.3}) == -6.0
+
+    def test_zero_gain_db_is_respected_not_treated_as_unset(self, tmp_chapter_dir, monkeypatch):
+        """0 dB（不闪避）是合法值——用 `is not None` 判断，不能被当成「没设置」回落到比例"""
+        assert self._run(tmp_chapter_dir, monkeypatch,
+                         {"ducking_gain_db": 0.0, "ducking_volume_ratio": 0.3}) == 0.0
+
+    def test_falls_back_to_ratio_when_unset(self, tmp_chapter_dir, monkeypatch):
+        db = self._run(tmp_chapter_dir, monkeypatch, {"ducking_volume_ratio": 0.5})
+        assert db == pytest.approx(20 * math.log10(0.5))

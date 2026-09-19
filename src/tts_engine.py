@@ -332,6 +332,9 @@ def generate_tts_incremental(chapter_dir: str, script_final_data: list, sample_r
     # 第三遍：按顺序读取实际时长，拼出时间线
     timeline_items = []
     current_time_ms = 0.0
+    # 句间静音：以前硬编码 200ms。它在这里被烘焙进 timeline.json 的 start_time_ms，
+    # 所以改 tts.segment_gap_ms 后要重跑 TTS 才生效（wav 全部命中缓存，只重算时间线，很快）
+    segment_gap_ms = float((config.get("tts") or {}).get("segment_gap_ms", 200.0))
     for seg, audio_path, was_cached in seg_infos:
         seg_id = seg.get("seg_id")
         speaker = seg.get("speaker", "narrator")
@@ -359,7 +362,7 @@ def generate_tts_incremental(chapter_dir: str, script_final_data: list, sample_r
             "cached": is_cached,
         }
         timeline_items.append(item)
-        current_time_ms += duration_ms + 200.0
+        current_time_ms += duration_ms + segment_gap_ms
 
     timeline_data = {
         "chapter_id": os.path.basename(os.path.abspath(chapter_dir)),

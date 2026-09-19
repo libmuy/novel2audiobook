@@ -719,6 +719,42 @@ class TestSystemAPI:
         assert body["rejected"][0]["key"] == key and body["rejected"][0]["reason"]
         assert cfg_path.read_bytes() == before
 
+    @pytest.mark.parametrize("key,value", [
+        ("mixing.ducking_threshold", -25.5), ("mixing.ducking_gain_db", -8), ("mixing.ducking_fade_ms", 500),
+        ("mixing.ambience_gain_db", -20), ("mixing.sfx_limit_dbfs", -4.5), ("tts.segment_gap_ms", 350),
+    ])
+    def test_patch_config_accepts_new_mixing_and_tts_numeric_keys(self, client, tmp_path, key, value):
+        cfg_path = self._seed_real_config(tmp_path)
+        resp = client.patch("/api/config", json={key: value})
+        assert resp.json()["applied_keys"] == [key]
+        import yaml
+        node = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+        for part in key.split("."):
+            node = node[part]
+        assert node == value
+
+    @pytest.mark.parametrize("key,value", [
+        ("mixing.ducking_threshold", 5),        # 正的 dBFS 永远触发不到
+        ("mixing.ducking_gain_db", 3),          # 闪避量必须 ≤ 0，正数会把背景音抬高
+        ("mixing.ducking_gain_db", "-10"),      # 字符串不接受
+        ("mixing.ducking_fade_ms", -1),
+        ("mixing.ambience_gain_db", 1),
+        ("tts.segment_gap_ms", 99999),
+    ])
+    def test_patch_config_rejects_bad_new_numeric_values(self, client, tmp_path, key, value):
+        cfg_path = self._seed_real_config(tmp_path)
+        before = cfg_path.read_bytes()
+        body = client.patch("/api/config", json={key: value}).json()
+        assert body["ok"] is False and body["rejected_keys"] == [key]
+        assert cfg_path.read_bytes() == before
+
+    def test_ducking_volume_ratio_is_deliberately_not_exposed(self, client, tmp_path):
+        """它是线性比例不是 dB：设置页里填 -10 会因混音器的 else 分支恰好得到 -10 dB，
+        让人误以为字段单位是 dB。UI 走 ducking_gain_db，这个旧键不进白名单。"""
+        self._seed_real_config(tmp_path)
+        body = client.patch("/api/config", json={"mixing.ducking_volume_ratio": 0.2}).json()
+        assert body["rejected_keys"] == ["mixing.ducking_volume_ratio"]
+
     def test_patch_config_mixed_valid_and_invalid_applies_only_valid(self, client, tmp_path):
         cfg_path = self._seed_real_config(tmp_path)
         resp = client.patch("/api/config", json={"mixing.bitrate": "320k", "server.cpu_workers": "many", "nope.x": 1})

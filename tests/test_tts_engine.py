@@ -79,6 +79,19 @@ class TestGenerateTTSIncremental:
         timeline_path = os.path.join(tmp_chapter_dir, "timeline.json")
         assert os.path.exists(timeline_path)
 
+    @pytest.mark.parametrize("gap,expected", [(None, 200.0), (0, 0.0), (500, 500.0)])
+    def test_segment_gap_ms_is_configurable(self, tmp_chapter_dir, tmp_roles_dir, sample_script_json, gap, expected):
+        """句间静音以前硬编码 200ms；现在读 tts.segment_gap_ms，缺省仍是 200（旧行为不变）"""
+        config = {"tts": {} if gap is None else {"segment_gap_ms": gap}}
+        result = tts_engine.generate_tts_incremental(
+            tmp_chapter_dir, sample_script_json, backend=tts_engine.MockTTSBackend(),
+            roles_dir=tmp_roles_dir, config=config,
+        )
+        items = result["items"]
+        assert len(items) >= 2
+        for a, b in zip(items, items[1:]):
+            assert b["start_time_ms"] - (a["start_time_ms"] + a["duration_ms"]) == pytest.approx(expected)
+
     def test_generate_tts_incremental_timeline_structure(self, tmp_chapter_dir, tmp_roles_dir, sample_script_json):
         """timeline 数据结构正确"""
         result = tts_engine.generate_tts_incremental(

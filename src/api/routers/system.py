@@ -16,6 +16,12 @@ _CONFIG_SPEC = {
     "mixing.output_format": ("choice", ("mp3", "wav", "flac")),
     "mixing.bitrate": ("bitrate",),
     "mixing.voice_only": ("bool",),
+    "mixing.ducking_threshold": ("float", -60.0, 0.0),
+    "mixing.ducking_gain_db": ("float", -40.0, 0.0),
+    "mixing.ducking_fade_ms": ("int", 0, 5000),
+    "mixing.ambience_gain_db": ("float", -60.0, 0.0),
+    "mixing.sfx_limit_dbfs": ("float", -60.0, 0.0),
+    "tts.segment_gap_ms": ("int", 0, 2000),
     "server.cpu_workers": ("int", 1, 16),
     "server.monitor_interval_ms": ("int", 200, 60000),
     "server.library_root": ("str",),
@@ -39,6 +45,13 @@ def _coerce_config_value(key: str, value):
         lo, hi = args
         if isinstance(value, bool) or not isinstance(value, int):
             return False, None, f"必须是整数（{lo}–{hi}）"
+        if not lo <= value <= hi:
+            return False, None, f"超出范围（{lo}–{hi}）"
+        return True, value, None
+    if kind == "float":
+        lo, hi = args
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return False, None, f"必须是数字（{lo}–{hi}）"
         if not lo <= value <= hi:
             return False, None, f"超出范围（{lo}–{hi}）"
         return True, value, None

@@ -217,7 +217,13 @@ def mix_chapter(chapter_dir: str, timeline_data: dict = None, config: dict = Non
     duck_fade_ms = mixing_cfg.get("ducking_fade_ms", 300)
     ambience_gain_db = mixing_cfg.get("ambience_gain_db", -18.0)
     sfx_limit_db = mixing_cfg.get("sfx_limit_dbfs", -3.0)
-    duck_db_change = 20.0 * math.log10(duck_ratio) if duck_ratio > 0 else -10.0
+    # 闪避量有两个来源：mixing.ducking_gain_db（dB，设置页用它）优先；没设才回落到
+    # 旧的 ducking_volume_ratio（线性比例，不是 dB——设置页不暴露它，因为用户在「闪避」
+    # 字段里填 -10 会撞上下面 else 分支恰好得到 -10 dB，误以为字段单位是 dB）
+    if mixing_cfg.get("ducking_gain_db") is not None:
+        duck_db_change = float(mixing_cfg["ducking_gain_db"])
+    else:
+        duck_db_change = 20.0 * math.log10(duck_ratio) if duck_ratio > 0 else -10.0
 
     timeline_path = os.path.join(chapter_dir, "timeline.json")
     if timeline_data is None:
