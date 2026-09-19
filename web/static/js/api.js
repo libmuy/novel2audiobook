@@ -282,6 +282,12 @@ const API = {
         return this.request(`/asset-specs${kind ? `?kind=${kind}` : ''}`);
     },
 
+    // 试听：已生成的 wav（未生成时 404）。同名重新生成后 URL 不变，后端带
+    // Cache-Control: no-cache，浏览器每次都会向服务器验证，不会播到旧音频
+    getAssetAudioUrl(kind, name) {
+        return `/api/asset-specs/${kind}/${name}/audio`;
+    },
+
     async createAssetSpec(data) {
         return this.request('/asset-specs', {
             method: 'POST',

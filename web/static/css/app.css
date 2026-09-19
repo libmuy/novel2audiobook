@@ -636,3 +636,4 @@ textarea { resize: vertical; }
 .mix-with-assets { margin-top: 10px; }
 .chapter-assets-missing { margin: 4px 0; }
 .category-row .tree-toggle { font-size: 13px; width: 16px; }
+.asset-card .asset-audio { width: 100%; height: 32px; }

@@ -1,6 +1,10 @@
 """素材规格路由（assets/asset_specs.yaml 的增删改查）"""
+import os
+
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from src import asset_gen, asset_specs_store as store
+from src.utils import resolve_path
 from src.api.schemas import AssetSpecCreate, AssetSpecUpdate
 
 router = APIRouter(prefix="/asset-specs", tags=["assets"])
@@ -74,3 +78,21 @@ def delete_spec(kind: str, name: str, delete_files: bool = False):
     except store.SpecNotFound as e:
         raise HTTPException(404, str(e.args[0]))
     return {"ok": True, "files_deleted": files_deleted}
+
+
+@router.get("/{kind}/{name}/audio")
+def get_asset_audio(kind: str, name: str):
+    """试听：返回已生成的 wav。kind/name 先过和写入口同一套校验——name 会被拼进
+    文件路径，必须是安全标识符，杜绝目录穿越。没生成过（或只有定义没有音频）404。
+
+    Cache-Control: no-cache——同名素材重新生成后 URL 不变，浏览器必须每次带
+    ETag/Last-Modified 去问服务器，否则会一直播放缓存里的旧音频。"""
+    try:
+        store.validate_kind(kind)
+        store.validate_name(name)
+    except store.SpecError as e:
+        raise HTTPException(400, str(e))
+    path = os.path.join(resolve_path("assets"), kind, f"{name}.wav")
+    if not os.path.exists(path):
+        raise HTTPException(404, f"素材 {kind}/{name} 还没有生成音频")
+    return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "no-cache"})

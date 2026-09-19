@@ -58,7 +58,7 @@ audio_mixer/status_tracker/preflight 既有测试。
 
 ## 明确留作后续（不在本次范围）
 - **真正杀子进程的取消**（`TaskQueue.cancel` → 后端 `terminate_current`），应对 TTS 和素材生成一起做。
-- 素材音频的流式试听端点（`GET /assets/{kind}/{name}/audio`）——前端音效库要试听才需要。
+- ~~素材音频试听端点~~：已在计划 009 补上。
 - 素材分类树（`category_tree.py` 已通用，接到素材元数据即可）。
 - 前端接入以上所有新接口。
 - 既有的已知小问题、本次没动：`asset_gen.ambience_engine/sfx_engine` 配置只是日志字符串，

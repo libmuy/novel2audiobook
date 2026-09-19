@@ -704,6 +704,7 @@ class TestAssetsPageCrud:
         card = page.locator(".asset-card", has_text="e2e_hit")
         expect(card).to_be_visible()
         expect(card).to_contain_text("未生成")
+        expect(card.locator("audio")).to_have_count(0)  # 没生成过就没有播放器
 
         # 编辑：只改描述——后端 spec_hash 不含 description，状态不该变
         card.get_by_role("button", name="编辑").click()
@@ -718,6 +719,23 @@ class TestAssetsPageCrud:
         _confirm(page, "开始生成")
         expect(card).to_contain_text("占位音", timeout=20000)
         assert os.path.exists(os.path.join(server["tmp"], "assets", "sfx", "e2e_hit.wav"))
+
+        # 试听：生成完成后出现播放器，src 指向的接口真能拿到 wav
+        player = card.locator("audio")
+        expect(player).to_be_visible()
+        src = player.get_attribute("src")
+        assert src == "/api/asset-specs/sfx/e2e_hit/audio"
+        result = page.evaluate("""async (u) => {
+            const r = await fetch(u);
+            return { status: r.status, type: r.headers.get('content-type'), size: (await r.arrayBuffer()).byteLength };
+        }""", src)
+        assert result["status"] == 200 and result["type"] == "audio/wav" and result["size"] > 44
+        # 播放器真的能加载出时长（浏览器解码通过），不只是 URL 通
+        player.evaluate("el => el.load()")
+        page.wait_for_function(
+            "() => [...document.querySelectorAll('.asset-card')].find(c => c.textContent.includes('e2e_hit'))"
+            ".querySelector('audio').readyState >= 1", timeout=10000)
+        assert player.evaluate("el => el.duration") > 0
 
         # 删除并同时删掉音频文件
         card.get_by_role("button", name="删除").click()

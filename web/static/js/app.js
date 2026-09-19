@@ -2472,6 +2472,15 @@ app.component('assets-page', {
                 </div>
                 <div class="asset-meta">{{ spec.description || '（无描述）' }}</div>
                 <div class="asset-prompt" :title="spec.prompt">{{ spec.prompt }}</div>
+                <!-- 只要磁盘上有 wav 就能听（含规格已变更、旧音频还在的情况）；key 里带
+                     audioNonce：一次生成完成后强制重建元素，不让它继续持有旧音频的缓冲 -->
+                <audio v-if="spec.status !== 'MISSING'" :key="spec.kind + '/' + spec.name + '/' + audioNonce"
+                       class="asset-audio" controls preload="none"
+                       :src="API.getAssetAudioUrl(spec.kind, spec.name)" @play="onAudioPlay"></audio>
+                <div v-else class="asset-meta">尚未生成，生成后可在这里试听</div>
+                <div v-if="spec.status && spec.status.startsWith('STALE')" class="asset-meta">
+                    播放的是规格变更前生成的旧音频，重新生成后才是新的
+                </div>
                 <div class="card-footer">
                     <button class="action-btn" @click="generate(spec)" :disabled="!!genTask">
                         {{ spec.status === 'MISSING' ? '生成' : '重新生成' }}
@@ -2655,6 +2664,14 @@ app.component('assets-page', {
         };
 
         // ---- 生成任务：先预检、确认，再提交；进度走 SSE 的 task-update ----
+        // 同时只播一个：开始播放某个素材时暂停其余的
+        const onAudioPlay = (event) => {
+            document.querySelectorAll('.asset-card audio').forEach((el) => {
+                if (el !== event.target) el.pause();
+            });
+        };
+        const audioNonce = ref(0);
+
         const genTask = ref(null);
         const genPercent = computed(() => {
             const p = genTask.value?.progress;
@@ -2701,6 +2718,7 @@ app.component('assets-page', {
             if (!task || task.type !== 'asset_gen') return;
             if (TERMINAL.includes(task.state)) {
                 genTask.value = null;
+                audioNonce.value++;
                 loadSpecs();
                 if (task.state === 'succeeded') showToast?.('素材生成完成', 'success');
                 else if (task.state === 'cancelled') showToast?.('素材生成已取消', 'success');
@@ -2727,7 +2745,7 @@ app.component('assets-page', {
             specs, loading, kindFilter, kindFilters, kindLabel, visibleSpecs, statusInfo,
             showDialog, editing, form, canSave, openCreate, openEdit, save,
             deleting, deleteFiles, openDelete, confirmDelete,
-            genTask, genPercent, generate, cancelGen,
+            genTask, genPercent, generate, cancelGen, onAudioPlay, audioNonce, API,
         };
     },
 });

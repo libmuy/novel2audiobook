@@ -127,6 +127,43 @@ class TestDelete:
         assert client.delete("/api/asset-specs/sfx/nope").status_code == 404
 
 
+class TestAudio:
+    def test_404_before_generation(self, client):
+        assert client.get("/api/asset-specs/sfx/sword_clash/audio").status_code == 404
+
+    def test_served_as_wav_after_generation(self, client, tmp_path):
+        _gen_mock(tmp_path)
+        resp = client.get("/api/asset-specs/sfx/sword_clash/audio")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "audio/wav"
+        assert resp.content[:4] == b"RIFF"
+        # 同名重新生成后 URL 不变，必须让浏览器每次重新验证，不能一直播缓存里的旧音频
+        assert resp.headers["cache-control"] == "no-cache"
+        assert resp.content == (tmp_path / "assets" / "sfx" / "sword_clash.wav").read_bytes()
+
+    def test_still_playable_when_stale(self, client, tmp_path):
+        """规格改了（STALE）但旧音频还在：仍然可以试听旧版本"""
+        _gen_mock(tmp_path)
+        client.patch("/api/asset-specs/sfx/sword_clash", json={"prompt": "totally different"})
+        assert client.get("/api/asset-specs/sfx/sword_clash/audio").status_code == 200
+
+    def test_unknown_kind_400(self, client):
+        assert client.get("/api/asset-specs/music/x/audio").status_code == 400
+
+    @pytest.mark.parametrize("name", ["Bad Name", "UPPER", "a.b", "..", "%2e%2e"])
+    def test_unsafe_name_400_not_path_traversal(self, client, name):
+        assert client.get(f"/api/asset-specs/sfx/{name}/audio").status_code in (400, 404)
+        # 关键：不能因为路径里有 .. 而读到 assets 之外的文件
+        assert client.get(f"/api/asset-specs/sfx/{name}/audio").status_code != 200
+
+    def test_spec_deleted_but_wav_kept_is_still_servable_by_name(self, client, tmp_path):
+        """删规格默认保留 wav（跟角色分类的悬空引用同一套容忍策略）；已有章节仍引用它，
+        试听/混音继续可用，只是素材库列表里不再有这张卡片"""
+        _gen_mock(tmp_path)
+        client.delete("/api/asset-specs/sfx/sword_clash")
+        assert client.get("/api/asset-specs/sfx/sword_clash/audio").status_code == 200
+
+
 class TestCommentPreservation:
     """选 ruamel 而不是 yaml.safe_dump 的全部理由：文件头说明和条目行内诊断注释不能丢"""
 
