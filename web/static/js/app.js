@@ -263,6 +263,7 @@ const app = createApp({
 // 注册页面组件
 app.component('novels-page', {
     template: `
+        <div class="page-pad novels-page">
         <div class="page-header">
             <h1 class="page-title">小说列表</h1>
             <div class="page-actions">
@@ -366,6 +367,7 @@ app.component('novels-page', {
                     </button>
                 </div>
             </div>
+        </div>
         </div>
     `,
     setup() {
@@ -660,6 +662,10 @@ app.component('novel-detail-page', {
                         <button class="btn btn-secondary" @click="batchTTS">批量生成人声</button>
                         <button class="btn btn-secondary" @click="batchMix">批量混音导出</button>
                     </div>
+                    <label class="form-checkbox mix-with-assets">
+                        <input type="checkbox" v-model="mixWithAssets">
+                        <span>混音时叠加背景音/音效（不勾选则遵循「设置」里的默认值，默认只出人声）</span>
+                    </label>
                 </div>
 
                 <div class="detail-content">
@@ -685,6 +691,24 @@ app.component('novel-detail-page', {
                             </div>
                         </div>
                         
+                        <div v-if="chapterAssets" class="content-section chapter-assets">
+                            <h4 class="section-title">素材</h4>
+                            <div class="text-sm">
+                                引用背景音 {{ chapterAssets.referenced.bgm.length }} 种、音效
+                                {{ chapterAssets.referenced.sfx.length }} 种
+                                （{{ chapterAssets.segment_counts.with_bgm }} 个分块带背景音，
+                                {{ chapterAssets.segment_counts.with_sfx }} 个带音效）
+                            </div>
+                            <div v-if="missingAssetNames.length" class="confirm-warning chapter-assets-missing">
+                                以下素材还没有生成，混音时会被跳过：{{ missingAssetNames.join('、') }}
+                            </div>
+                            <div class="text-sm">
+                                上次混音：<b>{{ mixStatusLabel }}</b>
+                                <span v-if="chapterAssets.mix.mixed_at" class="text-gray">（{{ chapterAssets.mix.mixed_at }}）</span>
+                                <span v-if="chapterAssets.mix.stale" class="badge badge-warning">素材引用已变化，需要重新混音</span>
+                            </div>
+                        </div>
+
                         <div class="content-section">
                             <h4 class="section-title">章节操作</h4>
                             <div class="flex gap-2">
@@ -767,6 +791,19 @@ app.component('novel-detail-page', {
         const selectedNode = ref(null);
         const selectedNodes = ref([]);
         const chapterStats = ref({});
+        const chapterAssets = ref(null);
+        const mixWithAssets = ref(false);
+        const missingAssetNames = computed(() => {
+            const m = chapterAssets.value?.missing;
+            return m ? [...m.bgm, ...m.sfx] : [];
+        });
+        // mixed_with_assets 为 null 表示没有混音记录（还没混过，或本次改造之前混的）
+        const mixStatusLabel = computed(() => {
+            const v = chapterAssets.value?.mix.mixed_with_assets;
+            if (v === true) return '已叠加背景音/音效';
+            if (v === false) return '纯人声';
+            return '无记录（未混音或早期产物）';
+        });
         const tasks = ref([]);
         const taskPanelExpanded = ref(true);
         const expandedGroups = ref([]);
@@ -955,6 +992,12 @@ app.component('novel-detail-page', {
             } catch (error) {
                 console.error('加载章节统计失败:', error);
             }
+            // 素材引用/缺失/混音状态是独立数据源，失败不影响上面的分块统计
+            try {
+                chapterAssets.value = await API.getChapterAssets(props.novelId, chapterId);
+            } catch (error) {
+                chapterAssets.value = null;
+            }
         };
 
         const addPart = async () => {
@@ -1130,8 +1173,11 @@ app.component('novel-detail-page', {
 
         const runBatchTask = async (type, label) => {
             const scope = buildTaskScope();
+            // 只有混音任务认 params；勾了"叠加素材"才传 with_assets，
+            // 不勾就不传，让后端遵循 mixing.voice_only 的配置默认值
+            const extra = type === 'mix' && mixWithAssets.value ? { params: { with_assets: true } } : {};
             try {
-                const pre = await API.preflightTask({ type, novel_id: props.novelId, scope });
+                const pre = await API.preflightTask({ type, novel_id: props.novelId, scope, ...extra });
                 const eta = pre.estimated_gpu_minutes != null
                     ? `约 ${pre.estimated_gpu_minutes} 分钟`
                     : '未知（尚无历史数据）';
@@ -1147,7 +1193,7 @@ app.component('novel-detail-page', {
                     confirmClass: 'btn-primary',
                 });
                 if (!confirmed) return;
-                await API.createTask({ type, novel_id: props.novelId, scope });
+                await API.createTask({ type, novel_id: props.novelId, scope, ...extra });
                 showToast?.('任务已提交，可在下方任务队列查看进度', 'success');
                 await loadTasks();
             } catch (error) {
@@ -1220,6 +1266,10 @@ app.component('novel-detail-page', {
             selectedNode,
             selectedNodes,
             chapterStats,
+            chapterAssets,
+            mixWithAssets,
+            missingAssetNames,
+            mixStatusLabel,
             tasks,
             taskGroups,
             taskPanelExpanded,
@@ -1323,6 +1373,8 @@ app.component('workbench-page', {
                             <div class="segment-header">
                                 <span class="segment-id">{{ segment.seg_id }}</span>
                                 <span class="segment-status" :class="segment.status"></span>
+                                <span v-if="segment.bgm" class="segment-fx" :title="'背景音：' + segment.bgm">bgm</span>
+                                <span v-if="segment.sfx" class="segment-fx" :title="'音效：' + segment.sfx">sfx</span>
                             </div>
                             <div class="segment-preview">{{ segment.text?.substring(0, 40) }}...</div>
                             <div class="segment-role" :class="{ unbound: !segment.speaker }">
@@ -1340,6 +1392,7 @@ app.component('workbench-page', {
                         <button class="btn btn-secondary btn-sm" @click="batchBindRole">批量绑定角色</button>
                         <button class="btn btn-secondary btn-sm" @click="batchChangeTone">批量修改语气</button>
                         <button class="btn btn-secondary btn-sm" @click="batchClearRole">批量清空角色</button>
+                        <button class="btn btn-secondary btn-sm" @click="openFxDialog">批量设置素材</button>
                         <button class="btn btn-primary btn-sm" @click="batchGenerateTTS">批量生成人声</button>
                     </div>
                 </div>
@@ -1395,6 +1448,26 @@ app.component('workbench-page', {
                             </select>
                         </div>
                         
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">背景音</label>
+                                <select class="form-select segment-bgm-select" v-model="editForm.bgm">
+                                    <option value="">无</option>
+                                    <option v-for="opt in bgmOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">音效</label>
+                                <select class="form-select segment-sfx-select" v-model="editForm.sfx">
+                                    <option value="">无</option>
+                                    <option v-for="opt in sfxOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                                </select>
+                            </div>
+                        </div>
+                        <p class="form-help" v-if="!bgmOptions.length && !sfxOptions.length">
+                            素材库里还没有已生成的素材，去「音效库」页定义并生成后再选。
+                        </p>
+
                         <div class="content-section">
                             <h4 class="section-title">试听</h4>
                             <div class="flex gap-2">
@@ -1427,6 +1500,37 @@ app.component('workbench-page', {
                 <div v-if="selectedSegment" class="segment-edit-actions">
                     <button class="btn btn-secondary" @click="cancelEdit">取消</button>
                     <button class="btn btn-primary" @click="saveSegment">保存</button>
+                </div>
+            </div>
+        </div>
+
+        <div v-if="showFxDialog" class="modal-overlay" @click.self="showFxDialog = false">
+            <div class="modal">
+                <div class="modal-header">
+                    <h2 class="modal-title">批量设置素材（{{ selectedSegments.length }} 个分块）</h2>
+                    <button class="modal-close" @click="showFxDialog = false">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label class="form-label">背景音</label>
+                        <select class="form-select batch-bgm-select" v-model="fxForm.bgm">
+                            <option value="__keep">（不修改）</option>
+                            <option value="">（清空）</option>
+                            <option v-for="n in assetNames.bgm" :key="n" :value="n">{{ n }}</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">音效</label>
+                        <select class="form-select batch-sfx-select" v-model="fxForm.sfx">
+                            <option value="__keep">（不修改）</option>
+                            <option value="">（清空）</option>
+                            <option v-for="n in assetNames.sfx" :key="n" :value="n">{{ n }}</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @click="showFxDialog = false">取消</button>
+                    <button class="btn btn-primary" @click="applyFx" :disabled="fxForm.bgm === '__keep' && fxForm.sfx === '__keep'">应用</button>
                 </div>
             </div>
         </div>
@@ -1481,7 +1585,29 @@ app.component('workbench-page', {
             text: '',
             speaker: '', // 存角色 id，不是显示名
             emotion: 'neutral',
+            bgm: '', // 素材名；空串 = 无
+            sfx: '',
         });
+
+        // 已生成的素材词表（GET /assets：{bgm:[], sfx:[]}，磁盘上真有 wav 的才在里面）
+        const assetNames = ref({ bgm: [], sfx: [] });
+        // 分块当前引用的素材如果已经不在词表里（被删了 / 还没生成），也要留在下拉里，
+        // 否则打开编辑框那一刻就等于悄悄把它清空了
+        const withCurrent = (names, current) => {
+            const opts = names.map((n) => ({ value: n, label: n }));
+            if (current && !names.includes(current)) opts.unshift({ value: current, label: `${current}（缺失）` });
+            return opts;
+        };
+        const bgmOptions = computed(() => withCurrent(assetNames.value.bgm, editForm.bgm));
+        const sfxOptions = computed(() => withCurrent(assetNames.value.sfx, editForm.sfx));
+
+        const loadAssetNames = async () => {
+            try {
+                assetNames.value = await API.getAssets();
+            } catch (error) {
+                console.error('加载素材词表失败:', error);
+            }
+        };
 
         const selectedRoleName = computed(() => {
             const role = roles.value.find((r) => r.id === editForm.speaker);
@@ -1530,6 +1656,8 @@ app.component('workbench-page', {
             editForm.text = segment.text || '';
             editForm.speaker = segment.speaker || '';
             editForm.emotion = segment.emotion || 'neutral';
+            editForm.bgm = segment.bgm || '';
+            editForm.sfx = segment.sfx || '';
             audioUrl.value = '';
         };
 
@@ -1597,11 +1725,23 @@ app.component('workbench-page', {
 
         const saveSegment = async () => {
             try {
-                await API.updateSegment(props.novelId, props.chapterId, selectedSegment.value.seg_id, {
+                const payload = {
                     text: editForm.text,
                     speaker: editForm.speaker,
                     emotion: editForm.emotion,
-                });
+                };
+                // 素材字段只在真的改了才发：后端会校验非空素材名必须存在，
+                // 分块引用着一个已缺失的素材、用户没动它时，不能因为这条校验保存失败
+                const orig = selectedSegment.value;
+                const fxChanged = [];
+                for (const key of ['bgm', 'sfx']) {
+                    if ((editForm[key] || null) !== (orig[key] || null)) {
+                        payload[key] = editForm[key] || null;
+                        fxChanged.push(key);
+                    }
+                }
+                await API.updateSegment(props.novelId, props.chapterId, orig.seg_id, payload);
+                if (fxChanged.length) await syncTimelineAssets();
                 await loadSegments();
                 selectedSegment.value = null;
             } catch (error) {
@@ -1632,6 +1772,42 @@ app.component('workbench-page', {
             } catch (error) {
                 console.error('批量绑定角色失败:', error);
                 showToast?.(`批量绑定失败: ${error.message}`, 'error');
+            }
+        };
+
+        // 素材改动只写进 script_final.json，而混音读的是 TTS 时打好快照的
+        // timeline.json——保存后顺手同步过去，否则改了素材要重新 TTS 才生效。
+        // 还没跑过 TTS（404）就没有 timeline 可同步，静默跳过。
+        const syncTimelineAssets = async () => {
+            try {
+                const res = await API.refreshTimelineAssets(props.novelId, props.chapterId);
+                if (res.updated) showToast?.('素材已保存，并同步到时间线', 'success');
+            } catch (error) {
+                // 无时间线是正常情况，不打扰用户
+            }
+        };
+
+        const showFxDialog = ref(false);
+        const fxForm = reactive({ bgm: '__keep', sfx: '__keep' });
+        const openFxDialog = () => {
+            fxForm.bgm = '__keep';
+            fxForm.sfx = '__keep';
+            showFxDialog.value = true;
+        };
+        const applyFx = async () => {
+            const set = {};
+            if (fxForm.bgm !== '__keep') set.bgm = fxForm.bgm || null;
+            if (fxForm.sfx !== '__keep') set.sfx = fxForm.sfx || null;
+            try {
+                await API.batchUpdateSegments(props.novelId, props.chapterId, {
+                    seg_ids: selectedSegments.value, set,
+                });
+                await syncTimelineAssets();
+                await loadSegments();
+                selectedSegments.value = [];
+                showFxDialog.value = false;
+            } catch (error) {
+                showToast?.(`批量设置素材失败: ${error.message}`, 'error');
             }
         };
 
@@ -1703,7 +1879,7 @@ app.component('workbench-page', {
         };
 
         onMounted(async () => {
-            await Promise.all([loadSegments(), loadRoles()]);
+            await Promise.all([loadSegments(), loadRoles(), loadAssetNames()]);
             nextTick(() => updateViewportHeight());
             window.addEventListener('resize', updateViewportHeight);
         });
@@ -1720,6 +1896,13 @@ app.component('workbench-page', {
             showRoleDropdown,
             audioUrl,
             editForm,
+            assetNames,
+            bgmOptions,
+            sfxOptions,
+            showFxDialog,
+            fxForm,
+            openFxDialog,
+            applyFx,
             selectedRoleName,
             stats,
             segmentList,
@@ -1745,104 +1928,114 @@ app.component('workbench-page', {
     },
 });
 
+// 角色库：左侧嵌套分类树（GET/PUT /role-category-tree，整树替换）+ 右侧角色卡片。
+// 角色自己的 category 字段存分类"路径"字符串（如 "主角/男主"，旧数据是扁平名字如
+// "主角"）；按分类筛选时匹配路径本身及其子路径。删除/改名分类节点不会改动角色
+// 已有的 category——后端沿用"悬空引用容忍"策略，角色只是引用了一个不在树里的名字。
 app.component('roles-page', {
     template: `
-        <div class="page-header">
+        <div class="roles-page">
+        <div class="page-header roles-header">
             <h1 class="page-title">全局角色库</h1>
             <div class="page-actions">
                 <button class="btn btn-primary" @click="showCreateDialog">+ 新增角色</button>
             </div>
         </div>
-        
-        <div class="content-section">
-            <div class="flex gap-2 mb-4">
-                <span
-                    v-for="category in allCategories"
-                    :key="category"
-                    class="category-tag"
-                    :class="{ active: selectedCategory === category }"
-                    @click="filterByCategory(category)"
-                >
-                    {{ category }}
-                </span>
-                <span
-                    class="category-tag"
-                    :class="{ active: !selectedCategory }"
-                    @click="filterByCategory(null)"
-                >
-                    全部
-                </span>
-                <button class="btn btn-secondary btn-sm" @click="showCategoryDialog = true">管理分类</button>
+
+        <div class="two-pane-layout">
+            <div class="category-pane">
+                <div class="category-list">
+                    <div class="category-row" :class="{ active: selectedPath === null }" @click="selectedPath = null">
+                        <span class="category-row-title">全部</span>
+                    </div>
+                    <div v-for="row in flatRows" :key="row.id" class="category-row"
+                         :class="{ active: selectedPath === row.path }"
+                         :style="{ paddingLeft: (10 + row.depth * 18) + 'px' }"
+                         :data-category-path="row.path"
+                         @click="selectedPath = row.path">
+                        <button class="tree-toggle" @click.stop="toggleCollapse(row.id)" :style="{ visibility: row.hasChildren ? 'visible' : 'hidden' }">
+                            {{ collapsed[row.id] ? '▸' : '▾' }}
+                        </button>
+                        <span class="category-row-title">{{ row.title }}</span>
+                        <button v-if="row.depth < 3" class="action-btn" title="新建子分类" @click.stop="openCategoryDialog('create', row)">＋</button>
+                        <button class="action-btn" @click.stop="openCategoryDialog('rename', row)">改</button>
+                        <button class="action-btn danger" @click.stop="removeCategory(row)">删</button>
+                    </div>
+                    <div class="tree-add-row">
+                        <button class="tree-add-btn" @click="openCategoryDialog('create', null)">+ 新建分类</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="content-pane">
+                <div class="content-pane-header">
+                    <h3 class="content-pane-title">{{ selectedPath === null ? '全部角色' : selectedPath }}</h3>
+                </div>
+
+                <div v-if="tagStats.length" class="flex gap-2 mb-4 tag-filter-row" style="flex-wrap: wrap; align-items: center;">
+                    <span class="text-sm text-gray">标签筛选</span>
+                    <button v-for="t in tagStats" :key="t.name" class="tag-filter-chip"
+                            :class="{ active: tagFilters.includes(t.name) }" @click="toggleTagFilter(t.name)">
+                        {{ t.name }} {{ t.count }}
+                    </button>
+                </div>
+
+                <div v-if="loading" class="empty-state"><div class="loading-spinner"></div></div>
+                <div v-else-if="filteredRoles.length === 0" class="empty-state">
+                    <h3 class="empty-state-title">暂无角色</h3>
+                    <p class="empty-state-description">{{ roles.length ? '当前分类/标签下没有角色' : '点击上方按钮创建第一个角色' }}</p>
+                </div>
+                <div v-else class="card-grid">
+                    <div v-for="role in filteredRoles" :key="role.id" class="role-card">
+                        <div class="role-card-header">
+                            <div>
+                                <div class="role-name">{{ role.name }}</div>
+                                <div class="role-meta">{{ role.category || '未分类' }} · {{ genderLabel(role.gender) }}</div>
+                            </div>
+                            <div class="flex gap-2">
+                                <button class="btn btn-secondary btn-sm" @click="editRole(role)">编辑</button>
+                                <button class="btn btn-danger btn-sm" @click="deleteRole(role)" :disabled="role.name === 'narrator' || role.id === 'narrator'">删除</button>
+                            </div>
+                        </div>
+                        <div v-if="(role.tags || []).length" class="flex gap-2" style="flex-wrap: wrap;">
+                            <span v-for="tag in role.tags" :key="tag" class="tag-chip">{{ tag }}</span>
+                        </div>
+                        <div v-if="role.has_reference" class="audio-player">
+                            <audio :src="referenceUrl(role.id)" controls></audio>
+                        </div>
+                        <div class="role-stats">
+                            <span class="embedding-status" :class="embeddingClass(role.embedding_status)">
+                                {{ embeddingLabel(role.embedding_status) }}
+                            </span>
+                            <span class="ml-2">
+                                被 {{ (role.novels || []).length }} 本小说、{{ role.segment_count || 0 }} 个分块引用
+                            </span>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
-        <div v-if="showCategoryDialog" class="modal-overlay" @click.self="showCategoryDialog = false">
+        <div v-if="categoryDialog" class="modal-overlay" @click.self="categoryDialog = null">
             <div class="modal">
                 <div class="modal-header">
-                    <h2 class="modal-title">管理角色分类</h2>
-                    <button class="modal-close" @click="showCategoryDialog = false">&times;</button>
+                    <h2 class="modal-title">{{ categoryDialog.mode === 'rename' ? '重命名分类' : (categoryDialog.parent ? '新建子分类（' + categoryDialog.parent.path + '）' : '新建分类') }}</h2>
+                    <button class="modal-close" @click="categoryDialog = null">&times;</button>
                 </div>
                 <div class="modal-body">
-                    <div class="flex gap-2 mb-2">
-                        <input type="text" class="form-input" v-model="newCategoryName" placeholder="新分类名称"
-                               @keyup.enter="addCategory">
-                        <button class="btn btn-secondary" @click="addCategory">添加</button>
+                    <div class="form-group">
+                        <label class="form-label">分类名称</label>
+                        <input type="text" class="form-input category-name-input" v-model="categoryDialog.title"
+                               @keyup.enter="saveCategoryDialog" placeholder="不能包含 /">
                     </div>
-                    <div v-for="category in categories" :key="category" class="flex gap-2 mb-2" style="align-items:center;">
-                        <span style="flex:1;">{{ category }}</span>
-                        <button class="btn btn-danger btn-sm" @click="removeCategory(category)">删除</button>
-                    </div>
-                    <p v-if="categories.length === 0" class="form-help">还没有自定义分类</p>
                 </div>
                 <div class="modal-footer">
-                    <button class="btn btn-primary" @click="showCategoryDialog = false">完成</button>
+                    <button class="btn btn-secondary" @click="categoryDialog = null">取消</button>
+                    <button class="btn btn-primary" @click="saveCategoryDialog" :disabled="!categoryDialog.title.trim()">保存</button>
                 </div>
             </div>
         </div>
-        
-        <div v-if="loading" class="empty-state">
-            <div class="loading-spinner"></div>
-        </div>
-        
-        <div v-else-if="filteredRoles.length === 0" class="empty-state">
-            <h3 class="empty-state-title">暂无角色</h3>
-            <p class="empty-state-description">点击上方按钮创建第一个角色</p>
-        </div>
-        
-        <div v-else>
-            <div v-for="role in filteredRoles" :key="role.id" class="role-card">
-                <div class="role-card-header">
-                    <div>
-                        <div class="role-name">{{ role.name }}</div>
-                        <div class="role-meta">{{ role.category || '未分类' }} · {{ role.gender || '未知' }}</div>
-                    </div>
-                    <div class="flex gap-2">
-                        <button class="btn btn-secondary btn-sm" @click="editRole(role)">编辑</button>
-                        <button 
-                            class="btn btn-danger btn-sm" 
-                            @click="deleteRole(role)"
-                            :disabled="role.name === 'narrator'"
-                        >
-                            删除
-                        </button>
-                    </div>
-                </div>
-                
-                <div v-if="role.has_reference" class="audio-player">
-                    <audio :src="referenceUrl(role.id)" controls></audio>
-                </div>
 
-                <div class="role-stats">
-                    <span class="embedding-status" :class="embeddingClass(role.embedding_status)">
-                        {{ embeddingLabel(role.embedding_status) }}
-                    </span>
-                    <span class="ml-2">
-                        被 {{ (role.novels || []).length }} 本小说、{{ role.segment_count || 0 }} 个分块引用
-                    </span>
-                </div>
-            </div>
-        </div>
-        
         <div v-if="showDialog" class="modal-overlay" @click.self="closeDialog">
             <div class="modal">
                 <div class="modal-header">
@@ -1857,13 +2050,11 @@ app.component('roles-page', {
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label">分类</label>
-                            <select class="form-select" v-model="form.category">
+                            <select class="form-select role-category-select" v-model="form.category">
                                 <option value="">未分类</option>
-                                <option v-for="category in categories" :key="category" :value="category">
-                                    {{ category }}
-                                </option>
+                                <option v-for="opt in categoryOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
                             </select>
-                            <p class="form-help">没有想要的分类？先在上面"管理分类"里加一个</p>
+                            <p class="form-help">没有想要的分类？先在左侧分类树里新建</p>
                         </div>
                         <div class="form-group">
                             <label class="form-label">性别</label>
@@ -1873,6 +2064,16 @@ app.component('roles-page', {
                                 <option value="female">女</option>
                             </select>
                         </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">标签</label>
+                        <div class="flex gap-2 mb-2" style="flex-wrap: wrap;">
+                            <span v-for="tag in form.tags" :key="tag" class="tag-chip">
+                                {{ tag }}<button class="tag-chip-remove" @click="removeTag(tag)">&times;</button>
+                            </span>
+                        </div>
+                        <input type="text" class="form-input role-tag-input" v-model="tagInput"
+                               @keydown.enter.prevent="addTag" placeholder="输入标签后按回车">
                     </div>
                     <div class="form-group">
                         <label class="form-label">语速</label>
@@ -1896,42 +2097,180 @@ app.component('roles-page', {
                 </div>
             </div>
         </div>
+        </div>
     `,
     setup() {
         const showToast = inject('showToast');
+        const showConfirm = inject('showConfirm');
 
         const roles = ref([]);
         const loading = ref(true);
-        const selectedCategory = ref(null);
+        const tree = ref([]);
+        const collapsed = reactive({});
+        const selectedPath = ref(null);
+        const tagStats = ref([]);
+        const tagFilters = ref([]);
+
         const showDialog = ref(false);
         const editingRole = ref(null);
-        const showCategoryDialog = ref(false);
-        const categories = ref([]); // 管理分类里那份"正式登记"的分类列表
-        const newCategoryName = ref('');
+        const tagInput = ref('');
         const form = reactive({
-            name: '',
-            category: '',
-            gender: '',
-            speed: 1.0,
-            notes: '',
-            reference_audio: null,
+            name: '', category: '', gender: '', speed: 1.0, notes: '',
+            tags: [], reference_audio: null,
         });
 
-        // 筛选栏用的是"正式分类 + 角色实际在用但没被登记的分类"的并集，
-        // 避免管理分类之前创建的角色因为分类没在列表里就消失
-        const allCategories = computed(() => {
-            const cats = new Set(categories.value);
-            roles.value.forEach(role => {
-                if (role.category) cats.add(role.category);
+        // ---- 分类树 ----
+        // 把嵌套树摊平成带缩进深度和路径的行；折叠的节点不展开子级
+        const flatRows = computed(() => {
+            const out = [];
+            const walk = (nodes, depth, prefix) => {
+                for (const n of nodes) {
+                    const path = prefix ? `${prefix}/${n.title}` : n.title;
+                    const hasChildren = !!(n.children && n.children.length);
+                    out.push({ id: n.id, title: n.title, path, depth, hasChildren });
+                    if (hasChildren && !collapsed[n.id]) walk(n.children, depth + 1, path);
+                }
+            };
+            walk(tree.value, 0, '');
+            return out;
+        });
+
+        // 全部路径（不受折叠影响）：角色表单的分类下拉用
+        const allPaths = computed(() => {
+            const out = [];
+            const walk = (nodes, depth, prefix) => {
+                for (const n of nodes) {
+                    const path = prefix ? `${prefix}/${n.title}` : n.title;
+                    out.push({ value: path, label: '　'.repeat(depth) + n.title });
+                    walk(n.children || [], depth + 1, path);
+                }
+            };
+            walk(tree.value, 0, '');
+            return out;
+        });
+
+        // 角色身上还挂着、但已经不在树里的分类名（旧数据 / 树节点被删过）：
+        // 也要出现在下拉里，否则编辑这种角色会把它的分类悄悄清空
+        const categoryOptions = computed(() => {
+            const known = new Set(allPaths.value.map((p) => p.value));
+            const extra = [];
+            for (const r of roles.value) {
+                if (r.category && !known.has(r.category) && !extra.includes(r.category)) extra.push(r.category);
+            }
+            return [
+                ...allPaths.value,
+                ...extra.map((c) => ({ value: c, label: `${c}（未登记）` })),
+            ];
+        });
+
+        const toggleCollapse = (id) => { collapsed[id] = !collapsed[id]; };
+
+        const loadTree = async () => {
+            try {
+                tree.value = (await API.getRoleCategoryTree()).tree || [];
+            } catch (error) {
+                console.error('加载分类树失败:', error);
+            }
+        };
+
+        // 任何树变更都是"改一份克隆、整树 PUT、用响应覆盖本地"，服务端负责校验
+        // （重名/含 "/"/超深度会 400）和补 id
+        const commitTree = async (mutate) => {
+            const next = JSON.parse(JSON.stringify(tree.value));
+            mutate(next);
+            try {
+                const res = await API.putRoleCategoryTree(next);
+                tree.value = res.tree;
+                return true;
+            } catch (error) {
+                showToast?.(`保存分类失败: ${error.message}`, 'error');
+                return false;
+            }
+        };
+
+        const findNode = (nodes, id) => {
+            for (const n of nodes) {
+                if (n.id === id) return n;
+                const hit = findNode(n.children || [], id);
+                if (hit) return hit;
+            }
+            return null;
+        };
+
+        const categoryDialog = ref(null);
+        const openCategoryDialog = (mode, row) => {
+            categoryDialog.value = {
+                mode,
+                parent: mode === 'create' ? row : null,
+                target: mode === 'rename' ? row : null,
+                title: mode === 'rename' ? row.title : '',
+            };
+        };
+        const saveCategoryDialog = async () => {
+            const d = categoryDialog.value;
+            const title = d.title.trim();
+            if (!title) return;
+            const oldSelected = selectedPath.value;
+            const ok = await commitTree((t) => {
+                if (d.mode === 'rename') {
+                    findNode(t, d.target.id).title = title;
+                } else if (d.parent) {
+                    const p = findNode(t, d.parent.id);
+                    (p.children = p.children || []).push({ title, children: [] });
+                } else {
+                    t.push({ title, children: [] });
+                }
             });
-            return Array.from(cats);
-        });
+            if (ok) {
+                categoryDialog.value = null;
+                // 改名后路径变了：选中的是被改名节点（或其子孙）就重置回"全部"，
+                // 避免筛选停在一个已经不存在的路径上
+                if (d.mode === 'rename' && oldSelected &&
+                    (oldSelected === d.target.path || oldSelected.startsWith(d.target.path + '/'))) {
+                    selectedPath.value = null;
+                }
+            }
+        };
 
-        const filteredRoles = computed(() => {
-            if (!selectedCategory.value) return roles.value;
-            return roles.value.filter(role => role.category === selectedCategory.value);
-        });
+        const removeCategory = async (row) => {
+            const confirmed = await showConfirm({
+                title: '删除分类',
+                message: `确定删除分类「${row.path}」及其所有子分类吗？`,
+                warning: '已经使用这些分类的角色不会被清空——它们保留原来的分类名，只是不再出现在分类树里（编辑时显示为「未登记」）。',
+                confirmText: '删除',
+                confirmClass: 'btn-danger',
+            });
+            if (!confirmed) return;
+            const ok = await commitTree((t) => {
+                const remove = (nodes) => {
+                    const i = nodes.findIndex((n) => n.id === row.id);
+                    if (i >= 0) { nodes.splice(i, 1); return true; }
+                    return nodes.some((n) => remove(n.children || []));
+                };
+                remove(t);
+            });
+            if (ok && selectedPath.value &&
+                (selectedPath.value === row.path || selectedPath.value.startsWith(row.path + '/'))) {
+                selectedPath.value = null;
+            }
+        };
 
+        // ---- 角色列表 / 筛选 ----
+        const filteredRoles = computed(() => roles.value.filter((r) => {
+            if (selectedPath.value !== null) {
+                const c = r.category || '';
+                if (c !== selectedPath.value && !c.startsWith(selectedPath.value + '/')) return false;
+            }
+            if (tagFilters.value.length && !tagFilters.value.some((t) => (r.tags || []).includes(t))) return false;
+            return true;
+        }));
+
+        const toggleTagFilter = (name) => {
+            const i = tagFilters.value.indexOf(name);
+            if (i >= 0) tagFilters.value.splice(i, 1); else tagFilters.value.push(name);
+        };
+
+        const genderLabel = (g) => ({ male: '男', female: '女' }[g] || '未知');
         const referenceUrl = (roleId) => API.getRoleReferenceUrl(roleId);
 
         const embeddingLabel = (status) => {
@@ -1958,69 +2297,37 @@ app.component('roles-page', {
             }
         };
 
-        const loadCategories = async () => {
+        const loadTagStats = async () => {
             try {
-                const data = await API.getRoleCategories();
-                categories.value = data.categories || [];
+                tagStats.value = (await API.getRoleTags()).tags || [];
+                // 标签被删光后，别让筛选停在一个不存在的标签上
+                tagFilters.value = tagFilters.value.filter((t) => tagStats.value.some((s) => s.name === t));
             } catch (error) {
-                console.error('加载分类失败:', error);
+                console.error('加载标签失败:', error);
             }
         };
 
-        const addCategory = async () => {
-            const name = newCategoryName.value.trim();
-            if (!name || categories.value.includes(name)) {
-                newCategoryName.value = '';
-                return;
-            }
-            try {
-                const { categories: updated } = await API.updateRoleCategories({
-                    categories: [...categories.value, name],
-                });
-                categories.value = updated;
-                newCategoryName.value = '';
-            } catch (error) {
-                console.error('添加分类失败:', error);
-                showToast?.(`添加失败: ${error.message}`, 'error');
-            }
-        };
-
-        const removeCategory = async (name) => {
-            try {
-                const { categories: updated } = await API.updateRoleCategories({
-                    categories: categories.value.filter((c) => c !== name),
-                });
-                categories.value = updated;
-                if (selectedCategory.value === name) selectedCategory.value = null;
-            } catch (error) {
-                console.error('删除分类失败:', error);
-                showToast?.(`删除失败: ${error.message}`, 'error');
-            }
-        };
-
-        const filterByCategory = (category) => {
-            selectedCategory.value = category;
-        };
-
+        // ---- 角色表单 ----
         const showCreateDialog = () => {
             editingRole.value = null;
-            form.name = '';
-            form.category = '';
-            form.gender = '';
-            form.speed = 1.0;
-            form.notes = '';
-            form.reference_audio = null;
+            Object.assign(form, {
+                name: '',
+                // 当前正筛选着某个分类时，新建角色默认落在这个分类下
+                category: selectedPath.value || '',
+                gender: '', speed: 1.0, notes: '', tags: [], reference_audio: null,
+            });
+            tagInput.value = '';
             showDialog.value = true;
         };
 
         const editRole = (role) => {
             editingRole.value = role;
-            form.name = role.name;
-            form.category = role.category || '';
-            form.gender = role.gender || '';
-            form.speed = role.speed || 1.0;
-            form.notes = role.description || '';
-            form.reference_audio = null;
+            Object.assign(form, {
+                name: role.name, category: role.category || '', gender: role.gender || '',
+                speed: role.speed || 1.0, notes: role.description || '',
+                tags: [...(role.tags || [])], reference_audio: null,
+            });
+            tagInput.value = '';
             showDialog.value = true;
         };
 
@@ -2029,38 +2336,40 @@ app.component('roles-page', {
             editingRole.value = null;
         };
 
+        const addTag = () => {
+            const t = tagInput.value.trim();
+            if (t && !form.tags.includes(t)) form.tags.push(t);
+            tagInput.value = '';
+        };
+        const removeTag = (tag) => {
+            form.tags = form.tags.filter((t) => t !== tag);
+        };
+
         const handleFileUpload = (event) => {
             const file = event.target.files[0];
-            if (file) {
-                form.reference_audio = file;
-            }
+            if (file) form.reference_audio = file;
         };
 
         const saveRole = async () => {
+            addTag(); // 输入框里还没按回车的标签也算上
             try {
                 let roleId;
                 if (editingRole.value) {
-                    // RoleUpdate 只认 name/category/description/speed，没有 gender/notes 字段
+                    // RoleUpdate 只认 name/category/description/speed/tags，没有 gender
                     await API.updateRole(editingRole.value.id, {
-                        name: form.name,
-                        category: form.category,
-                        speed: form.speed,
-                        description: form.notes,
+                        name: form.name, category: form.category, speed: form.speed,
+                        description: form.notes, tags: form.tags,
                     });
                     roleId = editingRole.value.id;
                 } else {
-                    // RoleCreate 只认 name/gender/category/description，没有 speed 字段
+                    // RoleCreate 只认 name/gender/category/description/tags，没有 speed
                     // （语速是注册之后再通过 update 设的）
                     const { role_id } = await API.createRole({
-                        name: form.name,
-                        category: form.category,
-                        gender: form.gender,
-                        description: form.notes,
+                        name: form.name, category: form.category, gender: form.gender,
+                        description: form.notes, tags: form.tags,
                     });
                     roleId = role_id;
-                    if (form.speed) {
-                        await API.updateRole(roleId, { speed: form.speed });
-                    }
+                    if (form.speed) await API.updateRole(roleId, { speed: form.speed });
                 }
 
                 if (form.reference_audio) {
@@ -2068,131 +2377,364 @@ app.component('roles-page', {
                 }
 
                 closeDialog();
-                await loadRoles();
+                await Promise.all([loadRoles(), loadTagStats()]);
             } catch (error) {
                 console.error('保存角色失败:', error);
+                showToast?.(`保存角色失败: ${error.message}`, 'error');
             }
         };
 
         const deleteRole = async (role) => {
-            if (role.name === 'narrator') {
-                alert('narrator 角色不允许删除');
+            if (role.id === 'narrator' || role.name === 'narrator') {
+                showToast?.('narrator 角色不允许删除', 'error');
                 return;
             }
-
-            const confirmed = confirm(`确定要删除角色「${role.name}」吗？\n\n该角色被 ${role.segment_count || 0} 个分块引用，删除后这些分块会变成未绑定。`);
-            if (confirmed) {
-                try {
-                    await API.deleteRole(role.id, true);
-                    await loadRoles();
-                } catch (error) {
-                    console.error('删除角色失败:', error);
-                }
+            const confirmed = await showConfirm({
+                title: '删除角色',
+                message: `确定要删除角色「${role.name}」吗？`,
+                warning: `该角色被 ${role.segment_count || 0} 个分块引用，删除后这些分块会变成未绑定。`,
+                confirmText: '删除',
+                confirmClass: 'btn-danger',
+            });
+            if (!confirmed) return;
+            try {
+                await API.deleteRole(role.id, true);
+                await Promise.all([loadRoles(), loadTagStats()]);
+            } catch (error) {
+                showToast?.(`删除失败: ${error.message}`, 'error');
             }
         };
 
         onMounted(() => {
             loadRoles();
-            loadCategories();
+            loadTree();
+            loadTagStats();
         });
 
         return {
-            roles,
-            loading,
-            selectedCategory,
-            categories,
-            allCategories,
-            showCategoryDialog,
-            newCategoryName,
-            filteredRoles,
-            showDialog,
-            editingRole,
-            form,
-            referenceUrl,
-            embeddingLabel,
-            embeddingClass,
-            filterByCategory,
-            addCategory,
-            removeCategory,
-            showCreateDialog,
-            editRole,
-            closeDialog,
-            handleFileUpload,
-            saveRole,
-            deleteRole,
+            roles, loading, tree, collapsed, flatRows, selectedPath, tagStats, tagFilters,
+            filteredRoles, categoryOptions, categoryDialog, showDialog, editingRole, form, tagInput,
+            toggleCollapse, openCategoryDialog, saveCategoryDialog, removeCategory,
+            toggleTagFilter, genderLabel, referenceUrl, embeddingLabel, embeddingClass,
+            showCreateDialog, editRole, closeDialog, addTag, removeTag, handleFileUpload,
+            saveRole, deleteRole,
         };
     },
 });
 
-// 背景音/音效库：后端目前只有一个只读端点 GET /api/assets（扫描
-// assets/sfx、assets/ambience 目录拿文件名，见 src/utils.list_available_assets），
-// 没有分类树、标签、CRUD、也没有音频流式播放端点——effects 流水线本身
-// 还没打通（global_config.yaml 的 mixing.voice_only 默认 true）。这里只做
-// 诚实的只读展示，管理功能留 TODO，不假装能用，见
-// docs/plan/007-design-refresh.md
+// 背景音/音效库：素材规格（assets/asset_specs.yaml）的增删改查 + 触发生成任务。
+// 规格本身没有分类/标签（后端没有对应元数据，素材分类树是后续项）；生成状态
+// MISSING / STALE / OK 来自后端 get_asset_status_list。还没有音频播放接口，
+// 所以卡片上没有试听——不放一个点了没反应的播放器。
 app.component('assets-page', {
     template: `
+        <div class="page-pad assets-page">
         <div class="page-header">
             <h1 class="page-title">背景音与音效库</h1>
+            <div class="page-actions">
+                <button class="btn btn-secondary" @click="generate(null)" :disabled="!!genTask">生成待生成的素材</button>
+                <button class="btn btn-primary" @click="openCreate">+ 新增素材</button>
+            </div>
         </div>
-        <div class="info-banner">
-            素材库当前为只读展示。分类管理、标签筛选、新增/编辑/试听素材尚未接入
-            后端（TODO，见 docs/plan/007-design-refresh.md）——effects 生成流水线
-            还没打通，<code>mixing.voice_only</code> 默认开启。
+
+        <div v-if="genTask" class="info-banner asset-gen-banner">
+            <div class="flex items-center justify-between gap-2">
+                <span>
+                    <b>素材生成{{ genTask.state === 'queued' ? '排队中' : '进行中' }}</b>
+                    <span v-if="genTask.progress">
+                        {{ genTask.progress.done }}/{{ genTask.progress.total }} {{ genTask.progress.message }}
+                    </span>
+                </span>
+                <button class="btn btn-secondary btn-sm" @click="cancelGen">取消</button>
+            </div>
+            <div class="progress-bar mt-2"><div class="progress-fill" :style="{ width: genPercent + '%' }"></div></div>
         </div>
-        <div v-if="loading" class="empty-state">
-            <div class="loading-spinner"></div>
+
+        <div class="flex gap-2 mb-4">
+            <span v-for="f in kindFilters" :key="f.value" class="category-tag"
+                  :class="{ active: kindFilter === f.value }" @click="kindFilter = f.value">{{ f.label }}</span>
         </div>
-        <div v-else-if="assets.bgm.length === 0 && assets.sfx.length === 0" class="empty-state">
-            <h3 class="empty-state-title">素材库为空</h3>
-            <p class="empty-state-description">assets/ambience 与 assets/sfx 目录下还没有生成任何素材</p>
+
+        <div v-if="loading" class="empty-state"><div class="loading-spinner"></div></div>
+        <div v-else-if="visibleSpecs.length === 0" class="empty-state">
+            <h3 class="empty-state-title">还没有素材</h3>
+            <p class="empty-state-description">点击「新增素材」定义一条背景音或音效，再生成音频</p>
         </div>
-        <div v-else class="flex flex-col gap-4">
-            <div class="content-section">
-                <h4 class="section-title">背景音（{{ assets.bgm.length }}）</h4>
-                <div class="card-grid">
-                    <div v-for="name in assets.bgm" :key="'bgm-' + name" class="asset-card">
-                        <span class="asset-kind-badge">背景音</span>
-                        <div class="asset-name">{{ name }}</div>
-                    </div>
+        <div v-else class="card-grid">
+            <div v-for="spec in visibleSpecs" :key="spec.kind + '/' + spec.name" class="asset-card">
+                <div class="flex items-center justify-between gap-2">
+                    <span class="asset-kind-badge">{{ kindLabel(spec.kind) }}</span>
+                    <span class="badge" :class="statusInfo(spec.status).cls">{{ statusInfo(spec.status).label }}</span>
+                </div>
+                <div class="asset-name">{{ spec.name }}</div>
+                <div class="asset-meta">
+                    {{ spec.duration_sec }}s · 种子 {{ spec.seed }}<span v-if="spec.engine && spec.engine !== '-'"> · {{ spec.engine }}</span>
+                </div>
+                <div class="asset-meta">{{ spec.description || '（无描述）' }}</div>
+                <div class="asset-prompt" :title="spec.prompt">{{ spec.prompt }}</div>
+                <div class="card-footer">
+                    <button class="action-btn" @click="generate(spec)" :disabled="!!genTask">
+                        {{ spec.status === 'MISSING' ? '生成' : '重新生成' }}
+                    </button>
+                    <button class="action-btn" @click="openEdit(spec)">编辑</button>
+                    <button class="action-btn danger" @click="openDelete(spec)">删除</button>
                 </div>
             </div>
-            <div class="content-section">
-                <h4 class="section-title">音效（{{ assets.sfx.length }}）</h4>
-                <div class="card-grid">
-                    <div v-for="name in assets.sfx" :key="'sfx-' + name" class="asset-card">
-                        <span class="asset-kind-badge">音效</span>
-                        <div class="asset-name">{{ name }}</div>
+        </div>
+
+        <div v-if="showDialog" class="modal-overlay" @click.self="showDialog = false">
+            <div class="modal">
+                <div class="modal-header">
+                    <h2 class="modal-title">{{ editing ? '编辑素材' : '新增素材' }}</h2>
+                    <button class="modal-close" @click="showDialog = false">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">类型</label>
+                            <select class="form-select" v-model="form.kind" :disabled="editing">
+                                <option value="ambience">背景音</option>
+                                <option value="sfx">音效</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">名称</label>
+                            <input type="text" class="form-input asset-name-input" v-model="form.name" :disabled="editing"
+                                   placeholder="如 rain_heavy">
+                        </div>
                     </div>
+                    <p class="form-help" v-if="!editing">名称只能用小写字母、数字、下划线；创建后不能改名（剧本和时间线按名字引用素材）</p>
+                    <div class="form-group">
+                        <label class="form-label">描述（中文，会进入解析提示词的素材词表）</label>
+                        <input type="text" class="form-input" v-model="form.description">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">生成提示词 prompt</label>
+                        <textarea class="form-textarea asset-prompt-input" v-model="form.prompt" rows="3"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">反向提示词</label>
+                        <input type="text" class="form-input" v-model="form.negative_prompt">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">时长（秒，0–60）</label>
+                            <input type="number" class="form-input" v-model.number="form.duration_sec" step="0.5" min="0.5" max="60">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">随机种子</label>
+                            <input type="number" class="form-input" v-model.number="form.seed" min="0">
+                        </div>
+                    </div>
+                    <p class="form-help" v-if="editing">改 prompt / 反向提示词 / 时长 / 种子会让已生成的音频失效（需要重新生成）；只改描述不会。</p>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @click="showDialog = false">取消</button>
+                    <button class="btn btn-primary" @click="save" :disabled="!canSave">{{ editing ? '保存' : '创建' }}</button>
                 </div>
             </div>
+        </div>
+
+        <div v-if="deleting" class="modal-overlay" @click.self="deleting = null">
+            <div class="modal">
+                <div class="modal-header"><h2 class="modal-title">删除素材</h2></div>
+                <div class="modal-body">
+                    <div class="confirm-message">确定删除素材「{{ deleting.name }}」的定义吗？</div>
+                    <label v-if="deleting.status !== 'MISSING'" class="form-checkbox">
+                        <input type="checkbox" v-model="deleteFiles">
+                        <span>同时删除已生成的音频文件</span>
+                    </label>
+                    <div class="confirm-warning">
+                        引用了「{{ deleting.name }}」的章节不会报错，混音时会跳过这条素材（并在章节素材状态里显示为缺失）。
+                    </div>
+                </div>
+                <div class="confirm-footer">
+                    <button class="btn btn-secondary" @click="deleting = null">取消</button>
+                    <button class="btn btn-danger" @click="confirmDelete">删除</button>
+                </div>
+            </div>
+        </div>
         </div>
     `,
     setup() {
-        const loading = ref(true);
-        const assets = ref({ bgm: [], sfx: [] });
+        const showToast = inject('showToast');
+        const showConfirm = inject('showConfirm');
 
-        const loadAssets = async () => {
-            loading.value = true;
+        const specs = ref([]);
+        const loading = ref(true);
+        const kindFilter = ref('all');
+        const kindFilters = [
+            { value: 'all', label: '全部' },
+            { value: 'ambience', label: '背景音' },
+            { value: 'sfx', label: '音效' },
+        ];
+        const kindLabel = (kind) => (kind === 'ambience' ? '背景音' : '音效');
+
+        const visibleSpecs = computed(() =>
+            kindFilter.value === 'all' ? specs.value : specs.value.filter((s) => s.kind === kindFilter.value)
+        );
+
+        // 状态 -> 展示；STALE(...) 是带括号后缀的前缀匹配
+        const statusInfo = (status) => {
+            if (status === 'OK') return { label: '已生成', cls: 'badge-success' };
+            if (status === 'OK(占位/Mock)') return { label: '占位音', cls: 'badge-warning' };
+            if (status && status.startsWith('STALE')) return { label: '规格已变更', cls: 'badge-warning' };
+            return { label: '未生成', cls: 'badge-neutral' };
+        };
+
+        const loadSpecs = async () => {
             try {
-                assets.value = await API.getAssets();
+                specs.value = (await API.getAssetSpecs()).specs || [];
             } catch (error) {
-                console.error('加载素材库失败:', error);
+                showToast?.(`加载素材失败: ${error.message}`, 'error');
             } finally {
                 loading.value = false;
             }
         };
 
-        onMounted(() => {
-            loadAssets();
+        // ---- 新增 / 编辑 ----
+        const showDialog = ref(false);
+        const editing = ref(false);
+        const blankForm = () => ({
+            kind: 'sfx', name: '', description: '', prompt: '',
+            negative_prompt: '', duration_sec: 5, seed: 0,
+        });
+        const form = reactive(blankForm());
+
+        const canSave = computed(() => form.name.trim() && form.prompt.trim());
+
+        const openCreate = () => {
+            editing.value = false;
+            Object.assign(form, blankForm());
+            showDialog.value = true;
+        };
+        const openEdit = (spec) => {
+            editing.value = true;
+            Object.assign(form, {
+                kind: spec.kind, name: spec.name, description: spec.description || '',
+                prompt: spec.prompt, negative_prompt: spec.negative_prompt || '',
+                duration_sec: spec.duration_sec, seed: spec.seed,
+            });
+            showDialog.value = true;
+        };
+        const save = async () => {
+            const body = {
+                description: form.description, prompt: form.prompt,
+                negative_prompt: form.negative_prompt,
+                duration_sec: Number(form.duration_sec), seed: Number(form.seed),
+            };
+            try {
+                if (editing.value) {
+                    await API.updateAssetSpec(form.kind, form.name, body);
+                } else {
+                    await API.createAssetSpec({ kind: form.kind, name: form.name.trim(), ...body });
+                }
+                showDialog.value = false;
+                await loadSpecs();
+            } catch (error) {
+                showToast?.(`保存失败: ${error.message}`, 'error');
+            }
+        };
+
+        // ---- 删除 ----
+        const deleting = ref(null);
+        const deleteFiles = ref(false);
+        const openDelete = (spec) => {
+            deleting.value = spec;
+            deleteFiles.value = false;
+        };
+        const confirmDelete = async () => {
+            const spec = deleting.value;
+            try {
+                await API.deleteAssetSpec(spec.kind, spec.name, deleteFiles.value);
+                deleting.value = null;
+                await loadSpecs();
+            } catch (error) {
+                showToast?.(`删除失败: ${error.message}`, 'error');
+            }
+        };
+
+        // ---- 生成任务：先预检、确认，再提交；进度走 SSE 的 task-update ----
+        const genTask = ref(null);
+        const genPercent = computed(() => {
+            const p = genTask.value?.progress;
+            return p && p.total ? Math.round((p.done / p.total) * 100) : 0;
         });
 
-        return { loading, assets };
+        const generate = async (spec) => {
+            const params = spec ? { only: [spec.name], force: spec.status !== 'MISSING' && !spec.status.startsWith('STALE') } : {};
+            try {
+                const pre = await API.preflightTask({ type: 'asset_gen', params });
+                if (pre.summary.create + pre.summary.overwrite === 0) {
+                    showToast?.('没有需要生成的素材（都已是最新）', 'success');
+                    return;
+                }
+                const confirmed = await showConfirm({
+                    title: spec ? `生成素材「${spec.name}」` : '生成素材',
+                    message: `新生成 ${pre.summary.create} 条，${pre.summary.overwrite} 条将被重新生成，` +
+                        `${pre.summary.skip} 条无需处理。`,
+                    warning: '真实引擎生成时会临时停掉 llama-server 腾显存、完成后自动恢复，期间解析/配音任务会排队等待；' +
+                        '引擎环境未就绪时会用占位音代替。',
+                    confirmText: '开始生成',
+                    confirmClass: 'btn-primary',
+                });
+                if (!confirmed) return;
+                const res = await API.createTask({ type: 'asset_gen', params });
+                genTask.value = res.tasks[0];
+            } catch (error) {
+                showToast?.(`提交失败: ${error.message}`, 'error');
+            }
+        };
+
+        const cancelGen = async () => {
+            if (!genTask.value) return;
+            try {
+                await API.deleteTask(genTask.value.id);
+            } catch (error) {
+                showToast?.(`取消失败: ${error.message}`, 'error');
+            }
+        };
+
+        const TERMINAL = ['succeeded', 'failed', 'cancelled'];
+        const onTaskUpdate = (event) => {
+            const task = event.detail?.task;
+            if (!task || task.type !== 'asset_gen') return;
+            if (TERMINAL.includes(task.state)) {
+                genTask.value = null;
+                loadSpecs();
+                if (task.state === 'succeeded') showToast?.('素材生成完成', 'success');
+                else if (task.state === 'cancelled') showToast?.('素材生成已取消', 'success');
+                else showToast?.(`素材生成失败: ${task.error || '未知错误'}`, 'error');
+            } else {
+                genTask.value = task;
+            }
+        };
+
+        onMounted(async () => {
+            window.addEventListener('task-update', onTaskUpdate);
+            await loadSpecs();
+            // 页面刷新/切走再回来时，接上还在跑的生成任务
+            try {
+                const tasks = await API.getTasks();
+                genTask.value = tasks.find((t) => t.type === 'asset_gen' && !TERMINAL.includes(t.state)) || null;
+            } catch (error) {
+                console.error('加载任务失败:', error);
+            }
+        });
+        onUnmounted(() => window.removeEventListener('task-update', onTaskUpdate));
+
+        return {
+            specs, loading, kindFilter, kindFilters, kindLabel, visibleSpecs, statusInfo,
+            showDialog, editing, form, canSave, openCreate, openEdit, save,
+            deleting, deleteFiles, openDelete, confirmDelete,
+            genTask, genPercent, generate, cancelGen,
+        };
     },
 });
 
 app.component('settings-page', {
     template: `
+        <div class="page-pad settings-page">
         <div class="page-header">
             <h1 class="page-title">系统配置</h1>
         </div>
@@ -2238,6 +2780,13 @@ app.component('settings-page', {
             <div class="settings-section">
                 <h3 class="settings-section-title">音频设置</h3>
                 <div class="settings-section-divider"></div>
+                <div class="form-group">
+                    <label class="form-checkbox">
+                        <input type="checkbox" class="setting-mix-with-assets" v-model="form.mix_with_assets">
+                        <span>混音默认叠加背景音/音效</span>
+                    </label>
+                    <p class="form-help">关闭时成片只有旁白/角色人声（默认）。批量混音时也可以单次勾选覆盖这个默认值；素材需要先在「音效库」里生成。</p>
+                </div>
                 <div class="form-row">
                     <div class="form-group">
                         <label class="form-label">音频输出格式</label>
@@ -2273,6 +2822,7 @@ app.component('settings-page', {
                 <button class="btn btn-primary" @click="saveConfig">保存配置</button>
             </div>
         </div>
+        </div>
     `,
     setup() {
         const loading = ref(true);
@@ -2282,6 +2832,7 @@ app.component('settings-page', {
             cpu_workers: 2,
             audio_format: 'mp3',
             mix_bitrate: '192k',
+            mix_with_assets: false,
             monitor_interval: 1,
         });
 
@@ -2297,6 +2848,8 @@ app.component('settings-page', {
             form.cpu_workers = config.server?.cpu_workers ?? form.cpu_workers;
             form.audio_format = config.mixing?.output_format || form.audio_format;
             form.mix_bitrate = config.mixing?.bitrate || form.mix_bitrate;
+            // 配置里存的是 voice_only（默认 true），界面上反过来问「是否叠加素材」
+            form.mix_with_assets = config.mixing?.voice_only === false;
             const intervalMs = config.server?.monitor_interval_ms;
             form.monitor_interval = intervalMs ? intervalMs / 1000 : form.monitor_interval;
         };
@@ -2328,6 +2881,7 @@ app.component('settings-page', {
                     'server.cpu_workers': Number(form.cpu_workers),
                     'mixing.output_format': form.audio_format,
                     'mixing.bitrate': form.mix_bitrate,
+                    'mixing.voice_only': !form.mix_with_assets,
                     'server.monitor_interval_ms': Math.round(Number(form.monitor_interval) * 1000),
                 };
                 const result = await API.updateConfig(payload);

@@ -347,7 +347,8 @@ textarea { resize: vertical; }
 }
 .modal {
     background: var(--card); border: 1px solid var(--border);
-    width: 100%; max-width: 460px; max-height: 86vh; overflow: auto;
+    width: 100%; max-width: 460px; max-height: 86vh; overflow: hidden;
+    display: flex; flex-direction: column;
     box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
 }
 .modal-header {
@@ -357,7 +358,8 @@ textarea { resize: vertical; }
 .modal-title { margin: 0; font-size: 16px; font-weight: 800; }
 .modal-close { background: transparent; border: none; color: var(--textMuted); font-size: 18px; cursor: pointer; padding: 0; line-height: 1; }
 .modal-close:hover { color: var(--text); }
-.modal-body { padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+.modal-body { padding: 20px; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
+.modal-body .form-group { margin-bottom: 0; }
 .modal-footer, .confirm-footer, .confirm-actions {
     display: flex; justify-content: flex-end; gap: 10px;
     padding: 16px 20px; border-top: 1px solid var(--border);
@@ -480,6 +482,10 @@ textarea { resize: vertical; }
 .segment-card.selected { background: var(--accentTint); border-left-color: var(--accent); }
 .segment-card.unbound { background: var(--dangerTint); border-left-color: var(--danger); }
 .segment-header { display: flex; align-items: center; gap: 8px; }
+.segment-fx {
+    font-size: 10px; font-weight: 800; padding: 0 4px; line-height: 15px;
+    background: var(--accentTint); color: var(--accentTextOnTint); border: 1px solid var(--accentTintBorder);
+}
 .segment-id { font-family: monospace; font-size: 11.5px; color: var(--textFaint); }
 .segment-status { width: 6px; height: 6px; border-radius: 50%; background: var(--neutralDot); flex-shrink: 0; }
 .segment-status.synthesized { background: var(--success); }
@@ -548,6 +554,21 @@ textarea { resize: vertical; }
 .audio-player audio { width: 100%; height: 30px; }
 .card-footer { display: flex; gap: 8px; margin-top: auto; padding-top: 6px; border-top: 1px solid var(--border); }
 
+/* 简单页面（小说列表 / 设置 / 素材库）的内容容器；两栏页面（详情/工作台/角色库）铺满不用它 */
+.page-pad { padding: 28px 32px; max-width: 1280px; width: 100%; margin: 0 auto; }
+.roles-page { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.roles-header { padding: 20px 24px 16px; margin-bottom: 0; border-bottom: 1px solid var(--border); }
+.category-row .action-btn { padding: 0 3px; }
+.tag-chip-remove {
+    background: transparent; border: none; color: var(--textFaint);
+    cursor: pointer; padding: 0 0 0 5px; font-size: 13px; line-height: 1;
+}
+.tag-chip-remove:hover { color: var(--danger); }
+.asset-prompt {
+    font-size: 11.5px; color: var(--textFaint); font-family: monospace;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.asset-gen-banner { border-left-color: var(--accent); }
 .asset-kind-badge {
     font-size: 10px; font-weight: 800; background: var(--accentTint); color: var(--accentTextOnTint);
     border: 1px solid var(--accentTintBorder); padding: 2px 6px; align-self: flex-start;
@@ -611,3 +632,7 @@ textarea { resize: vertical; }
     .page-header, .detail-content, .content-pane { padding-left: 14px; padding-right: 14px; }
     .form-row { flex-direction: column; }
 }
+
+.mix-with-assets { margin-top: 10px; }
+.chapter-assets-missing { margin: 4px 0; }
+.category-row .tree-toggle { font-size: 13px; width: 16px; }

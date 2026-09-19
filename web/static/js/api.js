@@ -112,6 +112,18 @@ const API = {
         return this.request(`/novels/${novelId}/chapters/${chapterId}/script`);
     },
 
+    // 本章引用的 bgm/sfx、缺失的素材、上次混音是否带了素材
+    async getChapterAssets(novelId, chapterId) {
+        return this.request(`/novels/${novelId}/chapters/${chapterId}/assets`);
+    },
+
+    // 把 script_final 里分块当前的 sfx/bgm 同步进 timeline（混音读的是 timeline 快照）
+    async refreshTimelineAssets(novelId, chapterId) {
+        return this.request(`/novels/${novelId}/chapters/${chapterId}/timeline/refresh-assets`, {
+            method: 'POST',
+        });
+    },
+
     async getTimeline(novelId, chapterId) {
         return this.request(`/novels/${novelId}/chapters/${chapterId}/timeline`);
     },
@@ -191,6 +203,23 @@ const API = {
         });
     },
 
+    // 角色分类树（嵌套）与标签：树是真相源，PUT 整树替换，响应里带服务端补好的
+    // id 和重新生成的扁平 categories 投影；旧的 /role-categories 只保留兼容
+    async getRoleCategoryTree() {
+        return this.request('/role-category-tree');
+    },
+
+    async putRoleCategoryTree(tree) {
+        return this.request('/role-category-tree', {
+            method: 'PUT',
+            body: JSON.stringify({ tree }),
+        });
+    },
+
+    async getRoleTags() {
+        return this.request('/role-tags');
+    },
+
     // 任务相关
     async getTasks() {
         return this.request('/tasks');
@@ -242,11 +271,35 @@ const API = {
         return this.request('/monitor');
     },
 
-    // 音效/背景音素材库：只读列表（GET /api/assets 扫描 assets/sfx、
-    // assets/ambience 目录），没有分类/标签/CRUD——那套管理能力还没接后端，
-    // 见 docs/plan/007-design-refresh.md
+    // 音效/背景音素材：getAssets 是磁盘上已生成的 wav 名字词表（{bgm:[], sfx:[]}，
+    // 分块下拉选素材用）；asset-specs 是素材规格（asset_specs.yaml）的增删改查，
+    // 带每条的生成状态 MISSING / STALE / OK。kind 取值 ambience | sfx
     async getAssets() {
         return this.request('/assets');
+    },
+
+    async getAssetSpecs(kind) {
+        return this.request(`/asset-specs${kind ? `?kind=${kind}` : ''}`);
+    },
+
+    async createAssetSpec(data) {
+        return this.request('/asset-specs', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    },
+
+    async updateAssetSpec(kind, name, data) {
+        return this.request(`/asset-specs/${kind}/${name}`, {
+            method: 'PATCH',
+            body: JSON.stringify(data),
+        });
+    },
+
+    async deleteAssetSpec(kind, name, deleteFiles = false) {
+        return this.request(`/asset-specs/${kind}/${name}?delete_files=${deleteFiles}`, {
+            method: 'DELETE',
+        });
     },
 
     // SSE连接：后端发的是带 event: 字段的具名事件（resource/task_update/
