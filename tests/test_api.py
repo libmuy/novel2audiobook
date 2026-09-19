@@ -479,6 +479,91 @@ class TestRoleCategoriesAPI:
         assert role["category"] == "主角"  # 分类被摘掉了，角色自己的字段不受影响
 
 
+class TestRoleCategoryTreeAPI:
+    TREE = [{"title": "主角", "children": [{"title": "男主", "children": []}]},
+            {"title": "配角", "children": []}]
+
+    def test_empty_by_default(self, client):
+        assert client.get("/api/role-category-tree").json() == {"tree": [], "categories": []}
+
+    def test_put_assigns_ids_and_regenerates_flat_projection(self, client):
+        resp = client.put("/api/role-category-tree", json={"tree": self.TREE})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["categories"] == ["主角", "主角/男主", "配角"]
+        assert all(n["id"] for n in body["tree"]) and body["tree"][0]["children"][0]["id"]
+        # 旧接口读到的就是这份投影——旧前端/旧测试不用改
+        assert client.get("/api/role-categories").json()["categories"] == ["主角", "主角/男主", "配角"]
+        assert client.get("/api/role-category-tree").json()["tree"] == body["tree"]
+
+    def test_flat_categories_synthesized_as_root_nodes_without_writing(self, client, tmp_path):
+        client.put("/api/role-categories", json={"categories": ["主角", "配角"]})
+        body = client.get("/api/role-category-tree").json()
+        assert [n["title"] for n in body["tree"]] == ["主角", "配角"]
+        assert body["categories"] == ["主角", "配角"]
+        import json as _json
+        manifest = _json.loads((tmp_path / "roles" / "roles_manifest.json").read_text(encoding="utf-8"))
+        assert "category_tree" not in manifest  # 用户没保存过树，不迁移数据
+
+    def test_flat_put_does_not_touch_tree(self, client):
+        tree = client.put("/api/role-category-tree", json={"tree": self.TREE}).json()["tree"]
+        client.put("/api/role-categories", json={"categories": ["别的"]})
+        assert client.get("/api/role-category-tree").json()["tree"] == tree
+
+    def test_ids_preserved_when_provided(self, client):
+        resp = client.put("/api/role-category-tree",
+                          json={"tree": [{"id": "keep_me", "title": "主角", "children": []}]})
+        assert resp.json()["tree"][0]["id"] == "keep_me"
+
+    @pytest.mark.parametrize("tree", [
+        [{"title": "", "children": []}],
+        [{"title": "a/b", "children": []}],
+        [{"title": "重名", "children": []}, {"title": "重名", "children": []}],
+        [{"id": "x", "title": "甲", "children": []}, {"id": "x", "title": "乙", "children": []}],
+        [{"title": "1", "children": [{"title": "2", "children": [{"title": "3", "children": [
+            {"title": "4", "children": [{"title": "5", "children": []}]}]}]}]}],
+    ])
+    def test_invalid_trees_400(self, client, tree):
+        assert client.put("/api/role-category-tree", json={"tree": tree}).status_code == 400
+
+    def test_deleting_tree_node_does_not_touch_roles_category(self, client):
+        """tests/test_api.py::TestRoleCategoriesAPI 那条容忍策略在树上的孪生用例"""
+        client.put("/api/role-category-tree", json={"tree": self.TREE})
+        rid = client.post("/api/roles", json={"name": "甲", "category": "主角/男主"}).json()["role_id"]
+        client.put("/api/role-category-tree", json={"tree": [{"title": "配角", "children": []}]})
+        role = [r for r in client.get("/api/roles").json() if r["id"] == rid][0]
+        assert role["category"] == "主角/男主"
+
+
+class TestRoleTagsAPI:
+    def test_create_with_tags_and_list(self, client):
+        rid = client.post("/api/roles", json={"name": "甲", "tags": ["少年", " 隐忍 ", "少年"]}).json()["role_id"]
+        role = [r for r in client.get("/api/roles").json() if r["id"] == rid][0]
+        assert role["tags"] == ["少年", "隐忍"]  # 去空白、去重、保序
+
+    def test_role_without_tags_lists_empty_array(self, client):
+        client.post("/api/roles", json={"name": "乙"})
+        assert client.get("/api/roles").json()[0]["tags"] == []
+
+    def test_patch_tags_and_null_leaves_untouched(self, client):
+        rid = client.post("/api/roles", json={"name": "丙", "tags": ["a"]}).json()["role_id"]
+        client.patch(f"/api/roles/{rid}", json={"description": "改描述"})
+        assert client.get("/api/roles").json()[0]["tags"] == ["a"]  # 没传 tags = 不改
+        client.patch(f"/api/roles/{rid}", json={"tags": []})
+        assert client.get("/api/roles").json()[0]["tags"] == []  # 传空数组 = 清空
+
+    def test_aggregate_counts(self, client):
+        client.post("/api/roles", json={"name": "甲", "tags": ["少年", "隐忍"]})
+        client.post("/api/roles", json={"name": "乙", "tags": ["少年"]})
+        client.post("/api/roles", json={"name": "丙"})
+        assert client.get("/api/role-tags").json()["tags"] == [
+            {"name": "少年", "count": 2}, {"name": "隐忍", "count": 1}]
+
+    def test_create_role_category_still_persists_after_workaround_removal(self, client):
+        rid = client.post("/api/roles", json={"name": "丁", "category": "主角"}).json()["role_id"]
+        assert [r for r in client.get("/api/roles").json() if r["id"] == rid][0]["category"] == "主角"
+
+
 class TestTasksAPI:
     def test_list_tasks_empty(self, client):
         resp = client.get("/api/tasks")

@@ -48,6 +48,7 @@ class RoleCreate(BaseModel):
     gender: str = "unknown"
     category: str = ""
     description: str = ""
+    tags: Optional[list[str]] = None
 
 
 class RoleUpdate(BaseModel):
@@ -55,15 +56,16 @@ class RoleUpdate(BaseModel):
     category: Optional[str] = None
     description: Optional[str] = None
     speed: Optional[float] = None
+    tags: Optional[list[str]] = None
 
 
 class TaskCreate(BaseModel):
     type: str
     novel_id: Optional[str] = None  # 全局任务类型（asset_gen 等）不需要
     scope: Optional[dict] = None
-
-
     params: Optional[dict] = None
+
+
 class ConfigPatch(BaseModel):
     tts_engine: Optional[str] = None
     tts_sample_rate: Optional[int] = None
@@ -95,3 +97,13 @@ class AssetSpecUpdate(BaseModel):
     negative_prompt: Optional[str] = None
     duration_sec: Optional[float] = None
     seed: Optional[int] = None
+
+
+class CategoryNode(BaseModel):
+    id: Optional[str] = None  # 缺省时服务端生成
+    title: str
+    children: list["CategoryNode"] = []
+
+
+class CategoryTreePut(BaseModel):
+    tree: list[CategoryNode]

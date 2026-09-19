@@ -15,6 +15,7 @@ import re
 import json
 import shutil
 import subprocess
+import threading
 
 from src.utils import resolve_path, load_global_config, calculate_file_md5
 
@@ -56,11 +57,22 @@ def load_manifest(roles_dir: str = None) -> dict:
     return data
 
 
+_MANIFEST_LOCK = threading.Lock()
+
+
 def save_manifest(manifest: dict, roles_dir: str = None):
+    """原子写（tmp + os.replace）+ 进程内加锁。roles_manifest.json 是唯一还没
+    原子化的共享清单（对比 library._atomic_write_yaml、derived_index 的缓存写入）；
+    分类树 PUT、标签 PATCH 都是读-改-写，非原子写在中途崩溃会留下截断的 JSON。
+    注意：锁只保护写，不保护"读-改-写"整个周期——跟改动前一致，这里不引入新的
+    并发语义。"""
     path = _manifest_path(roles_dir)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, ensure_ascii=False, indent=2)
+    tmp_path = path + ".tmp"
+    with _MANIFEST_LOCK:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)
 
 
 def list_role_names(manifest: dict) -> list:
@@ -111,12 +123,14 @@ def resolve_role_id(raw_speaker: str, manifest: dict) -> str:
 
 
 def register_role(chinese_name: str, manifest: dict, roles_dir: str = None,
-                   gender: str = "unknown", description: str = "") -> str:
+                   gender: str = "unknown", description: str = "",
+                   category: str = "", tags: list = None) -> str:
     """
     自动注册新角色：
     - 角色 ID 由中文名拼音生成
     - config.json 继承 narrator 的语速/音高默认值
     - reference.wav 复用 narrator 的参考音频作为占位（后续可人工替换为更贴合的音色）
+    category/tags 只在新建时写入；角色已存在的早返回路径不会去改它们。
     返回新角色 ID；若因任何原因注册失败，抛出异常由调用方兜底捕获。
     """
     role_id = _to_role_id(chinese_name)
@@ -163,6 +177,11 @@ def register_role(chinese_name: str, manifest: dict, roles_dir: str = None,
         "reference_audio": os.path.join("roles", role_id, "reference.wav"),
         "description": description or f"自动注册角色（占位音色，来自 narrator）",
     }
+    # 只在真的有值时才写：没分类/没标签的角色，manifest 条目保持跟改动前一模一样
+    if category:
+        roles[role_id]["category"] = category
+    if tags:
+        roles[role_id]["tags"] = list(tags)
     save_manifest(manifest, roles_dir)
     return role_id
 

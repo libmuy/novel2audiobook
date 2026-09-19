@@ -121,6 +121,28 @@ class TestRegisterRole:
         assert config.get("role_id") == role_id
         assert config.get("name") == "配置测试"
 
+    def test_register_role_writes_category_and_tags(self, tmp_roles_dir):
+        manifest = {"roles": {}}
+        rid = roles.register_role("标签角色", manifest, tmp_roles_dir, category="主角", tags=["少年", "隐忍"])
+        assert manifest["roles"][rid]["category"] == "主角"
+        assert manifest["roles"][rid]["tags"] == ["少年", "隐忍"]
+
+    def test_register_role_without_category_or_tags_writes_neither_key(self, tmp_roles_dir):
+        """没分类/没标签时条目跟改动前一模一样，不多出空字段"""
+        manifest = {"roles": {}}
+        rid = roles.register_role("普通角色", manifest, tmp_roles_dir)
+        assert "category" not in manifest["roles"][rid]
+        assert "tags" not in manifest["roles"][rid]
+
+    def test_register_existing_role_ignores_category_and_tags(self, tmp_roles_dir):
+        """已存在的早返回路径不改动现有角色（category/tags 只在新建时生效）"""
+        manifest = {"roles": {}}
+        rid = roles.register_role("重复角色", manifest, tmp_roles_dir, category="主角")
+        again = roles.register_role("重复角色", manifest, tmp_roles_dir, category="配角", tags=["x"])
+        assert again == rid
+        assert manifest["roles"][rid]["category"] == "主角"
+        assert "tags" not in manifest["roles"][rid]
+
     def test_register_role_returns_id(self, tmp_roles_dir):
         """返回新角色 ID"""
         manifest = {"roles": {}}
@@ -410,3 +432,18 @@ class TestDeleteRole:
         """角色本就不存在时静默返回，不抛异常"""
         manifest = roles.load_manifest(tmp_roles_dir)
         roles.delete_role("no_such_role", manifest, tmp_roles_dir)  # 不应抛异常
+
+
+class TestSaveManifestAtomic:
+    def test_no_tmp_file_left_and_roundtrip_identity(self, tmp_roles_dir):
+        manifest = {"roles": {"a": {"name": "甲"}}, "categories": ["x"], "category_tree": []}
+        roles.save_manifest(manifest, tmp_roles_dir)
+        assert not [f for f in os.listdir(tmp_roles_dir) if f.endswith(".tmp")]
+        assert roles.load_manifest(tmp_roles_dir) == manifest
+
+    def test_load_manifest_does_not_inject_tree_defaults(self, tmp_roles_dir):
+        """新字段的默认值只能放在路由/树辅助层，load_manifest 对空清单必须
+        精确返回 {"roles": {}}（既有测试锁着）"""
+        shutil.rmtree(tmp_roles_dir)
+        os.makedirs(tmp_roles_dir)
+        assert roles.load_manifest(tmp_roles_dir) == {"roles": {}}
