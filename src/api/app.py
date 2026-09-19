@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from src.utils import resolve_path
 from src.api.deps import get_config, get_queue, set_queue
-from src.api.routers import novels, chapters, segments, roles, tasks, system, events
+from src.api.routers import novels, chapters, segments, roles, tasks, system, events, assets
 
 
 @asynccontextmanager
@@ -40,6 +40,7 @@ def create_app():
     app.include_router(tasks.router, prefix="/api")
     app.include_router(system.router, prefix="/api")
     app.include_router(events.router, prefix="/api")
+    app.include_router(assets.router, prefix="/api")
 
     # 静态文件（所有 /api 路由之后）；resolve_path 动态读取 PROJECT_ROOT，
     # 见 src/api/routers/chapters.py 里的详细注释

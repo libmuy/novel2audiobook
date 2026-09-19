@@ -11,9 +11,21 @@ router = APIRouter(tags=["system"])
 # 允许修改的配置白名单
 ALLOWED_CONFIG_KEYS = {
     "tts.engine", "tts.sample_rate",
-    "mixing.output_format", "mixing.bitrate",
+    "mixing.output_format", "mixing.bitrate", "mixing.voice_only",
     "server.cpu_workers", "server.monitor_interval_ms", "server.library_root",
 }
+
+# 需要强制转成 bool 的配置键：JSON 传字符串 "false" 在 Python 里是真值，
+# 直接原样写进 YAML 会把 mixing.voice_only 永久钉死成"真"，不管前端传的是什么
+_BOOL_CONFIG_KEYS = {"mixing.voice_only"}
+
+
+def _coerce_config_value(key: str, value):
+    if key in _BOOL_CONFIG_KEYS and not isinstance(value, bool):
+        if isinstance(value, str):
+            return value.strip().lower() in ("1", "true", "yes", "on")
+        return bool(value)
+    return value
 
 
 def _config_file_path() -> str:
@@ -41,7 +53,7 @@ def patch_config(data: dict):
         section = config
         for p in parts[:-1]:
             section = section.setdefault(p, {})
-        section[parts[-1]] = value
+        section[parts[-1]] = _coerce_config_value(key, value)
         applied_keys.append(key)
 
     if applied_keys:

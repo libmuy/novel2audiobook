@@ -110,6 +110,50 @@ class TestGetAllChaptersStatus:
 
         assert result[0]["mp3"] is True
 
+    def test_detects_wav_and_flac_output_not_only_mp3(self, tmp_chapter_dir, tmp_chapters_dir):
+        """mixing.output_format 可以是 wav/flac，只认 .mp3 会把它们误判成没混过"""
+        output_dir = os.path.join(tmp_chapter_dir, "output")
+        os.makedirs(output_dir, exist_ok=True)
+        with open(os.path.join(output_dir, "x.flac"), "wb") as f:
+            f.write(b"fLaC")
+
+        item = status_tracker.get_all_chapters_status(tmp_chapters_dir)[0]
+
+        assert item["output"] is True
+        assert item["mp3"] is True  # 向后兼容别名，同值
+        assert item["output_format"] == "flac"
+
+    def test_no_output_reports_none_format(self, tmp_chapter_dir, tmp_chapters_dir):
+        item = status_tracker.get_all_chapters_status(tmp_chapters_dir)[0]
+        assert item["output"] is False
+        assert item["output_format"] is None
+
+    def test_mix_meta_absent_reports_none_not_false(self, tmp_chapter_dir, tmp_chapters_dir):
+        """没有 sidecar（本次改造之前混好的产物）时必须是 None——不知道就不能说 False"""
+        output_dir = os.path.join(tmp_chapter_dir, "output")
+        os.makedirs(output_dir, exist_ok=True)
+        with open(os.path.join(output_dir, "chapter_0001.mp3"), "wb") as f:
+            f.write(b"ID3")
+
+        item = status_tracker.get_all_chapters_status(tmp_chapters_dir)[0]
+
+        assert item["mixed_with_assets"] is None
+        assert item["missing_assets_count"] == 0
+
+    def test_mix_meta_present_reports_assets_flags(self, tmp_chapter_dir, tmp_chapters_dir):
+        output_dir = os.path.join(tmp_chapter_dir, "output")
+        os.makedirs(output_dir, exist_ok=True)
+        with open(os.path.join(output_dir, "chapter_0001.mp3"), "wb") as f:
+            f.write(b"ID3")
+        with open(os.path.join(output_dir, "mix_meta.json"), "w", encoding="utf-8") as f:
+            json.dump({"voice_only": False,
+                       "missing_assets": {"bgm": ["a"], "sfx": ["b", "c"]}}, f)
+
+        item = status_tracker.get_all_chapters_status(tmp_chapters_dir)[0]
+
+        assert item["mixed_with_assets"] is True
+        assert item["missing_assets_count"] == 3
+
     def test_get_all_chapters_status_counts_audio_cache(self, tmp_chapter_dir, tmp_chapters_dir):
         """统计 audio_cache 中的 WAV 文件数"""
         cache_dir = os.path.join(tmp_chapter_dir, "audio_cache")

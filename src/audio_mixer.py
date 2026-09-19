@@ -113,10 +113,15 @@ def _apply_ducking(bgm_track: AudioSegment, duck_intervals: list, duck_db_change
 
 
 def _build_scene_bgm_track(items: list, total_duration_ms: int, chapter_dir: str,
-                            crossfade_ms: int = 400) -> AudioSegment:
+                            crossfade_ms: int = 400, missing_out: list = None) -> AudioSegment:
     """
-    将连续使用同一 bgm 的句段合并为“场景”，铺一条连续环境音轨（而非逐句独立贴片），
+    将连续使用同一 bgm 的句段合并为"场景"，铺一条连续环境音轨（而非逐句独立贴片），
     场景切换处做 crossfade，避免环境音断续闪烁。
+
+    missing_out 是可选的输出参数（不是返回值——直接调用这个函数的既有测试断言
+    返回值就是 AudioSegment，改成 tuple 会破坏它们）：传入一个 list，缺失的
+    bgm 素材名会被 append 进去，供调用方（mix_chapter）写进 mix_meta.json 的
+    sidecar。不传就是原来的行为，什么都不收集。
     """
     bgm_track = AudioSegment.silent(duration=total_duration_ms, frame_rate=MIX_SAMPLE_RATE)
     if not items:
@@ -151,6 +156,8 @@ def _build_scene_bgm_track(items: list, total_duration_ms: int, chapter_dir: str
             # 不影响人声。
             logger.warning("场景 [%d, %d) 引用的环境音 %r 不存在（%s），跳过该段环境音",
                             start_ms, end_ms, bgm_name, bgm_file)
+            if missing_out is not None and bgm_name not in missing_out:
+                missing_out.append(bgm_name)
             continue
         bgm_seg = _load_and_normalize(bgm_file)
 
@@ -229,6 +236,14 @@ def mix_chapter(chapter_dir: str, timeline_data: dict = None, config: dict = Non
 
     # 记录哪些时间段（以毫秒为单位）有人声发言且 RMS 超过阈值（仅 voice_only=False 时才用得上）
     duck_intervals = []
+    # 下面这几个只用来喂 mix_meta.json sidecar（见函数末尾）——只在真的处理素材
+    # 的分支里收集：voice_only 这次没有实际叠加任何素材，sidecar 要如实记录
+    # "这次没混进任何素材"，而不是把 timeline 里潜在的引用当成已经用上了
+    # （timeline 里本身引用了哪些素材，是 Phase 2 的 GET .../assets 接口另外算的）
+    bgm_names_referenced = []
+    sfx_segment_count = 0
+    missing_bgm = []
+    missing_sfx = []
 
     for item in items:
         audio_rel_path = item.get("audio_path")
@@ -246,11 +261,14 @@ def mix_chapter(chapter_dir: str, timeline_data: dict = None, config: dict = Non
 
         sfx_name = item.get("sfx")
         if sfx_name:
+            sfx_segment_count += 1
             sfx_file = resolve_path(os.path.join("assets", "sfx", f"{sfx_name}.wav"))
             if not os.path.exists(sfx_file):
                 # 同上：不静默补占位音写进共享 assets/，跳过这条音效即可
                 logger.warning("句段 %s 引用的音效 %r 不存在（%s），跳过该条音效叠加",
                                 item.get("seg_id"), sfx_name, sfx_file)
+                if sfx_name not in missing_sfx:
+                    missing_sfx.append(sfx_name)
             else:
                 sfx_seg = _load_and_normalize(sfx_file)
                 if sfx_seg.dBFS > sfx_limit_db:
@@ -260,8 +278,9 @@ def mix_chapter(chapter_dir: str, timeline_data: dict = None, config: dict = Non
     if voice_only:
         bgm_track = AudioSegment.silent(duration=total_duration_ms, frame_rate=MIX_SAMPLE_RATE)
     else:
+        bgm_names_referenced = sorted({item.get("bgm") for item in items if item.get("bgm")})
         # 2. 场景级连续环境音轨（替代逐句硬贴，消除断续感），并施加基础增益
-        bgm_track = _build_scene_bgm_track(items, total_duration_ms, chapter_dir)
+        bgm_track = _build_scene_bgm_track(items, total_duration_ms, chapter_dir, missing_out=missing_bgm)
         if len(bgm_track) > 0 and bgm_track.dBFS != float("-inf"):
             bgm_track = bgm_track.apply_gain(ambience_gain_db - bgm_track.dBFS)
 
@@ -295,5 +314,32 @@ def mix_chapter(chapter_dir: str, timeline_data: dict = None, config: dict = Non
         final_mix.export(output_wav_path, format="wav")
         output_mp3_path = output_wav_path
 
+    _write_mix_meta(output_dir, {
+        "voice_only": bool(voice_only),
+        "output_file": os.path.basename(output_mp3_path),
+        "format": os.path.splitext(output_mp3_path)[1].lstrip("."),
+        "bgm_names": bgm_names_referenced,
+        "sfx_count": sfx_segment_count,
+        "missing_assets": {"bgm": sorted(missing_bgm), "sfx": sorted(missing_sfx)},
+        "mixed_at": _now_str(),
+    })
+
     update_chapter_status(chapter_dir, "completed")
     return output_mp3_path
+
+
+def _now_str() -> str:
+    import time
+    return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _write_mix_meta(output_dir: str, data: dict):
+    """写混音结果的 sidecar（output/mix_meta.json），记录这次混音是否带了素材、
+    引用/缺失了哪些素材。不往 .status.json 里加字段——那个文件由三处不同的
+    写入点（parse/tts/mix）整体覆写，混音相关的字段很容易在下次 parse/tts 后
+    被冲掉；sidecar 跟 output/ 目录同生命周期，逻辑更干净。"""
+    path = os.path.join(output_dir, "mix_meta.json")
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, path)

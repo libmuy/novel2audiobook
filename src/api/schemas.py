@@ -34,6 +34,8 @@ class SegmentUpdate(BaseModel):
     text: Optional[str] = None
     speaker: Optional[str] = None
     emotion: Optional[str] = None
+    sfx: Optional[str] = None
+    bgm: Optional[str] = None
 
 
 class SegmentBatch(BaseModel):
@@ -57,10 +59,11 @@ class RoleUpdate(BaseModel):
 
 class TaskCreate(BaseModel):
     type: str
-    novel_id: str
+    novel_id: Optional[str] = None  # 全局任务类型（asset_gen 等）不需要
     scope: Optional[dict] = None
 
 
+    params: Optional[dict] = None
 class ConfigPatch(BaseModel):
     tts_engine: Optional[str] = None
     tts_sample_rate: Optional[int] = None
@@ -73,3 +76,22 @@ class ConfigPatch(BaseModel):
 
 class GPUSwap(BaseModel):
     target: str
+
+
+class AssetSpecCreate(BaseModel):
+    kind: str  # "ambience" | "sfx"
+    name: str
+    prompt: str
+    description: str = ""
+    negative_prompt: str = ""
+    duration_sec: float = 10.0
+    seed: int = 0
+
+
+class AssetSpecUpdate(BaseModel):
+    # kind/name 不可变——改名会让所有引用旧名的剧本/时间线失联
+    description: Optional[str] = None
+    prompt: Optional[str] = None
+    negative_prompt: Optional[str] = None
+    duration_sec: Optional[float] = None
+    seed: Optional[int] = None

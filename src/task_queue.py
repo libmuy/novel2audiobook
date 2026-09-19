@@ -35,18 +35,31 @@ TYPE_TTS = "tts"
 TYPE_MIX = "mix"
 TYPE_PRECOMPUTE_EMBEDDING = "precompute_embedding"
 TYPE_IMPORT = "import"
+TYPE_ASSET_GEN = "asset_gen"
 
 # Lane 映射
 TASK_LANE = {
     TYPE_PARSE: "gpu",
     TYPE_TTS: "gpu",
     TYPE_PRECOMPUTE_EMBEDDING: "gpu",
+    # asset_gen 必须走 gpu lane：SubprocessAudioGenBackend.generate_batch 内部会进
+    # LlmSuspendedForGpu（停/起 llama-server，不可重入），跟 parse/tts 必须互斥。
+    # 队列自己不做 GPU 仲裁——单 worker 的 gpu lane 本身就是那个互斥机制。
+    TYPE_ASSET_GEN: "gpu",
     TYPE_MIX: "cpu",
     TYPE_IMPORT: "cpu",
 }
 
 # 流水线 handler 注册表（延迟导入，避免循环依赖）
 TASK_HANDLERS = {}
+
+
+def is_supported_type(task_type: str) -> bool:
+    """任务类型是否真的有 handler 注册——`TYPE_IMPORT` 这种"声明了常量和 lane
+    但没注册 handler"的类型会返回 False。供 API 层在提交前把明显的类型拼写错误
+    挡在门口，而不是让它静默落进 cpu lane、异步跑起来才失败。"""
+    _register_handlers()
+    return task_type in TASK_HANDLERS
 
 
 def _register_handlers():
@@ -60,17 +73,20 @@ def _register_handlers():
     TASK_HANDLERS[TYPE_TTS] = _handle_tts
     TASK_HANDLERS[TYPE_MIX] = _handle_mix
     TASK_HANDLERS[TYPE_PRECOMPUTE_EMBEDDING] = _handle_precompute_embedding
+    TASK_HANDLERS[TYPE_ASSET_GEN] = _handle_asset_gen
 
 
 def _handle_parse(task, ctx):
     from src.llm_parser import process_chapter_parse
-    chapter_dir = os.path.join(PROJECT_ROOT, "library", task.novel_id, "chapters", task.chapter_id)
+    from src import library
+    chapter_dir = library.get_chapter_dir(task.novel_id, task.chapter_id)
     process_chapter_parse(chapter_dir, progress_cb=ctx.progress, should_cancel=ctx.should_cancel)
 
 
 def _handle_tts(task, ctx):
     from src.tts_engine import process_chapter_tts
-    chapter_dir = os.path.join(PROJECT_ROOT, "library", task.novel_id, "chapters", task.chapter_id)
+    from src import library
+    chapter_dir = library.get_chapter_dir(task.novel_id, task.chapter_id)
     t0 = time.time()
     timeline_path = process_chapter_tts(chapter_dir, progress_cb=ctx.progress, should_cancel=ctx.should_cancel)
     elapsed = time.time() - t0
@@ -93,8 +109,14 @@ def _record_tts_timing(timeline_path: str, elapsed_seconds: float):
 
 def _handle_mix(task, ctx):
     from src.audio_mixer import mix_chapter
-    chapter_dir = os.path.join(PROJECT_ROOT, "library", task.novel_id, "chapters", task.chapter_id)
-    mix_chapter(chapter_dir)
+    from src import library
+    chapter_dir = library.get_chapter_dir(task.novel_id, task.chapter_id)
+    params = task.params or {}
+    # with_assets 显式为真时才关掉 voice_only；不传参数时保持 None，让
+    # mix_chapter 遵循 mixing.voice_only 的配置默认值（见 audio_mixer.py）
+    voice_only = False if params.get("with_assets") else None
+    output_stem = params.get("output_stem") or f"{task.novel_id}_{task.chapter_id}"
+    mix_chapter(chapter_dir, voice_only=voice_only, output_stem=output_stem)
 
 
 def _handle_precompute_embedding(task, ctx):
@@ -105,12 +127,28 @@ def _handle_precompute_embedding(task, ctx):
         precompute_embedding(role_id, manifest)
 
 
+def _handle_asset_gen(task, ctx):
+    """素材库增量生成：不绑定小说/章节（跟 precompute_embedding 一样是全局任务），
+    参数走 task.params：kinds / only / force。"""
+    from src.asset_gen import generate_assets
+    p = task.params or {}
+    summary = generate_assets(
+        kinds=p.get("kinds"),
+        only=set(p["only"]) if p.get("only") else None,
+        force=bool(p.get("force")),
+        progress_cb=ctx.progress,
+        should_cancel=ctx.should_cancel,
+    )
+    ctx.log(f"生成 {len(summary['generated'])} 条，占位 {len(summary['fallback'])} 条，"
+            f"跳过 {len(summary['skipped'])} 条，失败 {len(summary['error'])} 条")
+
+
 @dataclass
 class Task:
     id: str
     type: str
     lane: str
-    novel_id: str
+    novel_id: str = None  # 全局任务（asset_gen / precompute_embedding）没有小说
     chapter_id: str = None
     group_id: str = None
     params: dict = None
@@ -259,6 +297,10 @@ class TaskQueue:
             self._queue_condition.notify_all()
 
         return task
+
+    def submit_global(self, type: str, params: dict = None) -> Task:
+        """提交不属于任何小说/章节的全局任务（asset_gen、precompute_embedding）"""
+        return self.submit(type, None, params=params)
 
     def submit_batch(self, type: str, novel_id: str, chapter_ids: list,
                      params: dict = None) -> tuple:

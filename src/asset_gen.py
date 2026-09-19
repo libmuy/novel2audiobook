@@ -51,7 +51,13 @@ def load_asset_specs(spec_path: str = None) -> dict:
     {"ambience": {name: spec, ...}, "sfx": {name: spec, ...}} 结构。
     spec 文件不存在时返回空结构（不抛异常——素材生成是可选能力，不应影响主管线）。
     """
-    path = resolve_path(spec_path or DEFAULT_SPEC_PATH)
+    # 默认路径读 asset_gen.spec_file 配置（asset_specs_store 的写入口也认这个路径，
+    # 读写必须是同一个文件）；显式传入 spec_path 时保持原行为
+    if spec_path:
+        path = resolve_path(spec_path)
+    else:
+        from src.asset_specs_store import spec_file_path
+        path = spec_file_path()
     specs = {kind: {} for kind in VALID_KINDS}
     if not os.path.exists(path):
         return specs
@@ -352,7 +358,7 @@ def build_asset_gen_backend(kind: str, config: dict = None):
 
 def generate_assets(specs: dict = None, assets_dir: str = None, kinds: list = None,
                      only: set = None, force: bool = False, backend_map: dict = None,
-                     config: dict = None) -> dict:
+                     config: dict = None, progress_cb=None, should_cancel=None) -> dict:
     """
     按 spec_hash 增量生成素材库。
 
@@ -364,6 +370,10 @@ def generate_assets(specs: dict = None, assets_dir: str = None, kinds: list = No
     - 返回 {"generated": [...], "fallback": [...], "skipped": [...], "error": [...]}
       （generated=真实引擎产出；fallback=回退 Mock 占位但仍产出了 wav；
        error=后处理阶段异常，理论上不应发生，出现即说明有 bug）
+    - progress_cb(done, total, message) / should_cancel() 约定同 process_chapter_tts：
+      total 是本次真正需要生成的条数（已命中缓存的不算）；取消只在 kind 之间和
+      每次 backend.generate_batch 调用前检查——模型调用是一次性子进程批处理，
+      中途没法打断，见 docs/plan 里的"取消"说明。should_cancel 为真时抛 TaskCancelled。
     """
     if config is None:
         config = load_global_config()
@@ -383,19 +393,16 @@ def generate_assets(specs: dict = None, assets_dir: str = None, kinds: list = No
 
     summary = {"generated": [], "fallback": [], "skipped": [], "error": []}
 
+    # 先算出各 kind 待生成的条目（纯文件系统 + 哈希比较，很便宜），这样进度条
+    # 一开始就有真实的分母，而不是跑完一个 kind 才知道总数
+    plans = {}
     for kind in kinds:
         kind_specs = specs.get(kind, {})
         if only:
             kind_specs = {name: spec for name, spec in kind_specs.items() if name in only}
         if not kind_specs:
             continue
-
         out_dir = os.path.join(assets_dir, kind)
-        os.makedirs(out_dir, exist_ok=True)
-
-        backend = backend_map.get(kind) or build_asset_gen_backend(kind, config)
-        backend_is_mock = backend.name == "mock"
-
         pending = {}
         for name, spec in kind_specs.items():
             spec_hash = compute_spec_hash(spec)
@@ -411,9 +418,23 @@ def generate_assets(specs: dict = None, assets_dir: str = None, kinds: list = No
                     summary["skipped"].append(name)
                     continue
             pending[name] = (spec, spec_hash, wav_path, meta_path)
+        if pending:
+            plans[kind] = (out_dir, pending)
 
-        if not pending:
-            continue
+    total = sum(len(p) for _, p in plans.values())
+    done = 0
+
+    def _check_cancel():
+        if should_cancel is not None and should_cancel():
+            from src.pipeline_errors import TaskCancelled
+            raise TaskCancelled("素材生成已被取消")
+
+    for kind, (out_dir, pending) in plans.items():
+        _check_cancel()
+        os.makedirs(out_dir, exist_ok=True)
+
+        backend = backend_map.get(kind) or build_asset_gen_backend(kind, config)
+        backend_is_mock = backend.name == "mock"
 
         with tempfile.TemporaryDirectory(prefix="n2a_assetgen_raw_") as raw_dir:
             jobs = [{
@@ -423,6 +444,9 @@ def generate_assets(specs: dict = None, assets_dir: str = None, kinds: list = No
                 "sample_rate": 44100, "out": os.path.join(raw_dir, f"{name}.wav"),
             } for name, (spec, _, _, _) in pending.items()]
 
+            _check_cancel()
+            if progress_cb:
+                progress_cb(done, total, f"生成 {kind}（{len(jobs)} 条）…")
             batch_results = backend.generate_batch(jobs)
 
             for job in jobs:
@@ -462,6 +486,9 @@ def generate_assets(specs: dict = None, assets_dir: str = None, kinds: list = No
                 except Exception as e:  # noqa: BLE001 - 单条素材失败不应中断整批
                     logger.warning("素材 %s/%s 后处理失败: %s", kind, name, e)
                     summary["error"].append(name)
+                done += 1
+                if progress_cb:
+                    progress_cb(done, total, f"{kind}/{name}")
 
     return summary
 

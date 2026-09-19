@@ -308,6 +308,38 @@ class TestMixChapterVoiceOnly:
         assert not os.path.exists(sfx_path), "mix 是读路径，缺素材不该反过来写共享 assets/ 目录"
         assert not os.path.exists(bgm_path), "mix 是读路径，缺素材不该反过来写共享 assets/ 目录"
 
+    def test_mix_writes_meta_sidecar_with_missing_assets(self, tmp_chapter_dir, tmp_roles_dir):
+        """voice_only=False 且素材缺失：混音仍然成功（warn-and-skip 契约不变），
+        但 output/mix_meta.json 要如实记录缺了哪些素材。"""
+        timeline = self._make_timeline_with_effects(tmp_chapter_dir)
+        output_path = audio_mixer.mix_chapter(
+            tmp_chapter_dir, timeline_data=timeline, config={"mixing": {}}, voice_only=False
+        )
+        assert os.path.exists(output_path)
+
+        meta_path = os.path.join(tmp_chapter_dir, "output", "mix_meta.json")
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+        assert meta["voice_only"] is False
+        assert meta["output_file"] == os.path.basename(output_path)
+        assert meta["missing_assets"] == {"bgm": ["no_such_bgm_xyz"], "sfx": ["no_such_sfx_xyz"]}
+        assert meta["bgm_names"] == ["no_such_bgm_xyz"]
+        assert meta["sfx_count"] == 1
+
+    def test_mix_meta_sidecar_voice_only_records_no_assets(self, tmp_chapter_dir, tmp_roles_dir):
+        """纯人声混音：sidecar 记 voice_only=True，且不把 timeline 里潜在的素材
+        引用当成"用上了"——这次实际上没混进任何素材。"""
+        timeline = self._make_timeline_with_effects(tmp_chapter_dir)
+        audio_mixer.mix_chapter(
+            tmp_chapter_dir, timeline_data=timeline, config={"mixing": {}}, voice_only=True
+        )
+        with open(os.path.join(tmp_chapter_dir, "output", "mix_meta.json"), "r", encoding="utf-8") as f:
+            meta = json.load(f)
+        assert meta["voice_only"] is True
+        assert meta["bgm_names"] == []
+        assert meta["sfx_count"] == 0
+        assert meta["missing_assets"] == {"bgm": [], "sfx": []}
+
     def test_voice_only_true_shorter_than_full_mix_path_no_crash_on_none_effects(
         self, tmp_chapter_dir, tmp_roles_dir, sample_timeline_json
     ):

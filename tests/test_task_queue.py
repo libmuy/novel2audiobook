@@ -308,3 +308,57 @@ class TestReadLog:
         text, offset = isolated_queue.read_log(task.id)
         assert "开始" in text
         assert "完成" in text
+
+
+class TestHandleMix:
+    """_handle_mix 是否正确把 task.params 转成 mix_chapter 的 voice_only/
+    output_stem 参数——不直接跑真实 mix_chapter（需要真实 timeline+音频文件），
+    monkeypatch 成一个记录调用参数的桩函数。"""
+
+    def _make_task(self, novel_id="nv1", chapter_id="ch_0001", params=None):
+        return Task(id="t1", type="mix", lane="cpu", novel_id=novel_id,
+                    chapter_id=chapter_id, params=params)
+
+    def _patch(self, monkeypatch, tmp_path):
+        """_handle_mix 里是函数内 `from src import library`/`from src.audio_mixer
+        import mix_chapter`，要打到真实模块对象上，monkeypatch 局部导入绑定的
+        名字（比如 task_queue.library）不会生效——那只是在 task_queue 模块的
+        命名空间里添了个无关属性，函数体内重新 import 时还是会拿到原始模块。"""
+        calls = []
+        import src.library as library_mod
+        import src.audio_mixer as am
+        monkeypatch.setattr(library_mod, "get_chapter_dir",
+                            lambda nid, cid: str(tmp_path / nid / cid))
+        monkeypatch.setattr(am, "mix_chapter",
+                            lambda chapter_dir, **kw: calls.append(kw) or "out.mp3")
+        return calls
+
+    def test_with_assets_true_disables_voice_only(self, monkeypatch, tmp_path):
+        calls = self._patch(monkeypatch, tmp_path)
+
+        task = self._make_task(params={"with_assets": True})
+        ctx = task_queue.TaskContext()
+        task_queue._handle_mix(task, ctx)
+
+        assert calls[0]["voice_only"] is False
+        assert calls[0]["output_stem"] == "nv1_ch_0001"
+
+    def test_without_params_keeps_voice_only_none(self, monkeypatch, tmp_path):
+        """没传 params 时 voice_only 必须是 None（遵循配置默认值），不是 True——
+        传 True 会覆盖掉用户在设置页里打开的 mixing.voice_only=False。"""
+        calls = self._patch(monkeypatch, tmp_path)
+
+        task = self._make_task(params=None)
+        ctx = task_queue.TaskContext()
+        task_queue._handle_mix(task, ctx)
+
+        assert calls[0]["voice_only"] is None
+
+    def test_explicit_output_stem_overrides_default(self, monkeypatch, tmp_path):
+        calls = self._patch(monkeypatch, tmp_path)
+
+        task = self._make_task(params={"output_stem": "custom_name"})
+        ctx = task_queue.TaskContext()
+        task_queue._handle_mix(task, ctx)
+
+        assert calls[0]["output_stem"] == "custom_name"

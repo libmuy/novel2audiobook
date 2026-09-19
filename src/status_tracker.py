@@ -68,14 +68,40 @@ def get_all_chapters_status(chapters_dir: str = "chapters") -> list:
         has_final = os.path.exists(os.path.join(path, "script_final.json"))
         has_timeline = os.path.exists(os.path.join(path, "timeline.json"))
 
+        # 成品格式由 mixing.output_format 决定，不一定是 mp3——只认 .mp3 扩展名
+        # 会把 wav/flac 产物误判成"还没混过"。`mp3` 字段名保留不变（向后兼容），
+        # 但语义从"有 .mp3 文件"放宽成"有任意格式的成品"；output_format 是新字段，
+        # 给需要区分实际格式的调用方用。
         output_dir = os.path.join(path, "output")
         has_mp3 = False
         mp3_mtime = None
+        output_format = None
         if os.path.exists(output_dir):
-            mp3_files = [f for f in os.listdir(output_dir) if f.endswith(".mp3")]
-            has_mp3 = len(mp3_files) > 0
+            output_files = [
+                f for f in os.listdir(output_dir)
+                if os.path.splitext(f)[1].lower() in (".mp3", ".wav", ".flac")
+            ]
+            has_mp3 = len(output_files) > 0
             if has_mp3:
-                mp3_mtime = max(os.path.getmtime(os.path.join(output_dir, f)) for f in mp3_files)
+                newest = max(output_files, key=lambda f: os.path.getmtime(os.path.join(output_dir, f)))
+                mp3_mtime = os.path.getmtime(os.path.join(output_dir, newest))
+                output_format = os.path.splitext(newest)[1].lstrip(".")
+
+        # mix_meta.json 是 audio_mixer.mix_chapter 写的 sidecar（记录这次混音是
+        # 不是纯人声、引用/缺失了哪些素材）——没有 sidecar 时是 None（诚实表达
+        # "不知道"，不是 False；这批产物很可能是本次改造之前就混好的）。
+        mixed_with_assets = None
+        missing_assets_count = 0
+        mix_meta_path = os.path.join(output_dir, "mix_meta.json")
+        if os.path.exists(mix_meta_path):
+            try:
+                with open(mix_meta_path, "r", encoding="utf-8") as f:
+                    mix_meta = json.load(f)
+                mixed_with_assets = not mix_meta.get("voice_only", True)
+                missing = mix_meta.get("missing_assets") or {}
+                missing_assets_count = len(missing.get("bgm", [])) + len(missing.get("sfx", []))
+            except (OSError, json.JSONDecodeError, AttributeError):
+                pass
 
         audio_cache_dir = os.path.join(path, "audio_cache")
         cache_count = 0
@@ -102,6 +128,10 @@ def get_all_chapters_status(chapters_dir: str = "chapters") -> list:
             "final": has_final,
             "timeline": has_timeline,
             "mp3": has_mp3,
+            "output": has_mp3,  # 语义更明确的新别名，跟 mp3 完全同值
+            "output_format": output_format,
+            "mixed_with_assets": mixed_with_assets,
+            "missing_assets_count": missing_assets_count,
             "audio_cache_count": cache_count
         })
 

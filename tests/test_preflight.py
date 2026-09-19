@@ -91,6 +91,16 @@ class TestPreflightMix:
         result = preflight.preflight("mix", "nv1", library_dir=str(isolated_library))
         assert result["summary"]["overwrite"] == 1
 
+    def test_mix_overwrites_when_output_is_wav(self, isolated_library):
+        """成品是 wav/flac（mixing.output_format）时不该被误判成"还没混过"而给 create"""
+        _create_chapter(isolated_library, "nv1", "ch_0001", timeline=True, status_tag="completed")
+        out = isolated_library / "nv1" / "chapters" / "ch_0001" / "output"
+        os.makedirs(out)
+        with open(out / "chapter_0001.wav", "wb") as f:
+            f.write(b"RIFF")
+        result = preflight.preflight("mix", "nv1", library_dir=str(isolated_library))
+        assert result["summary"]["overwrite"] == 1
+
     def test_mix_skips_without_timeline(self, isolated_library):
         _create_chapter(isolated_library, "nv1", "ch_0001", final=True)
         result = preflight.preflight("mix", "nv1", library_dir=str(isolated_library))
@@ -116,6 +126,14 @@ class TestTTSStats:
         assert stats["avg_seconds_per_sentence"] == 2.5
         assert stats.get("sample_count", 1) >= 1
 
+    def test_second_sample_is_averaged_not_overwritten(self, isolated_library):
+        """回归：首次采样没记 sample_count，第二次采样会直接覆盖第一次"""
+        preflight.update_tts_stats(2.0)
+        preflight.update_tts_stats(4.0)
+        stats = preflight._load_tts_stats()
+        assert stats["avg_seconds_per_sentence"] == 3.0
+        assert stats["sample_count"] == 2
+
     def test_estimate_gpu_minutes_with_stats(self, isolated_library):
         preflight.update_tts_stats(2.0)
         minutes = preflight._estimate_gpu_minutes("tts", 1)
@@ -129,3 +147,34 @@ class TestTTSStats:
     def test_estimate_gpu_minutes_non_tts(self, isolated_library):
         minutes = preflight._estimate_gpu_minutes("parse", 1)
         assert minutes is None
+
+
+class TestPreflightAssets:
+    def _fake_rows(self, monkeypatch, rows):
+        from src import asset_gen
+        monkeypatch.setattr(asset_gen, "get_asset_status_list", lambda *a, **k: rows)
+
+    ROWS = [
+        {"name": "a", "kind": "sfx", "status": "MISSING"},
+        {"name": "b", "kind": "sfx", "status": "STALE(spec已变更)"},
+        {"name": "c", "kind": "ambience", "status": "OK"},
+        {"name": "d", "kind": "ambience", "status": "OK(占位/Mock)"},
+    ]
+
+    def test_maps_status_to_actions(self, monkeypatch):
+        self._fake_rows(monkeypatch, self.ROWS)
+        r = preflight.preflight_assets()
+        assert r["summary"] == {"create": 1, "overwrite": 2, "skip": 1}
+        assert r["chapters"] == []
+        assert r["estimated_gpu_minutes"] is None  # 不编造耗时
+
+    def test_force_overwrites_ok(self, monkeypatch):
+        self._fake_rows(monkeypatch, self.ROWS)
+        r = preflight.preflight_assets({"force": True})
+        assert r["summary"] == {"create": 1, "overwrite": 3, "skip": 0}
+
+    def test_kinds_and_only_filters(self, monkeypatch):
+        self._fake_rows(monkeypatch, self.ROWS)
+        assert preflight.preflight_assets({"kinds": ["sfx"]})["summary"]["create"] == 1
+        r = preflight.preflight_assets({"only": ["c"]})
+        assert r["summary"] == {"create": 0, "overwrite": 0, "skip": 1}

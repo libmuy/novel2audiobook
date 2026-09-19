@@ -276,6 +276,69 @@ class TestChaptersAPI:
         assert resp.status_code == 200
         assert resp.content == b"ID3fake"
 
+    def test_output_mp3_returns_newest_file_not_alphabetically_first(self, client, tmp_path):
+        """API 触发的混音输出文件名是 {novel_id}_{chapter_id}，CLI 触发的是历史
+        遗留命名 chapter_XXXX——字母序 "chapter_" 排在小说 id 前面，按字母序取
+        第一个文件会稳定地把过期文件当成最新成品返回。必须按 mtime 取最新。"""
+        import time
+        nid = client.post("/api/novels", json={"title": "新旧文件测试"}).json()["novel_id"]
+        ch_id = self._new_chapter(client, nid)
+        client.put(f"/api/novels/{nid}/chapters/{ch_id}/raw", files={"file": ("raw.txt", b"x")})
+        output_dir = tmp_path / "library" / nid / "chapters" / ch_id / "output"
+        output_dir.mkdir(parents=True)
+        (output_dir / "chapter_0001.mp3").write_bytes(b"OLD")
+        time.sleep(0.05)
+        (output_dir / f"{nid}_{ch_id}.mp3").write_bytes(b"NEW")
+
+        resp = client.get(f"/api/novels/{nid}/chapters/{ch_id}/output.mp3")
+        assert resp.status_code == 200
+        assert resp.content == b"NEW"
+
+    def test_chapter_assets_reports_referenced_and_missing(self, client, tmp_path):
+        nid = client.post("/api/novels", json={"title": "素材引用测试"}).json()["novel_id"]
+        ch_id = self._new_chapter(client, nid)
+        client.put(f"/api/novels/{nid}/chapters/{ch_id}/raw", files={"file": ("raw.txt", b"x")})
+        ch_dir = tmp_path / "library" / nid / "chapters" / ch_id
+        timeline = {
+            "chapter_id": ch_id,
+            "items": [
+                {"seg_id": 1, "bgm": "rain_heavy", "sfx": "sword_clash"},
+                {"seg_id": 2, "bgm": "rain_heavy", "sfx": None},
+            ],
+        }
+        (ch_dir / "timeline.json").write_text(json.dumps(timeline))
+        # 只让 sword_clash 真实存在，rain_heavy 缺失
+        sfx_dir = tmp_path / "assets" / "sfx"
+        sfx_dir.mkdir(parents=True)
+        (sfx_dir / "sword_clash.wav").write_bytes(b"fake")
+
+        resp = client.get(f"/api/novels/{nid}/chapters/{ch_id}/assets")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["referenced"]["bgm"] == ["rain_heavy"]
+        assert body["referenced"]["sfx"] == ["sword_clash"]
+        assert body["missing"]["bgm"] == ["rain_heavy"]
+        assert body["missing"]["sfx"] == []
+        assert body["segment_counts"] == {"with_bgm": 2, "with_sfx": 1, "total": 2}
+        assert body["mix"]["mixed_with_assets"] is None  # 还没混过音，没有 sidecar
+
+    def test_refresh_timeline_assets_syncs_from_script(self, client, tmp_path):
+        nid = client.post("/api/novels", json={"title": "同步测试"}).json()["novel_id"]
+        ch_id = self._new_chapter(client, nid)
+        client.put(f"/api/novels/{nid}/chapters/{ch_id}/raw", files={"file": ("raw.txt", b"x")})
+        ch_dir = tmp_path / "library" / nid / "chapters" / ch_id
+        script = [{"seg_id": 1, "speaker": "narrator", "text": "a", "emotion": "neutral",
+                   "sfx": "sword_clash", "bgm": None}]
+        (ch_dir / "script_final.json").write_text(json.dumps(script))
+        timeline = {"chapter_id": ch_id, "items": [{"seg_id": 1, "sfx": None, "bgm": None}]}
+        (ch_dir / "timeline.json").write_text(json.dumps(timeline))
+
+        resp = client.post(f"/api/novels/{nid}/chapters/{ch_id}/timeline/refresh-assets")
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True, "updated": 1}
+        saved = json.loads((ch_dir / "timeline.json").read_text())
+        assert saved["items"][0]["sfx"] == "sword_clash"
+
 
 class TestSegmentsAPI:
     def _chapter_with_script(self, client, tmp_path, script):
@@ -315,6 +378,44 @@ class TestSegmentsAPI:
         assert resp.json()["updated"] == 2
         saved = json.loads((tmp_path / "library" / nid / "chapters" / ch_id / "script_final.json").read_text())
         assert all(seg["emotion"] == "happy" for seg in saved)
+
+    def _make_available(self, tmp_path, kind, name):
+        # list_available_assets() 扫描 assets/sfx、assets/ambience 目录，
+        # 公开字段名是 bgm/sfx，内部目录名是 ambience/sfx——见 src/utils.py
+        dirname = "ambience" if kind == "bgm" else "sfx"
+        d = tmp_path / "assets" / dirname
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{name}.wav").write_bytes(b"fake wav")
+
+    def test_update_segment_sfx_valid_name(self, client, tmp_path):
+        self._make_available(tmp_path, "sfx", "sword_clash")
+        script = [{"seg_id": 1, "speaker": "narrator", "text": "a", "emotion": "neutral"}]
+        nid, ch_id = self._chapter_with_script(client, tmp_path, script)
+        resp = client.patch(f"/api/novels/{nid}/chapters/{ch_id}/segments/1", json={"sfx": "sword_clash"})
+        assert resp.status_code == 200
+        saved = json.loads((tmp_path / "library" / nid / "chapters" / ch_id / "script_final.json").read_text())
+        assert saved[0]["sfx"] == "sword_clash"
+
+    def test_update_segment_sfx_unknown_name_rejected(self, client, tmp_path):
+        script = [{"seg_id": 1, "speaker": "narrator", "text": "a", "emotion": "neutral"}]
+        nid, ch_id = self._chapter_with_script(client, tmp_path, script)
+        resp = client.patch(f"/api/novels/{nid}/chapters/{ch_id}/segments/1", json={"sfx": "nope"})
+        assert resp.status_code == 400
+
+    def test_update_segment_bgm_null_clears(self, client, tmp_path):
+        script = [{"seg_id": 1, "speaker": "narrator", "text": "a", "emotion": "neutral", "bgm": "rain_heavy"}]
+        nid, ch_id = self._chapter_with_script(client, tmp_path, script)
+        resp = client.patch(f"/api/novels/{nid}/chapters/{ch_id}/segments/1", json={"bgm": None})
+        assert resp.status_code == 200
+        saved = json.loads((tmp_path / "library" / nid / "chapters" / ch_id / "script_final.json").read_text())
+        assert saved[0]["bgm"] is None
+
+    def test_batch_update_segments_bgm_unknown_name_rejected(self, client, tmp_path):
+        script = [{"seg_id": 1, "speaker": "narrator", "text": "a", "emotion": "neutral"}]
+        nid, ch_id = self._chapter_with_script(client, tmp_path, script)
+        resp = client.post(f"/api/novels/{nid}/chapters/{ch_id}/segments/batch",
+                           json={"seg_ids": [1], "set": {"bgm": "nope"}})
+        assert resp.status_code == 400
 
 
 class TestRolesAPI:
@@ -431,6 +532,34 @@ class TestTasksAPI:
         resp = client.delete(f"/api/tasks/{task['id']}")
         assert resp.status_code == 200
 
+    def test_submit_unknown_type_rejected(self, client):
+        """未知任务类型在提交时就该 400，不该静默落进 cpu lane 异步失败"""
+        nid, vol_id = self._novel_with_two_chapters(client)
+        resp = client.post("/api/tasks", json={"type": "nope", "novel_id": nid,
+                                               "scope": {"chapter_ids": ["ch_0001"]}})
+        assert resp.status_code == 400
+
+    def test_submit_import_type_rejected(self, client):
+        """import 类型声明了常量和 lane 但从没注册过 handler，是个哑弹，提交也要 400"""
+        nid, vol_id = self._novel_with_two_chapters(client)
+        resp = client.post("/api/tasks", json={"type": "import", "novel_id": nid,
+                                               "scope": {"chapter_ids": ["ch_0001"]}})
+        assert resp.status_code == 400
+
+    def test_preflight_unknown_type_rejected(self, client):
+        nid, vol_id = self._novel_with_two_chapters(client)
+        resp = client.post("/api/tasks/preflight", json={"type": "nope", "novel_id": nid,
+                                                          "scope": {"chapter_ids": ["ch_0001"]}})
+        assert resp.status_code == 400
+
+    def test_submit_mix_with_params_persists_params(self, client):
+        nid, vol_id = self._novel_with_two_chapters(client)
+        resp = client.post("/api/tasks", json={"type": "mix", "novel_id": nid,
+                                               "scope": {"chapter_ids": ["ch_0001"]},
+                                               "params": {"with_assets": True}})
+        assert resp.status_code == 200
+        assert resp.json()["tasks"][0]["params"] == {"with_assets": True}
+
 
 class TestSystemAPI:
     def test_get_config(self, client):
@@ -465,3 +594,26 @@ class TestSystemAPI:
     def test_assets(self, client):
         resp = client.get("/api/assets")
         assert resp.status_code == 200
+
+    def test_patch_config_accepts_mixing_voice_only(self, client, tmp_path):
+        cfg_path = tmp_path / "global_config.yaml"
+        cfg_path.write_text("mixing:\n  voice_only: true\n")
+        resp = client.patch("/api/config", json={"mixing.voice_only": False})
+        assert resp.status_code == 200
+        assert resp.json()["applied_keys"] == ["mixing.voice_only"]
+
+        import yaml
+        on_disk = yaml.safe_load(cfg_path.read_text())
+        assert on_disk["mixing"]["voice_only"] is False
+
+    def test_patch_config_coerces_string_bool_for_voice_only(self, client, tmp_path):
+        """JSON 字符串 "false" 在 Python 里是真值，写配置前必须强制转成真正的
+        bool，否则前端传什么字符串都会被当成"开"，voice_only 就永远关不掉。"""
+        cfg_path = tmp_path / "global_config.yaml"
+        cfg_path.write_text("mixing:\n  voice_only: true\n")
+        resp = client.patch("/api/config", json={"mixing.voice_only": "false"})
+        assert resp.status_code == 200
+
+        import yaml
+        on_disk = yaml.safe_load(cfg_path.read_text())
+        assert on_disk["mixing"]["voice_only"] is False

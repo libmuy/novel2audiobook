@@ -62,6 +62,42 @@ def preflight(task_type: str, novel_id: str, chapter_ids: list = None,
     }
 
 
+def preflight_assets(params: dict = None) -> dict:
+    """asset_gen 的预检：不是章节维度，而是素材维度。返回结构跟章节预检同形
+    （summary 三个计数不变），现有的通用预检弹窗不用改；逐条明细放在 assets 里，
+    chapters 留空。状态映射复用 asset_gen.get_asset_status_list，不重写判定逻辑。
+    estimated_gpu_minutes 恒为 None——不编造没有历史数据的耗时。"""
+    from src import asset_gen
+    params = params or {}
+    kinds = params.get("kinds")
+    only = set(params["only"]) if params.get("only") else None
+    force = bool(params.get("force"))
+
+    summary = {"create": 0, "overwrite": 0, "skip": 0}
+    assets = []
+    for row in asset_gen.get_asset_status_list():
+        if kinds and row["kind"] not in kinds:
+            continue
+        if only and row["name"] not in only:
+            continue
+        status = row["status"]
+        if status == "MISSING":
+            action, reason = "create", "尚未生成"
+        elif status.startswith("STALE"):
+            action, reason = "overwrite", "规格已变更，将重新生成"
+        elif status == "OK(占位/Mock)":
+            action, reason = "overwrite", "当前是 Mock 占位，将尝试用真实引擎重新生成"
+        elif force:
+            action, reason = "overwrite", "强制重新生成"
+        else:
+            action, reason = "skip", "已是最新"
+        summary[action] += 1
+        assets.append({"name": row["name"], "kind": row["kind"], "action": action, "reason": reason})
+
+    return {"chapters": [], "assets": assets, "summary": summary,
+            "invalidated_cache_count": 0, "estimated_gpu_minutes": None}
+
+
 def _determine_action(task_type: str, ch_status: dict) -> tuple:
     """根据任务类型和章节状态，决定 action 和 reason"""
     status = ch_status["status"]
@@ -87,7 +123,7 @@ def _determine_action(task_type: str, ch_status: dict) -> tuple:
     elif task_type == "mix":
         if not ch_status["timeline"]:
             return "skip", "无时间线数据，需先完成 TTS"
-        if ch_status["mp3"] and status == "completed":
+        if ch_status["output"] and status == "completed":
             return "overwrite", "已有成品 MP3，将重新混音"
         return "create", "将时间线混音为成品 MP3"
 
@@ -131,6 +167,9 @@ def update_tts_stats(seconds_per_sentence: float):
 
     if avg is None:
         stats["avg_seconds_per_sentence"] = round(seconds_per_sentence, 2)
+        # 首次采样必须把计数记成 1：之前漏了这句，第二次采样读到 count=0，
+        # 加权平均退化成"直接覆盖第一次"，历史统计永远只有最后一次的值
+        stats["sample_count"] = 1
     else:
         # 滑动平均
         new_count = count + 1
