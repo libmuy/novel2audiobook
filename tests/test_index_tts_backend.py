@@ -3,6 +3,8 @@ import json
 import os
 import signal
 import subprocess
+import threading
+import time
 
 import pytest
 
@@ -26,10 +28,24 @@ class FakePopen:
     partial_ids = ()         # 写了一半（截断）wav 但没报告成功的 job
     stderr = b""
 
+    started = None           # behavior == "block" 时由测试设置的 threading.Event
+
     def communicate(self, timeout=None):
         cls = type(self)
         if cls.behavior == "timeout" and self.returncode is None:
             raise subprocess.TimeoutExpired(self.cmd, timeout)
+        if cls.behavior == "block":
+            # 模拟推理进行中：先写出被截断的输出，再一直阻塞到被 killpg 杀掉
+            for j in json.load(open(self.cmd[self.cmd.index("--jobs-file") + 1], encoding="utf-8")):
+                if j["id"] in cls.partial_ids:
+                    with open(j["out"], "wb") as f:
+                        f.write(b"RI")
+            if cls.started:
+                cls.started.set()
+            end = time.time() + 10
+            while self.returncode is None and time.time() < end:
+                time.sleep(0.005)
+            return b"", b""
         jobs = json.load(open(self.cmd[self.cmd.index("--jobs-file") + 1], encoding="utf-8"))
         results = {}
         for j in jobs:
@@ -154,3 +170,67 @@ class TestBatchResults:
         jobs = [{"id": "k", "out": str(keep)}, {"id": "d", "out": str(drop)}, {"id": "x", "out": str(absent)}]
         tts_engine._delete_unfinished_outputs(jobs, {"k": True, "d": False})
         assert keep.exists() and not drop.exists()  # 缺失的文件不抛异常
+
+
+class TestCancel:
+    """任务取消 → CancelScope 里登记的钩子杀掉子进程组，且发生在仲裁器退出之前"""
+
+    def _run_in_thread(self, backend, jobs, scope):
+        from src import cancel_scope
+        out = {}
+
+        def target():
+            cancel_scope.activate(scope)
+            try:
+                out["results"] = backend.synthesize_batch(jobs)
+            finally:
+                cancel_scope.deactivate()
+
+        t = threading.Thread(target=target)
+        t.start()
+        return t, out
+
+    def test_cancel_while_the_child_runs_kills_it_inside_the_arbiter_block(self, env, tmp_path):
+        from src.cancel_scope import CancelScope
+        backend, events, make_jobs = env
+        FakePopen.behavior, FakePopen.partial_ids = "block", ("a",)
+        FakePopen.started = threading.Event()
+        scope, jobs = CancelScope(), make_jobs("a", "b")
+        t, out = self._run_in_thread(backend, jobs, scope)
+        assert FakePopen.started.wait(3)
+        scope.cancel()
+        t.join(5)
+        assert not t.is_alive(), "取消之后 synthesize_batch 没有返回（子进程没被杀）"
+
+        assert events == ["arbiter_enter", ("killpg", signal.SIGTERM), "arbiter_exit"]
+        assert out["results"] == {"a": False, "b": False}
+        assert not os.path.exists(jobs[0]["out"])  # 被杀时写到一半的截断 wav 已删，不会占着合法 md5 名
+
+    def test_scope_cancelled_before_popen_still_kills_the_child(self, env):
+        """取消落在任务进入 RUNNING 与 Popen 之间：登记被拒，后端就地杀掉刚起的子进程"""
+        from src.cancel_scope import CancelScope
+        backend, events, make_jobs = env
+        FakePopen.behavior = "block"
+        FakePopen.started = None
+        scope = CancelScope()
+        scope.cancel()
+        t, out = self._run_in_thread(backend, make_jobs("a"), scope)
+        t.join(5)
+        assert not t.is_alive()
+        assert events == ["arbiter_enter", ("killpg", signal.SIGTERM), "arbiter_exit"]
+        assert out["results"] == {"a": False}
+
+    def test_hook_is_gone_after_a_normal_run(self, env):
+        """正常跑完后再取消不能去碰早已结束的子进程（pid 可能已被复用）"""
+        from src import cancel_scope
+        from src.cancel_scope import CancelScope
+        backend, events, make_jobs = env
+        scope = CancelScope()
+        cancel_scope.activate(scope)
+        try:
+            backend.synthesize_batch(make_jobs("a"))
+        finally:
+            cancel_scope.deactivate()
+        events.clear()
+        scope.cancel()
+        assert events == []

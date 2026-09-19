@@ -18,6 +18,7 @@ import time
 from dataclasses import dataclass, field, asdict
 from typing import Callable, Optional
 
+from src import cancel_scope
 from src.utils import PROJECT_ROOT, load_global_config
 
 logger = logging.getLogger(__name__)
@@ -180,6 +181,9 @@ class Task:
     finished_at: str = None
     error: str = None
     log_path: str = None
+    # 已请求取消但任务还在跑（要等杀进程 + llama-server 恢复）；不新增 state 值——
+    # 五个状态被前端与 TestCancel 钉死
+    cancel_requested: bool = False
 
 
 @dataclass
@@ -244,7 +248,10 @@ class TaskQueue:
         self.cpu_workers = server_cfg.get("cpu_workers", 2)
 
         self._tasks: dict = {}  # task_id -> Task
-        self._cancel_tokens: dict = {}  # task_id -> threading.Event
+        self._cancel_scopes: dict = {}  # task_id -> CancelScope（运行中的任务）
+        # QUEUED→RUNNING 与 cancel() 之间的状态转换互斥：否则 cancel() 在 worker 检查
+        # 「是否已取消」与置 RUNNING 之间把任务标成 CANCELLED，随后被 worker 覆盖回 RUNNING
+        self._transition_lock = threading.Lock()
         self._gpu_lock = threading.Lock()  # GPU lane 严格单 worker
         self._cpu_semaphore = threading.Semaphore(self.cpu_workers)
         self._listeners: list = []
@@ -337,20 +344,25 @@ class TaskQueue:
         if not task:
             return False
 
-        if task.state == STATE_QUEUED:
-            task.state = STATE_CANCELLED
-            task.finished_at = time.strftime("%Y-%m-%d %H:%M:%S")
+        with self._transition_lock:
+            if task.state == STATE_QUEUED:
+                task.state = STATE_CANCELLED
+                task.finished_at = time.strftime("%Y-%m-%d %H:%M:%S")
+                self._persist_task(task)
+                self._emit_event("task_update", {"task": asdict(task)})
+                return True
+
+            if task.state != STATE_RUNNING:
+                return False
+            scope = self._cancel_scopes.get(task_id)
+            task.cancel_requested = True
             self._persist_task(task)
             self._emit_event("task_update", {"task": asdict(task)})
-            return True
 
-        if task.state == STATE_RUNNING:
-            token = self._cancel_tokens.get(task_id)
-            if token:
-                token.set()
-            return True
-
-        return False
+        # 锁外取消：scope.cancel() 会调用杀子进程的钩子（收尸可能耗时数秒）
+        if scope:
+            scope.cancel()
+        return True
 
     def cancel_group(self, group_id: str) -> int:
         count = 0
@@ -510,18 +522,18 @@ class TaskQueue:
         else:
             self._cpu_semaphore.acquire()
 
+        scope = cancel_scope.CancelScope()
         try:
-            if task.state == STATE_CANCELLED:
-                return
-
-            task.state = STATE_RUNNING
-            task.started_at = time.strftime("%Y-%m-%d %H:%M:%S")
-            self._persist_task(task)
-            self._emit_event("task_update", {"task": asdict(task)})
-
-            # 创建取消 token
-            cancel_token = threading.Event()
-            self._cancel_tokens[task.id] = cancel_token
+            with self._transition_lock:
+                if task.state == STATE_CANCELLED:
+                    return
+                # scope 必须在置 RUNNING 之前创建并登记：cancel() 看到 RUNNING 时一定能找到它，
+                # 否则落在这两步之间的取消会返回 True 却什么都没发生，任务照常跑完
+                self._cancel_scopes[task.id] = scope
+                task.state = STATE_RUNNING
+                task.started_at = time.strftime("%Y-%m-%d %H:%M:%S")
+                self._persist_task(task)
+                self._emit_event("task_update", {"task": asdict(task)})
 
             # 创建日志文件
             log_dir = os.path.join(self.tasks_dir)
@@ -540,12 +552,16 @@ class TaskQueue:
             ctx = TaskContext(
                 log_fn=lambda msg: self._task_log(task, msg),
                 progress_fn=lambda done, total, msg: self._task_progress(task, done, total, msg),
-                should_cancel_fn=cancel_token.is_set,
+                should_cancel_fn=scope.is_cancelled,
             )
 
-            handler(task, ctx)
+            cancel_scope.activate(scope)  # 后端起子进程时据此登记杀进程钩子（同线程）
+            try:
+                handler(task, ctx)
+            finally:
+                cancel_scope.deactivate()
 
-            if cancel_token.is_set():
+            if scope.is_cancelled():
                 task.state = STATE_CANCELLED
             else:
                 task.state = STATE_SUCCEEDED
@@ -564,7 +580,7 @@ class TaskQueue:
                 self._task_log(task, f"任务异常: {e}")
                 logger.exception("任务 %s 执行异常", task_id)
         finally:
-            self._cancel_tokens.pop(task.id, None)
+            self._cancel_scopes.pop(task.id, None)
             self._persist_task(task)
             self._emit_event("task_update", {"task": asdict(task)})
 

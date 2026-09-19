@@ -35,7 +35,7 @@ import yaml
 from pydub import AudioSegment
 
 from src.utils import calculate_md5, load_global_config, resolve_path
-from src.killable_proc import terminate_process_group
+from src.killable_proc import kill_on_cancel, terminate_process_group
 
 logger = logging.getLogger(__name__)
 
@@ -321,7 +321,8 @@ class SubprocessAudioGenBackend:
                     )
                     self._current_proc = proc
                     try:
-                        out, err = proc.communicate(timeout=self.timeout)
+                        with kill_on_cancel(proc):  # 任务被取消 → 立刻杀掉这个进程组（仍在 LlmSuspendedForGpu 内部）
+                            out, err = proc.communicate(timeout=self.timeout)
                         if proc.returncode != 0:
                             logger.warning("[%s] 批量生成子进程返回非零: %s", self.name,
                                            (err or b"").decode(errors="replace")[-1000:])
@@ -536,6 +537,12 @@ def generate_assets(specs: dict = None, assets_dir: str = None, kinds: list = No
             if progress_cb:
                 progress_cb(done, total, f"生成 {kind}（{len(jobs)} 条）…")
             batch_results = backend.generate_batch(jobs)
+
+            # 取消检查必须在这里——generate_batch 返回之后、逐条回退 Mock 之前：取消会
+            # 杀掉子进程，未完成的条目 batch_results 为 False，不检查的话下面会给它们
+            # 全部铺上占位噪音并写入真实 spec_hash（等于把「取消」变成「成功」）。
+            # 原始 wav 在 TemporaryDirectory 里，退出时自动清掉，不会留截断文件。
+            _check_cancel()
 
             for job in jobs:
                 name = job["id"]

@@ -1032,6 +1032,47 @@ class TestTaskPanel:
         expect(glob.locator(".task-log")).to_have_count(0)
 
 
+    def test_cancel_in_progress_is_shown_and_the_button_is_locked(self, page, server):
+        """cancel_requested && running → 「取消中…」并禁用取消按钮（不是新的 state 值）；
+        确认框如实说明会终止推理进程、并要等 llama-server 恢复"""
+        import json as _json
+        task = {"id": "t_cancelling", "type": "asset_gen", "lane": "gpu", "novel_id": None, "chapter_id": None,
+                "group_id": None, "params": {"only": ["e2e_cancelling"]}, "state": "running",
+                "cancel_requested": True, "progress": None, "created_at": "2026-01-01 00:00:00"}
+        page.route("**/api/tasks", lambda route: route.fulfill(
+            status=200, content_type="application/json", body=_json.dumps([task]))
+            if route.request.method == "GET" else route.continue_())
+        nid, _, _ = _make_chapter_with_script(server, [], None, "取消中显示")
+        page.goto(f"{_api(server)}/#/novels/{nid}")
+        page.wait_for_load_state("networkidle")
+        glob = page.locator(".task-group-global", has_text="e2e_cancelling")
+        glob.locator(".task-group-header").click()
+        expect(glob.locator(".task-item-status")).to_have_text("取消中…")
+        btn = glob.locator(".task-cancel-btn")
+        expect(btn).to_have_text("取消中…")
+        expect(btn).to_be_disabled()
+
+    def test_cancel_confirm_describes_the_real_behaviour(self, page, server):
+        import json as _json
+        task = {"id": "t_running", "type": "tts", "lane": "gpu", "novel_id": None, "chapter_id": None,
+                "group_id": None, "params": {"only": ["e2e_running"]}, "state": "running",
+                "cancel_requested": False, "progress": None, "created_at": "2026-01-01 00:00:00"}
+        page.route("**/api/tasks", lambda route: route.fulfill(
+            status=200, content_type="application/json", body=_json.dumps([task]))
+            if route.request.method == "GET" else route.continue_())
+        nid, _, _ = _make_chapter_with_script(server, [], None, "取消确认文案")
+        page.goto(f"{_api(server)}/#/novels/{nid}")
+        page.wait_for_load_state("networkidle")
+        glob = page.locator(".task-group-global, .task-group").first
+        glob.locator(".task-group-header").click()
+        glob.locator(".task-cancel-btn").click()
+        warning = page.locator(".confirm-warning")
+        expect(warning).to_contain_text("立即终止推理进程")
+        expect(warning).to_contain_text("llama-server")
+        expect(warning).not_to_contain_text("整章跑完")  # 旧措辞（取消只是协作式）已不成立
+        page.locator(".confirm-footer button", has_text="取消").first.click()
+
+
 # ---------------------------------------------------------------------------
 # 14. 计划 010 阶段 3：设置页混音参数 + toast 取代 alert
 class TestSettingsMixingParams:

@@ -27,6 +27,12 @@ from datetime import datetime, timezone
 from src.utils import resolve_path, load_global_config
 from tools import gpu_arbiter
 
+# 取消：**常驻守护进程有意保持不可取消**。它没有 cancel 消息、请求循环是单线程 socket，
+# 而任务队列的取消（src/cancel_scope.py 的杀进程钩子）只接在「一次性子进程」后端
+# （IndexTTSBackend / SubprocessAudioGenBackend）上——队列路径本来也走不到守护进程
+# （build_tts_backend 只返回 IndexTTS 或 Mock）。守护进程只服务交互式试听，
+# 想中断它请用 `python cli.py tts-serve stop`。
+#
 # 有意不在本模块复制一份 pidfile/socket 路径常量：路径/格式由
 # tools/gpu_arbiter.py 统一定义（它也要读这份状态来做 owner 探测），本模块
 # 处处直接引用 gpu_arbiter.TTS_DAEMON_*，确保读写用的是同一份路径——复制

@@ -3,6 +3,8 @@ import json
 import os
 import signal
 import subprocess
+import threading
+import time
 
 import pytest
 
@@ -13,6 +15,7 @@ class FakePopen:
     instances = []
     behavior = "ok"
     stderr = b""
+    started = None
 
     def __init__(self, cmd, **kwargs):
         self.cmd, self.kwargs = cmd, kwargs
@@ -23,6 +26,13 @@ class FakePopen:
     def communicate(self, timeout=None):
         if FakePopen.behavior == "timeout" and self.returncode is None:
             raise subprocess.TimeoutExpired(self.cmd, timeout)
+        if FakePopen.behavior == "block":  # 推理进行中：阻塞到被 killpg 杀掉
+            if FakePopen.started:
+                FakePopen.started.set()
+            end = time.time() + 10
+            while self.returncode is None and time.time() < end:
+                time.sleep(0.005)
+            return b"", b""
         jobs = json.load(open(self.cmd[self.cmd.index("--jobs-file") + 1], encoding="utf-8"))
         results = {}
         for j in jobs:
@@ -105,3 +115,78 @@ class TestGenerateBatch:
         backend.terminate_current()  # 没在跑：不抛异常
         backend.generate_batch(_jobs(tmp_path))
         assert backend._current_proc is None
+
+
+class TestCancel:
+    def _run(self, backend, tmp_path, scope):
+        from src import cancel_scope
+        out = {}
+
+        def target():
+            cancel_scope.activate(scope)
+            try:
+                out["results"] = backend.generate_batch(_jobs(tmp_path))
+            finally:
+                cancel_scope.deactivate()
+
+        t = threading.Thread(target=target)
+        t.start()
+        return t, out
+
+    def test_cancel_while_the_child_runs_kills_it_inside_the_arbiter_block(self, env, tmp_path):
+        from src.cancel_scope import CancelScope
+        backend, events = env
+        FakePopen.behavior, FakePopen.started = "block", threading.Event()
+        scope = CancelScope()
+        t, out = self._run(backend, tmp_path, scope)
+        assert FakePopen.started.wait(3)
+        scope.cancel()
+        t.join(5)
+        assert not t.is_alive()
+        assert events == ["arbiter_enter", ("killpg", signal.SIGTERM), "arbiter_exit"]
+        assert out["results"] == {"a": False}
+
+    def test_scope_cancelled_before_popen_still_kills_the_child(self, env, tmp_path):
+        from src.cancel_scope import CancelScope
+        backend, events = env
+        FakePopen.behavior = "block"
+        scope = CancelScope()
+        scope.cancel()
+        t, out = self._run(backend, tmp_path, scope)
+        t.join(5)
+        assert not t.is_alive()
+        assert events == ["arbiter_enter", ("killpg", signal.SIGTERM), "arbiter_exit"]
+
+
+class TestGenerateAssetsCancel:
+    """取消后不能给未完成的条目铺占位噪音并写入真实 spec_hash（那会把「取消」变成「成功」）"""
+
+    def test_cancel_after_the_batch_writes_no_placeholder_and_no_meta(self, tmp_path):
+        from src.pipeline_errors import TaskCancelled
+        specs = {"ambience": {}, "sfx": {"a": {"description": "", "prompt": "p", "negative_prompt": "",
+                                               "duration_sec": 1.0, "seed": 1}}}
+
+        class KilledBackend:
+            name = "fake_real_engine"
+
+            def generate_batch(self, jobs):
+                return {j["id"]: False for j in jobs}  # 子进程被杀：一条都没完成
+
+        cancelled = {"flag": False}
+
+        def should_cancel():
+            return cancelled["flag"]
+
+        backend = KilledBackend()
+        orig = backend.generate_batch
+
+        def generate_and_cancel(jobs):
+            cancelled["flag"] = True  # 取消发生在子进程运行期间
+            return orig(jobs)
+
+        backend.generate_batch = generate_and_cancel
+        with pytest.raises(TaskCancelled):
+            asset_gen.generate_assets(specs=specs, assets_dir=str(tmp_path), backend_map={"sfx": backend},
+                                      should_cancel=should_cancel)
+        assert not (tmp_path / "sfx" / "a.wav").exists()
+        assert not (tmp_path / "sfx" / "a.meta.json").exists()

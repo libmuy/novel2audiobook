@@ -22,7 +22,7 @@ import tempfile
 from src.utils import calculate_md5, update_chapter_status, load_global_config, resolve_path
 from src import roles as roles_mod
 from src.pipeline_errors import TaskCancelled
-from src.killable_proc import terminate_process_group
+from src.killable_proc import kill_on_cancel, terminate_process_group
 
 logger = logging.getLogger(__name__)
 
@@ -214,7 +214,8 @@ class IndexTTSBackend:
                     )
                     self._current_proc = proc
                     try:
-                        out, err = proc.communicate(timeout=self.timeout)
+                        with kill_on_cancel(proc):  # 任务被取消 → 立刻杀掉这个进程组（仍在 LlmSuspendedForTts 内部）
+                            out, err = proc.communicate(timeout=self.timeout)
                         if proc.returncode != 0:
                             logger.warning("[IndexTTSBackend] 批量合成子进程返回非零: %s",
                                            (err or b"").decode(errors="replace")[-1000:])
@@ -377,6 +378,16 @@ def generate_tts_incremental(chapter_dir: str, script_final_data: list, sample_r
         else:
             # 一次性子进程后端（IndexTTSBackend）：整批下发，切批会重载模型
             batch_results = backend.synthesize_batch(batch_jobs)
+            # 取消检查必须在 _settle_batch 之前：取消会杀掉子进程，未完成的句子结果为 False，
+            # 不检查的话 _settle_batch 会给它们写占位噪音、标 tts_completed，把「取消」变成
+            # 「完成」。后端已按 result.json 删掉了未完成的（可能被截断的）输出，这里只需
+            # 清掉已成功句子的旧占位标记，已合成的语音留在 audio_cache/，重跑直接续上。
+            if should_cancel and should_cancel():
+                done_n = sum(1 for j in batch_jobs if batch_results.get(j["id"]))
+                for job in batch_jobs:
+                    if batch_results.get(job["id"]):
+                        _clear_fallback_marker(job["out"])
+                raise TaskCancelled(f"用户取消（已合成 {done_n}/{len(batch_jobs)} 句）")
             _settle_batch(batch_jobs, batch_results)
             if progress_cb:
                 progress_cb(len(batch_jobs), len(batch_jobs), f"已合成 {len(batch_jobs)}/{len(batch_jobs)} 句")

@@ -831,14 +831,17 @@ app.component('novel-detail-page', {
                                 <div class="task-item">
                                     <div class="task-item-info">
                                         <div class="task-item-title">{{ taskTitle(task) }}</div>
-                                        <div class="task-item-status">{{ taskStateLabel(task.state) }}</div>
+                                        <div class="task-item-status">{{ isCancelling(task) ? '取消中…' : taskStateLabel(task.state) }}</div>
                                     </div>
                                     <div class="task-item-actions">
                                         <button class="btn btn-secondary btn-sm task-log-btn" @click="toggleLog(task)">
                                             {{ taskLogs[task.id] && taskLogs[task.id].open ? '收起日志' : '日志' }}
                                         </button>
-                                        <button v-if="task.state === 'running' || task.state === 'queued'" class="btn btn-secondary btn-sm" @click="cancelTask(task.id)">
-                                            取消
+                                        <button v-if="task.state === 'running' || task.state === 'queued'" class="btn btn-secondary btn-sm task-cancel-btn"
+                                                :disabled="isCancelling(task)"
+                                                :title="isCancelling(task) ? '正在终止推理进程并恢复 llama-server，最长约 3 分钟' : ''"
+                                                @click="cancelTask(task.id)">
+                                            {{ isCancelling(task) ? '取消中…' : '取消' }}
                                         </button>
                                     </div>
                                 </div>
@@ -886,6 +889,9 @@ app.component('novel-detail-page', {
         const pendingChapterTitle = ref('');
         const treeContainer = ref(null);
         let treeSortable = null;
+
+        const CANCEL_WARNING = '排队中的任务会直接取消。配音、素材生成正在运行时，会立即终止推理进程，然后等 llama-server 恢复' +
+            '（最长约 3 分钟）任务才显示为已取消；解析等其它任务在当前步骤结束后停下。已合成的语音保留在缓存里，重跑会续上。';
 
         // Task 数据结构（src/task_queue.py）没有 title/status 字段，
         // 真实字段是 type/state；这里派生一个人类可读的标题和状态文案
@@ -1381,13 +1387,16 @@ app.component('novel-detail-page', {
             }
         };
 
+        // 已请求取消、但任务还在收尾：要先杀掉推理子进程，再等 llama-server 恢复（最长约 3 分钟）
+        const isCancelling = (task) => !!task.cancel_requested && task.state === 'running';
+
         const cancelGroup = async (groupId) => {
             const group = taskGroups.value.find(g => g.id === groupId);
             if (group) {
                 const confirmed = await showConfirm({
                     title: '取消批次',
                     message: `确定要取消该批次的 ${group.tasks.length} 个任务吗？`,
-                    warning: '排队中的任务会直接取消；已经在运行的任务只会在当前步骤结束后才停下（配音任务可能要等整章跑完）。已合成的语音保留在缓存里，重跑会续上。',
+                    warning: CANCEL_WARNING,
                     confirmText: '取消任务',
                     confirmClass: 'btn-danger',
                 });
@@ -1406,7 +1415,7 @@ app.component('novel-detail-page', {
             const confirmed = await showConfirm({
                 title: '取消任务',
                 message: '确定要取消该任务吗？',
-                warning: '排队中的任务会直接取消；已经在运行的任务只会在当前步骤结束后才停下（配音任务可能要等整章跑完）。已合成的语音保留在缓存里，重跑会续上。',
+                warning: CANCEL_WARNING,
                 confirmText: '取消任务',
                 confirmClass: 'btn-danger',
             });
@@ -1512,6 +1521,7 @@ app.component('novel-detail-page', {
             toggleGroup,
             cancelGroup,
             cancelTask,
+            isCancelling,
         };
     },
 });
@@ -2674,12 +2684,13 @@ app.component('assets-page', {
         <div v-if="genTask" class="info-banner asset-gen-banner">
             <div class="flex items-center justify-between gap-2">
                 <span>
-                    <b>素材生成{{ genTask.state === 'queued' ? '排队中' : '进行中' }}</b>
+                    <b>素材生成{{ genTask.cancel_requested && genTask.state === 'running' ? '取消中…' : genTask.state === 'queued' ? '排队中' : '进行中' }}</b>
                     <span v-if="genTask.progress">
                         {{ genTask.progress.done }}/{{ genTask.progress.total }} {{ genTask.progress.message }}
                     </span>
                 </span>
-                <button class="btn btn-secondary btn-sm" @click="cancelGen">取消</button>
+                <button class="btn btn-secondary btn-sm" @click="cancelGen"
+                        :disabled="!!genTask.cancel_requested && genTask.state === 'running'">取消</button>
             </div>
             <div class="progress-bar mt-2"><div class="progress-fill" :style="{ width: genPercent + '%' }"></div></div>
         </div>

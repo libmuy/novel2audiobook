@@ -120,3 +120,17 @@
 - **界面**：`assets-page` 由单列 `.page-pad` 改为 roles 的布局（`.assets-page` 复用 `.roles-page` 的 flex 规则 + `.two-pane-layout` + 阶段 10 的 `category-tree-pane` + `.content-pane`）。类型筛选 chip 移到标签筛选旁；卡片显示分类与标签；在某个分类下点「新增素材」默认归到该分类。
   **顺序硬约束**：分类用 `<select>`、标签输入放在弹窗最末——`.modal input.form-input` 的 `.nth(1)` 钉的是「描述」，`TestAssetsPageCrud` 未改一字仍通过。保存时输入框里没按回车的标签也算。
 - 测试：`tests/test_asset_categories.py`（20 条：读回/去空白去重、空值不落盘、PATCH 设置与清空、不传不改、类型校验、注释保留、哈希钉死、树的往返/校验/文件不动/不被当素材/悬空引用、标签聚合）；E2E `TestAssetCategoriesAndTags`（新建分类→建带分类标签素材→按分类/标签筛选→删分类后素材保留并显示「未登记」→清空）。已截图目视核对布局。
+### 阶段 12
+让「取消」真正打断正在跑的推理子进程（放在最后：它依赖阶段 6 的独立进程组与未完成输出清理）。
+**修掉的现状 bug**：`TaskQueue.cancel()` 只置位一个 `threading.Event`；令牌在 `state=RUNNING` **之后**才创建，落在这个窗口里的取消返回 `True` 但任务照常跑完；后端在管线深处才构造子进程，队列拿不到句柄，运行中的 TTS 只能等整批（IndexTTS 一次子进程处理整章，可能几十分钟）跑完。
+- 新增 `src/cancel_scope.py`：`CancelScope`（`Event` + `Lock` + 钩子列表）。`cancel()` 在锁内置位并取走钩子快照、**锁外**调用（钩子里杀进程收尸可能耗时数秒，也允许反过来碰 scope 而不死锁）；`register()` 在已取消时**拒绝并返回 False**——这是关掉「注册晚于取消」竞态的唯一手段；线程局部 `activate/deactivate/current`；无活动 scope（CLI、单元测试）时 `register_kill_hook` 空操作返回 True。
+- `src/killable_proc.py` 新增 `kill_on_cancel(proc)` 上下文管理器：进入即登记「杀这个进程组」的钩子，登记被拒（取消发生在 RUNNING 与 Popen 之间）就地杀掉，退出时注销（子进程早已结束后再取消不会碰它，pid 可能已被复用）。`IndexTTSBackend` 与 `SubprocessAudioGenBackend` 共用这**一套**，都在 `Popen` 之后立刻进入，且仍在 `LlmSuspendedForTts/Gpu` 块**内部**——杀进程先于 llama-server 重启（沿用阶段 6 的顺序）。
+  **`os.killpg` 只有 `start_new_session=True` 才安全**：两个后端都是（阶段 6 给 asset_gen 补上的）；`terminate_process_group` 仍有护栏（子进程与服务器同 pgid 就退化成只杀该进程）。以后给任何新的子进程后端接钩子前必须先确认这一点，否则取消会连 API 服务器一起杀。
+- `TaskQueue`：`_cancel_tokens` → `_cancel_scopes`；**scope 在 `state=RUNNING` 之前创建并登记**，且「检查已取消 → 置 RUNNING」与 `cancel()` 用同一把 `_transition_lock` 互斥（顺带修掉排队期取消被 worker 覆盖回 RUNNING 的旧竞态）；handler 前 `activate`、`finally` `deactivate`；`ctx.should_cancel_fn = scope.is_cancelled`。
+  `Task` 新增 `cancel_requested: bool`（**不新增 state 值**——五个状态被前端与 `TestCancel` 钉死）：`cancel()` 先置位、持久化、推送，**再**在锁外 `scope.cancel()`；排队中的任务照旧直接 `cancelled`。
+- **取消检查的位置是关键**：`generate_tts_incremental` 与 `generate_assets` 都在 `synthesize_batch/generate_batch` **返回之后、Mock 回退之前**检查。杀掉子进程后未完成的句子结果为 False，不检查的话下一步就会给它们铺占位噪音、标 `tts_completed`——「取消」变成「完成」。TTS 侧后端已按 `result.json` 删掉未完成的（可能被截断的）输出（阶段 6），这里只清掉已成功句子的旧占位标记；已合成的语音留在 `audio_cache/`，重跑续上。素材侧原始 wav 在 `TemporaryDirectory`，不会留残骸；已完成的 kind（如先跑完的背景音）保留。
+- **有意保持不可取消**：常驻 TTS 守护进程（`src/tts_daemon.py`）——没有 cancel 消息、请求循环是单线程 socket，而队列路径根本走不到它（`build_tts_backend` 只返回 IndexTTS 或 Mock）；已在守护进程模块头写明。`precompute_embedding` 用的是 `roles.precompute_embedding` 里的阻塞子进程，本阶段也没接钩子（界面上没有它的取消入口）。`parse`（llama-server 逐段请求）和 `mix` 仍是协作式：只在段/步骤边界检查。
+- **界面**：`cancel_requested && running` 显示「取消中…」并禁用取消按钮（任务面板与素材库横幅），说明要先终止推理进程再等 llama-server 恢复（最长约 3 分钟，`server_start_timeout_sec=180`）。阶段 7 写的取消确认文案（「运行中的只会在当前步骤结束后才停下、配音可能要等整章」）现已不成立，改成如实描述：配音/素材生成立即终止推理进程，其它任务在当前步骤结束后停下。
+- 测试（`FakePopen`，不需要 GPU）：`tests/test_cancel.py`（18 条：scope 的钩子只跑一次/取消后拒绝登记/锁外调用/钩子失败不挡其余/线程局部；`kill_on_cancel` 的取消/进入即已取消/退出即注销；队列的「RUNNING 与登记之间取消不丢」「`cancel_requested` 已持久化且 state 仍是 running」「已结束任务取消返回 False」「worker 线程不残留上个任务的 scope」「handler 启动瞬间随机时刻取消 60 轮的不变量」）；两个后端各补「运行中取消 → 进程组在仲裁器退出之前被杀、截断输出被删」「取消早于 Popen 也会被杀」；引擎层「取消后不写占位、不出 timeline、重跑续上」与素材侧「取消后无 wav/meta」；E2E 断言「取消中…」与确认文案。`TestCancel` 一字未改仍通过。
+  变异检查：让 `register()` 忽略已取消 → 3 条测试失败；去掉引擎/素材的取消检查 → 2 条回归测试失败。
+- 唯一被改动的既有测试：`test_asset_gen_api.py::test_cancel_between_kinds_keeps_finished_kind` 原来靠数「第几次调用 `should_cancel`」来制造「第一个 kind 完成后取消」，而阶段 12 在每个 kind 里新增了一次取消检查，计数就偏了；改成按语义判断（第一个 kind 的素材落盘后才取消），断言不变。

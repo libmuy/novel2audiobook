@@ -430,3 +430,42 @@ class TestFallbackDoesNotPoisonTheCache:
         n_wav = len([f for f in os.listdir(cache) if f.endswith(".wav")])
         status = status_tracker.get_all_chapters_status(os.path.dirname(tmp_chapter_dir))[0]
         assert status["audio_cache_count"] == n_wav
+
+
+class TestCancelDoesNotTurnIntoSuccess:
+    """回归（阶段 12）：取消会杀掉子进程，未完成的句子结果为 False。以前的流程紧接着给它们写
+    Mock 占位噪音、标 tts_completed——「取消」变成了「完成」。"""
+
+    def test_cancel_after_the_batch_raises_and_writes_no_placeholders_or_timeline(
+            self, tmp_chapter_dir, tmp_roles_dir, sample_script_json):
+        from src.pipeline_errors import TaskCancelled
+        texts = [s["text"] for s in sample_script_json]
+        first = texts[0]
+
+        class KilledMidway(_ScriptedRealBackend):
+            def synthesize_batch(self, jobs):
+                res = super().synthesize_batch(jobs)
+                # 模拟被杀：只有第一句真正完成，其余的输出已被后端删掉
+                for j in jobs:
+                    if j["text"] != first:
+                        res[j["id"]] = False
+                        if os.path.exists(j["out"]):
+                            os.remove(j["out"])
+                return res
+
+        with pytest.raises(TaskCancelled):
+            tts_engine.generate_tts_incremental(tmp_chapter_dir, sample_script_json, backend=KilledMidway(),
+                                                roles_dir=tmp_roles_dir, config={}, should_cancel=lambda: True)
+
+        cache = os.path.join(tmp_chapter_dir, "audio_cache")
+        wavs = [f for f in os.listdir(cache) if f.endswith(".wav")]
+        assert len(wavs) == 1, "只有真正合成完的那一句留在缓存里，没有占位噪音"
+        assert [f for f in os.listdir(cache) if f.endswith(".fallback")] == []
+        assert not os.path.exists(os.path.join(tmp_chapter_dir, "timeline.json"))
+
+        # 重跑直接续上：已合成的命中缓存，其余重新合成
+        healed = _ScriptedRealBackend()
+        result = tts_engine.generate_tts_incremental(tmp_chapter_dir, sample_script_json, backend=healed,
+                                                     roles_dir=tmp_roles_dir, config={})
+        assert first not in [t for call in healed.calls for t in call]
+        assert result["used_fallback"] is False

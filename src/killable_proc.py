@@ -6,10 +6,13 @@
 所以这里在动手前先核对子进程的进程组 id 不等于当前进程的，不满足就退化成只终止这一个
 进程，宁可杀不干净也不误杀自己。
 """
+import contextlib
 import logging
 import os
 import signal
 import subprocess
+
+from src import cancel_scope
 
 logger = logging.getLogger(__name__)
 
@@ -54,3 +57,25 @@ def terminate_process_group(proc, grace_sec: float = 5.0) -> None:
         proc.wait(timeout=grace_sec)
     except subprocess.TimeoutExpired:
         logger.error("子进程 %s 在 SIGKILL 后 %.0f 秒仍未退出", proc.pid, grace_sec)
+
+
+@contextlib.contextmanager
+def kill_on_cancel(proc):
+    """在 with 块内，任务被取消时终止 proc（整个进程组）。
+
+    后端在 Popen 之后立刻进入这个块。如果取消恰好发生在任务进入 RUNNING 与这里之间，
+    scope 已取消、注册会失败——此时就地终止刚起的子进程，调用方随后的 communicate()
+    会很快返回，再由调用方按「取消」处理（不要写占位音）。
+
+    **os.killpg 只有在子进程用 start_new_session=True 起的时候才安全**（见
+    terminate_process_group 的护栏）：给任何新的子进程后端接这个钩子之前，先确认它是
+    独立进程组，否则取消会把 API 服务器自己也杀掉。"""
+    def hook():
+        terminate_process_group(proc)
+
+    if not cancel_scope.register_kill_hook(hook):
+        terminate_process_group(proc)
+    try:
+        yield
+    finally:
+        cancel_scope.unregister_kill_hook(hook)

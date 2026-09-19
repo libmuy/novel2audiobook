@@ -146,11 +146,10 @@ class TestGenerateAssetsCallbacks:
         assert not list(tmp_path.rglob("*.wav"))
 
     def test_cancel_between_kinds_keeps_finished_kind(self, tmp_path):
-        state = {"n": 0}
-
         def cancel():
-            state["n"] += 1
-            return state["n"] > 2  # 第一个 kind（ambience，VALID_KINDS 顺序）的两次检查放行，第二个开始前取消
+            # 第一个 kind（ambience，VALID_KINDS 顺序）的素材落盘后才取消，即「第二个 kind 开始前取消」。
+            # 按语义判断而不是数「第几次检查」：每个 kind 内的检查次数会随实现增减（阶段 12 加了一次）。
+            return (tmp_path / "ambience" / "c.wav").exists()
 
         with pytest.raises(TaskCancelled):
             self._run(tmp_path, should_cancel=cancel)
