@@ -22,6 +22,7 @@ import tempfile
 from src.utils import calculate_md5, update_chapter_status, load_global_config, resolve_path
 from src import roles as roles_mod
 from src.pipeline_errors import TaskCancelled
+from src.killable_proc import terminate_process_group
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,48 @@ class MockTTSBackend:
         return results
 
 
+# 真实引擎没合成成功、被 Mock 占位音顶替的音频，旁边写一个 `<md5>.wav.fallback` 标记。
+# 缓存探针遇到带标记的 wav 视为「未命中」，下次运行会重试真实引擎，而不是让占位噪音
+# 以合法 md5 名字永久命中缓存（之前正是这样：占位音写进 audio_cache/<真实 md5>.wav，
+# 章节还被标成 tts_completed，永远不会再有机会换成真声）。
+FALLBACK_MARKER_SUFFIX = ".fallback"
+
+
+def _marker_path(wav_path: str) -> str:
+    return wav_path + FALLBACK_MARKER_SUFFIX
+
+
+def _mark_fallback(wav_path: str) -> None:
+    with open(_marker_path(wav_path), "w", encoding="utf-8") as f:
+        f.write("占位音：真实引擎未能合成这一句，下次运行会重试\n")
+
+
+def _clear_fallback_marker(wav_path: str) -> None:
+    try:
+        os.remove(_marker_path(wav_path))
+    except FileNotFoundError:
+        pass
+
+
+def _is_cached(wav_path: str) -> bool:
+    return os.path.exists(wav_path) and not os.path.exists(_marker_path(wav_path))
+
+
+def _delete_unfinished_outputs(jobs: list, results: dict) -> None:
+    """删掉真实引擎没报告成功的 job 的输出文件。
+
+    子进程把 wav 直接写到最终路径（audio_cache/<md5>.wav），被杀/崩溃时会在合法 md5 名下
+    留下截断甚至 0 字节的文件；缓存探针只判断「文件存在」，会把它当作已合成，之后
+    wave.open 读它就炸、整章每次都失败。子进程每完成一个 job 就原子重写 result.json，
+    所以「哪些 job 真的完成了」是精确可知的——没完成的一律删掉。"""
+    for job in jobs:
+        if not results.get(job["id"]):
+            try:
+                os.remove(job["out"])
+            except FileNotFoundError:
+                pass
+
+
 class IndexTTSBackend:
     """
     通过子进程调用独立部署的 IndexTTS-2.5 推理环境（见 docs/indextts_setup.md）。
@@ -95,6 +138,7 @@ class IndexTTSBackend:
     """
 
     name = "index_tts_2_5"
+    _current_proc = None  # 类属性默认值：没跑过 synthesize_batch 时 terminate_current() 也不会 AttributeError
 
     def __init__(self, config: dict):
         self.config = config
@@ -161,7 +205,6 @@ class IndexTTSBackend:
             ]
             from tools.gpu_arbiter import LlmSuspendedForTts  # 延迟导入，避免无网络场景下的循环依赖
 
-            proc = None
             self._current_proc = None
             try:
                 with LlmSuspendedForTts(self.config):
@@ -170,14 +213,16 @@ class IndexTTSBackend:
                         start_new_session=True,  # 独立进程组，取消时可整体 kill
                     )
                     self._current_proc = proc
-                    out, err = proc.communicate(timeout=self.timeout)
-                self._current_proc = None
-                if proc.returncode != 0:
-                    logger.warning("[IndexTTSBackend] 批量合成子进程返回非零: %s", err.decode(errors="replace")[-1000:])
-            except subprocess.TimeoutExpired:
-                logger.warning("[IndexTTSBackend] 批量合成超时（%d 条任务）", len(jobs))
-                if proc:
-                    self.terminate_current()
+                    try:
+                        out, err = proc.communicate(timeout=self.timeout)
+                        if proc.returncode != 0:
+                            logger.warning("[IndexTTSBackend] 批量合成子进程返回非零: %s",
+                                           (err or b"").decode(errors="replace")[-1000:])
+                    except subprocess.TimeoutExpired:
+                        logger.warning("[IndexTTSBackend] 批量合成超时（%d 条任务）", len(jobs))
+                        # 必须在 with 块**内部**杀：LlmSuspendedForTts.__exit__ 会重启 llama-server，
+                        # 若先退出 with 再杀，llama-server 会在这个子进程还占着显存时被拉起来
+                        self.terminate_current()
             finally:
                 self._current_proc = None
 
@@ -195,6 +240,7 @@ class IndexTTSBackend:
                 # 子进程连一条结果都没写出（如加载模型阶段就崩溃），全部标记失败
                 for job in jobs:
                     results[job["id"]] = False
+            _delete_unfinished_outputs(jobs, results)
             return results
 
     def terminate_current(self):
@@ -204,17 +250,7 @@ class IndexTTSBackend:
         proc = self._current_proc
         if proc is None:
             return
-        try:
-            os.killpg(os.getpgid(proc.pid), 15)  # SIGTERM
-        except (ProcessLookupError, PermissionError):
-            pass
-        try:
-            proc.wait(timeout=5.0)
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(os.getpgid(proc.pid), 9)  # SIGKILL
-            except (ProcessLookupError, PermissionError):
-                pass
+        terminate_process_group(proc)  # SIGTERM → 宽限 5 秒 → SIGKILL → 收尸；保证不会 killpg 到服务器自己
         self._current_proc = None
 
 
@@ -265,6 +301,28 @@ def generate_tts_incremental(chapter_dir: str, script_final_data: list, sample_r
 
     manifest = roles_mod.load_manifest(roles_dir)
     used_fallback = False
+    # tts.fallback_on_failure（默认 true = 沿用现状：真实引擎失败的句子用 Mock 占位保证整章不中断）。
+    # 设为 false 是严格模式：有句子合成失败就让整章失败，不产出带占位音的成品。
+    allow_fallback = (config.get("tts") or {}).get("fallback_on_failure", True)
+
+    def _settle_batch(jobs, batch_results):
+        """处理一批合成结果：成功的清掉旧的占位标记；失败的按 allow_fallback 决定占位或报错。"""
+        nonlocal used_fallback
+        failed = [j for j in jobs if not batch_results.get(j["id"])]
+        for job in jobs:
+            if batch_results.get(job["id"]):
+                _clear_fallback_marker(job["out"])
+        if not failed:
+            return
+        if not allow_fallback:
+            raise RuntimeError(
+                f"{len(failed)} 句合成失败（tts.fallback_on_failure=false，不使用占位音）；"
+                "已合成的语音保留在 audio_cache/，修好后重跑会直接续上"
+            )
+        used_fallback = True
+        for job in failed:
+            MockTTSBackend().synthesize(job["text"], job["role_cfg"], job["emotion"], job["out"], sample_rate)
+            _mark_fallback(job["out"])
 
     # 第一遍：计算每句的哈希/目标路径，收集尚未缓存的合成任务
     # （哈希值天然去重——同一句台词/情感在章节内重复出现时只合成一次）
@@ -276,7 +334,7 @@ def generate_tts_incremental(chapter_dir: str, script_final_data: list, sample_r
         emotion = seg.get("emotion", "neutral")
         hash_val = calculate_md5(f"{speaker}_{text}_{emotion}")
         audio_path = os.path.join(audio_cache_dir, f"{hash_val}.wav")
-        was_cached = os.path.exists(audio_path)
+        was_cached = _is_cached(audio_path)  # 带 .fallback 标记的占位音不算命中，要重试真实引擎
         seg_infos.append((seg, audio_path, was_cached))
         if not was_cached and hash_val not in pending_jobs:
             role_cfg = roles_mod.get_role_runtime_config(speaker, manifest, roles_dir)
@@ -312,20 +370,14 @@ def generate_tts_incremental(chapter_dir: str, script_final_data: list, sample_r
                     raise TaskCancelled(f"用户取消（已合成 {i}/{len(batch_jobs)} 句）")
                 chunk = batch_jobs[i:i + effective_chunk_size]
                 batch_results = backend.synthesize_batch(chunk)
-                for job in chunk:
-                    if not batch_results.get(job["id"]):
-                        used_fallback = True
-                        MockTTSBackend().synthesize(job["text"], job["role_cfg"], job["emotion"], job["out"], sample_rate)
+                _settle_batch(chunk, batch_results)
                 if progress_cb:
                     progress_cb(min(i + effective_chunk_size, len(batch_jobs)),
                                 len(batch_jobs), f"已合成 {min(i + effective_chunk_size, len(batch_jobs))}/{len(batch_jobs)} 句")
         else:
             # 一次性子进程后端（IndexTTSBackend）：整批下发，切批会重载模型
             batch_results = backend.synthesize_batch(batch_jobs)
-            for hash_val, job in pending_jobs.items():
-                if not batch_results.get(hash_val):
-                    used_fallback = True
-                    MockTTSBackend().synthesize(job["text"], job["role_cfg"], job["emotion"], job["out"], sample_rate)
+            _settle_batch(batch_jobs, batch_results)
             if progress_cb:
                 progress_cb(len(batch_jobs), len(batch_jobs), f"已合成 {len(batch_jobs)}/{len(batch_jobs)} 句")
 
@@ -360,6 +412,9 @@ def generate_tts_incremental(chapter_dir: str, script_final_data: list, sample_r
             "sfx": sfx,
             "bgm": bgm,
             "cached": is_cached,
+            # 这一句是不是 Mock 占位音（真实引擎没合成出来）。下次运行会重试它，但在那之前
+            # 时间线/混音要能看出来，别让「已完成」掩盖掉里面有噪音
+            "fallback": os.path.exists(_marker_path(audio_path)),
         }
         timeline_items.append(item)
         current_time_ms += duration_ms + segment_gap_ms

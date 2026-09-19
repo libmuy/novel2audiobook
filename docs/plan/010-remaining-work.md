@@ -67,3 +67,14 @@
 - **顺带修一个发现的不一致**：预检对 `OK(占位/Mock)` 早就承诺「将尝试用真实引擎重新生成」，但 `generate_assets` 的缓存判断把占位音当命中跳过。现在「上次是占位、这次有真实引擎可用」算未命中重试；这次仍是 Mock 则照旧命中（自检的缓存回归和「别每次都白重铺占位音」靠这条）。为此后端改为在规划阶段就构造。
 - `cli.py assets --backend` 的 choices 由 `["mock"]` 改为注册表全部 id，并真正生效（覆盖配置）；`global_config.yaml` 里「仅用于日志展示」的注释改成真实语义。
 - 测试：新增 `tests/test_asset_engines.py`（37 个；此前工厂**零覆盖**）——id/展示串解析、配置真的选引擎、缺省与未知值、可用/不可用/显式 mock、`engine` 参数覆盖、漂移各分支、漂移不进哈希（无 `force` 保留、`force` 重做）、占位重试与仍为 Mock 时的缓存、预检一致性；E2E 断言漂移徽章/提示/旧音频仍可听/「重新生成」后被重做。
+### 阶段 6
+不引入取消语义，只修 GPU 真实路径上的四个 bug 和一个接缝（**这是整个收尾计划里对正确性价值最高的一步，也是阶段 12 的前置**）：
+1. **超时杀进程的顺序**：`IndexTTSBackend` 的 `TimeoutExpired` 以前先冒出 `with LlmSuspendedForTts` 块、`__exit__` 重启了 llama-server，之后才杀子进程——重启时子进程还占着显存。现在在 `with` 块**内部**捕获并终止。
+2. **`_current_proc` 类属性默认值**：新实例调 `terminate_current()` 以前会 `AttributeError`。
+3. **素材生成的子进程**：`SubprocessAudioGenBackend.generate_batch` 由阻塞 `subprocess.run`（无 `start_new_session`、超时只打日志、子进程泄漏并继续占显存）改为 `Popen(start_new_session=True)` + `communicate(timeout)` + 超时终止（同样在仲裁器块内部）；stderr 显式 decode（原 `[-1000:]` 假设 `text=True`）。三个引擎子类继承，一处改动全覆盖。
+4. **占位噪音污染音频缓存**（今天就存在，不只是取消才触发）：真实引擎没合成成功的句子被 Mock 占位音写进 `audio_cache/<真实 md5>.wav`，再标 `tts_completed`，从此以合法名字永久命中缓存。现在占位音旁写 `<md5>.wav.fallback` 标记，缓存探针遇到带标记的 wav 视为**未命中**、下次运行重试真实引擎；成功后清标记；时间线条目加 `"fallback": true`（加法；`cached`/`used_fallback`/`tts_completed` 保持）。
+   新增可选严格模式 `tts.fallback_on_failure: false`（默认 true = 沿用现状）：有句子失败就让整章失败、不产出带占位音的成品，已合成的句子留在缓存里修好后续上。素材生成一侧的对应问题由阶段 5 的「占位音在真实引擎可用时重试」覆盖（meta 的 `used_fallback` + 真实引擎可用 → 不命中缓存）。
+5. **接缝 `_delete_unfinished_outputs(jobs, results)`**：子进程把 wav 直接写到最终路径，被 SIGKILL/崩溃会在合法 md5 名下留下**截断甚至 0 字节的 wav**，缓存探针只看「文件存在」，之后 `wave.open` 每次都炸。今天被 Mock 覆盖掩盖，阶段 12 在回退循环前抛错的那一刻就会暴露。按 `result.json`（子进程每完成一个 job 原子重写）精确删除未完成 job 的输出。asset_gen 不需要（原始 wav 在 `TemporaryDirectory`）。
+- 新增 `src/killable_proc.py`（TTS 与素材生成共用）：SIGTERM → 宽限 5 秒 → SIGKILL → **收尸**（不留僵尸）。**安全护栏**：`os.killpg` 只有子进程在独立进程组时才安全，动手前核对子进程的 pgid 不等于服务器自己的，不满足就退化成只终止这一个进程——宁可杀不干净也不误杀 API 服务器（有专门测试，含升级到 SIGKILL 时也不 killpg）。
+- 测试（此前 `IndexTTSBackend` 子进程行为**零覆盖**，全新写，用 `FakePopen` 不需要 GPU）：`test_killable_proc.py`、`test_index_tts_backend.py`（超时杀进程发生在仲裁器退出之前——用记录顺序的假仲裁器断言、独立 session、新实例 `terminate_current` 安全、stderr 坏字节、截断输出被删）、`test_asset_gen_subprocess.py`、`TestFallbackDoesNotPoisonTheCache`（标记/时间线标记/重跑重试/仍失败继续重试/整章缓存/严格模式/状态不把标记文件算进 `audio_cache_count`）。
+  已做变异检查：换回旧版 `tts_engine.py` 后，超时顺序、新实例安全、截断输出三条回归测试都会失败。

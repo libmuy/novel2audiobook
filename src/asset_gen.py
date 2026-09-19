@@ -35,6 +35,7 @@ import yaml
 from pydub import AudioSegment
 
 from src.utils import calculate_md5, load_global_config, resolve_path
+from src.killable_proc import terminate_process_group
 
 logger = logging.getLogger(__name__)
 
@@ -236,6 +237,7 @@ class SubprocessAudioGenBackend:
 
     name = "subprocess_audio_gen"
     config_key = None
+    _current_proc = None
 
     def __init__(self, config: dict):
         self.config = config
@@ -245,6 +247,14 @@ class SubprocessAudioGenBackend:
         self.repo_dir = resolve_path(gen_cfg["repo_dir"]) if gen_cfg.get("repo_dir") else None
         self.checkpoints_dir = resolve_path(gen_cfg["checkpoints_dir"]) if gen_cfg.get("checkpoints_dir") else None
         self.timeout = gen_cfg.get("timeout_sec", 1800)
+
+    def terminate_current(self):
+        """终止正在跑的推理子进程（整个进程组）。与 IndexTTSBackend 共用 killable_proc 的实现。"""
+        proc = self._current_proc
+        if proc is None:
+            return
+        terminate_process_group(proc)
+        self._current_proc = None
 
     def is_available(self) -> bool:
         if not (self.python_bin and self.infer_script and self.checkpoints_dir):
@@ -291,14 +301,28 @@ class SubprocessAudioGenBackend:
 
             from tools.gpu_arbiter import LlmSuspendedForGpu  # 延迟导入，避免无网络场景下的循环依赖
 
-            proc = None
+            self._current_proc = None
             try:
                 with LlmSuspendedForGpu(self.config):
-                    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=self.timeout)
-                if proc.returncode != 0:
-                    logger.warning("[%s] 批量生成子进程返回非零: %s", self.name, proc.stderr[-1000:])
-            except subprocess.TimeoutExpired:
-                logger.warning("[%s] 批量生成超时（%d 条任务）", self.name, len(jobs))
+                    # 以前是阻塞的 subprocess.run：既没有 start_new_session，超时也只打日志——
+                    # 子进程会泄漏、继续占着显存。改成 Popen + 独立进程组，超时（以及以后的取消）
+                    # 才有办法把整个进程组终止掉。终止必须在 with 块内部完成：__exit__ 会重启
+                    # llama-server，不能在这个子进程还占着显存时就拉起来。
+                    proc = subprocess.Popen(
+                        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        start_new_session=True,
+                    )
+                    self._current_proc = proc
+                    try:
+                        out, err = proc.communicate(timeout=self.timeout)
+                        if proc.returncode != 0:
+                            logger.warning("[%s] 批量生成子进程返回非零: %s", self.name,
+                                           (err or b"").decode(errors="replace")[-1000:])
+                    except subprocess.TimeoutExpired:
+                        logger.warning("[%s] 批量生成超时（%d 条任务），终止子进程", self.name, len(jobs))
+                        self.terminate_current()
+            finally:
+                self._current_proc = None
 
             results = {}
             if os.path.exists(result_file):

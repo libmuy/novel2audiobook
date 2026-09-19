@@ -329,3 +329,104 @@ class TestSpeedToDurationFactor:
         factor2 = tts_engine.speed_to_duration_factor(10.0)
         assert 0.5 <= factor1 <= 2.0
         assert 0.5 <= factor2 <= 2.0
+
+
+class _ScriptedRealBackend:
+    """伪装成真实引擎（name 不是 mock）：fail_ids 里的 job 报告失败，其余用 Mock 的音频当作真声写出"""
+
+    name = "fake_real_engine"
+
+    def __init__(self, fail_texts=()):
+        self.fail_texts = set(fail_texts)
+        self.calls = []
+
+    def synthesize_batch(self, jobs):
+        self.calls.append([j["text"] for j in jobs])
+        results = {}
+        for j in jobs:
+            if j["text"] in self.fail_texts:
+                results[j["id"]] = False
+                continue
+            tts_engine.MockTTSBackend().synthesize(j["text"], j["role_cfg"], j["emotion"], j["out"], j["sample_rate"])
+            results[j["id"]] = True
+        return results
+
+
+class TestFallbackDoesNotPoisonTheCache:
+    """回归：真实引擎没合成成功的句子被 Mock 占位音顶替，写进 audio_cache/<真实 md5>.wav，
+    章节还被标成 tts_completed——占位噪音以合法名字永久命中缓存，再也没机会换成真声。"""
+
+    def _texts(self, script):
+        return [s["text"] for s in script]
+
+    def _run(self, chapter_dir, script, roles_dir, backend, config=None):
+        return tts_engine.generate_tts_incremental(chapter_dir, script, backend=backend,
+                                                   roles_dir=roles_dir, config=config or {})
+
+    def test_failed_sentence_gets_a_marker_and_timeline_flags_it(self, tmp_chapter_dir, tmp_roles_dir, sample_script_json):
+        bad = self._texts(sample_script_json)[0]
+        result = self._run(tmp_chapter_dir, sample_script_json, tmp_roles_dir, _ScriptedRealBackend([bad]))
+
+        assert result["used_fallback"] is True
+        flagged = [it for it in result["items"] if it["fallback"]]
+        assert flagged and all(it["text"] == bad for it in flagged)
+        for it in flagged:
+            wav = os.path.join(tmp_chapter_dir, it["audio_path"])
+            assert os.path.exists(wav) and os.path.exists(wav + ".fallback")
+        assert all(it["fallback"] is False for it in result["items"] if it["text"] != bad)
+
+    def test_rerun_retries_the_placeholder_with_the_real_engine(self, tmp_chapter_dir, tmp_roles_dir, sample_script_json):
+        bad = self._texts(sample_script_json)[0]
+        self._run(tmp_chapter_dir, sample_script_json, tmp_roles_dir, _ScriptedRealBackend([bad]))
+
+        healed = _ScriptedRealBackend()  # 这次真实引擎能合成了
+        result = self._run(tmp_chapter_dir, sample_script_json, tmp_roles_dir, healed)
+
+        assert healed.calls == [[bad]]  # 只重试之前占位的那一句，其余命中缓存
+        assert result["used_fallback"] is False
+        assert all(it["fallback"] is False for it in result["items"])
+        markers = [f for f in os.listdir(os.path.join(tmp_chapter_dir, "audio_cache")) if f.endswith(".fallback")]
+        assert markers == []  # 成功后标记被清掉
+
+    def test_still_failing_keeps_the_marker_and_keeps_retrying(self, tmp_chapter_dir, tmp_roles_dir, sample_script_json):
+        bad = self._texts(sample_script_json)[0]
+        self._run(tmp_chapter_dir, sample_script_json, tmp_roles_dir, _ScriptedRealBackend([bad]))
+        again = _ScriptedRealBackend([bad])
+        result = self._run(tmp_chapter_dir, sample_script_json, tmp_roles_dir, again)
+        assert again.calls == [[bad]]
+        assert any(it["fallback"] for it in result["items"]) and result["used_fallback"] is True
+
+    def test_fully_synthesized_chapter_is_fully_cached_on_rerun(self, tmp_chapter_dir, tmp_roles_dir, sample_script_json):
+        self._run(tmp_chapter_dir, sample_script_json, tmp_roles_dir, _ScriptedRealBackend())
+        again = _ScriptedRealBackend()
+        result = self._run(tmp_chapter_dir, sample_script_json, tmp_roles_dir, again)
+        assert again.calls == [] and all(it["cached"] for it in result["items"])
+
+    def test_strict_mode_fails_the_chapter_instead_of_writing_placeholders(self, tmp_chapter_dir, tmp_roles_dir, sample_script_json):
+        """tts.fallback_on_failure=false：宁可整章失败，也不产出带占位音的成品"""
+        bad = self._texts(sample_script_json)[0]
+        with pytest.raises(RuntimeError, match="fallback_on_failure"):
+            self._run(tmp_chapter_dir, sample_script_json, tmp_roles_dir, _ScriptedRealBackend([bad]),
+                      config={"tts": {"fallback_on_failure": False}})
+        assert not os.path.exists(os.path.join(tmp_chapter_dir, "timeline.json"))
+        cache = os.path.join(tmp_chapter_dir, "audio_cache")
+        assert [f for f in os.listdir(cache) if f.endswith(".fallback")] == []
+        # 已经合成成功的句子留在缓存里，修好后重跑直接续上
+        healed = _ScriptedRealBackend()
+        self._run(tmp_chapter_dir, sample_script_json, tmp_roles_dir, healed)
+        assert healed.calls == [[bad]]
+
+    def test_default_is_lenient_matching_previous_behaviour(self, tmp_chapter_dir, tmp_roles_dir, sample_script_json):
+        bad = self._texts(sample_script_json)[0]
+        result = self._run(tmp_chapter_dir, sample_script_json, tmp_roles_dir, _ScriptedRealBackend([bad]))
+        assert os.path.exists(os.path.join(tmp_chapter_dir, "timeline.json"))
+        assert result["used_fallback"] is True
+
+    def test_marker_files_are_not_counted_as_cached_wavs_in_status(self, tmp_chapter_dir, tmp_roles_dir, sample_script_json):
+        from src import status_tracker
+        bad = self._texts(sample_script_json)[0]
+        self._run(tmp_chapter_dir, sample_script_json, tmp_roles_dir, _ScriptedRealBackend([bad]))
+        cache = os.path.join(tmp_chapter_dir, "audio_cache")
+        n_wav = len([f for f in os.listdir(cache) if f.endswith(".wav")])
+        status = status_tracker.get_all_chapters_status(os.path.dirname(tmp_chapter_dir))[0]
+        assert status["audio_cache_count"] == n_wav
