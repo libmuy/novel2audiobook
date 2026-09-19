@@ -982,3 +982,44 @@ class TestSettingsMixWithAssets:
         page.get_by_role("button", name="保存配置").click()
         page.wait_for_timeout(500)
         assert httpx.get(f"{base}/api/config").json()["mixing"]["voice_only"] is True
+
+
+# ---------------------------------------------------------------------------
+# 13. 计划 010 阶段 1：任务面板只显示本书任务 + 全局任务，标签为中文，日志可展开
+class TestTaskPanel:
+    def test_shows_this_novels_and_global_tasks_only_with_chinese_labels(self, page, server):
+        import httpx
+        base = _api(server)
+        script = [{"seg_id": 1, "speaker": "narrator", "text": "a", "emotion": "neutral"}]
+        tl = {"chapter_id": "x", "total_duration_ms": 1000, "items": [{"seg_id": 1}]}
+        nid, cid, _ = _make_chapter_with_script(server, script, tl, "任务面板本书")
+        other, ocid, _ = _make_chapter_with_script(server, script, tl, "任务面板别的书")
+        httpx.post(f"{base}/api/tasks", json={"type": "mix", "novel_id": other, "scope": {"chapter_ids": [ocid]}})
+        httpx.post(f"{base}/api/tasks", json={"type": "mix", "novel_id": nid, "scope": {"chapter_ids": [cid]}})
+        httpx.post(f"{base}/api/tasks", json={"type": "asset_gen", "params": {"only": ["e2e_none"]}})
+
+        tasks = httpx.get(f"{base}/api/tasks").json()
+        expected = [t for t in tasks if t["novel_id"] in (nid, None)]
+        assert any(t["novel_id"] == other for t in tasks)  # 前提：队列里确实有别的书的任务
+
+        page.goto(f"{base}/#/novels/{nid}")
+        page.wait_for_load_state("networkidle")
+        panel = page.locator(".task-panel")
+        expect(panel).to_be_visible()
+        # 徽章数 = 本书 + 全局，别的小说的任务不该混进来
+        expect(panel.locator(".task-panel-title .badge")).to_have_text(str(len(expected)))
+
+        expect(panel.locator(".task-section-title", has_text="本书任务")).to_be_visible()
+        expect(panel.locator(".task-section-title", has_text="全局任务")).to_be_visible()
+        # 同一 session 里别的用例也留下过全局任务，按本用例的素材名定位，别用 .first
+        glob = panel.locator(".task-group-global", has_text="e2e_none")
+        expect(glob).to_contain_text("素材生成")
+        assert "asset_gen" not in panel.inner_text()
+        expect(glob.locator(".task-group-title")).to_have_text("素材生成 · e2e_none")  # 没有悬空的「 · 」
+
+        # 展开后能看日志（asset_gen 任务会写「生成 N 条…」）
+        glob.locator(".task-group-header").click()
+        glob.locator(".task-log-btn").click()
+        expect(glob.locator(".task-log")).to_contain_text("生成", timeout=10000)
+        glob.locator(".task-log-btn").click()
+        expect(glob.locator(".task-log")).to_have_count(0)

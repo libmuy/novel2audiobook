@@ -25,3 +25,9 @@
 ## 实际改动
 ### 阶段 0
 - `CLAUDE.md`/`AGENTS.md` 订正「等待计划 005 重新提供界面」的过时说法；新建本文件；仓库外的自动记忆已更新；push `891e4da`。
+### 阶段 1
+- 小说详情页任务面板：`TASK_TYPE_LABEL` 补 `asset_gen`；`taskTitle` 不再拼悬空的「 · 」（全局任务改用 `params` 说明对谁做：素材名 / 角色 id）；
+  客户端只保留本书任务 + 全局任务，分「本书任务」「全局任务」两组（`GET /tasks` 与 SSE 都不做服务端 novel 过滤，保持口径一致）。
+- 每个任务可展开「日志」（`API.getTaskLog` 之前全库无人调用），按 `next_offset` 增量续拉、随 `task-update` 刷新，终态后再拉一次就停，收起即停止请求。
+- 测试：新增 `TestTaskPanel`（徽章数 = 本书 + 全局、别的书的任务不混入、标题为中文且无悬空分隔符、日志展开/收起）；已做变异检查——去掉过滤后该用例确实失败。
+  新钉选择器：`.task-section-title`、`.task-group-global`、`.task-log-btn`、`.task-log`。

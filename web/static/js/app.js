@@ -745,39 +745,49 @@ app.component('novel-detail-page', {
         <input type="file" ref="chapterFileInput" accept=".txt,.md" style="display:none" @change="onChapterFileSelected">
         <input type="file" ref="reimportFileInput" accept=".txt,.md" style="display:none" @change="onReimportFileSelected">
 
-        <div class="task-panel" v-if="tasks.length > 0">
+        <div class="task-panel" v-if="visibleTasks.length > 0">
             <div class="task-panel-header" @click="toggleTaskPanel">
                 <div class="task-panel-title">
                     <span>任务队列</span>
-                    <span class="badge badge-primary">{{ tasks.length }}</span>
+                    <span class="badge badge-primary">{{ visibleTasks.length }}</span>
                 </div>
                 <span class="task-panel-toggle" :class="{ expanded: taskPanelExpanded }">▼</span>
             </div>
             <div v-if="taskPanelExpanded" class="task-list">
-                <div v-for="group in taskGroups" :key="group.id" class="task-group">
-                    <div class="task-group-header" @click="toggleGroup(group.id)">
-                        <div class="task-group-info">
-                            <span class="task-group-title">{{ group.title }}</span>
-                            <span class="task-group-progress">{{ group.completed }}/{{ group.total }}</span>
-                        </div>
-                        <div class="task-group-actions">
-                            <button class="btn btn-secondary btn-sm" @click.stop="cancelGroup(group.id)">取消</button>
-                        </div>
-                    </div>
-                    <div v-if="expandedGroups.includes(group.id)">
-                        <div v-for="task in group.tasks" :key="task.id" class="task-item">
-                            <div class="task-item-info">
-                                <div class="task-item-title">{{ taskTitle(task) }}</div>
-                                <div class="task-item-status">{{ taskStateLabel(task.state) }}</div>
+                <template v-for="section in taskSections" :key="section.key">
+                    <div v-if="section.groups.length" class="task-section-title">{{ section.label }}</div>
+                    <div v-for="group in section.groups" :key="group.id" class="task-group"
+                         :class="{ 'task-group-global': section.key === 'global' }">
+                        <div class="task-group-header" @click="toggleGroup(group.id)">
+                            <div class="task-group-info">
+                                <span class="task-group-title">{{ group.title }}</span>
+                                <span class="task-group-progress">{{ group.completed }}/{{ group.total }}</span>
                             </div>
-                            <div class="task-item-actions">
-                                <button v-if="task.state === 'running' || task.state === 'queued'" class="btn btn-secondary btn-sm" @click="cancelTask(task.id)">
-                                    取消
-                                </button>
+                            <div class="task-group-actions">
+                                <button class="btn btn-secondary btn-sm" @click.stop="cancelGroup(group.id)">取消</button>
                             </div>
                         </div>
+                        <div v-if="expandedGroups.includes(group.id)">
+                            <div v-for="task in group.tasks" :key="task.id" class="task-item-wrap">
+                                <div class="task-item">
+                                    <div class="task-item-info">
+                                        <div class="task-item-title">{{ taskTitle(task) }}</div>
+                                        <div class="task-item-status">{{ taskStateLabel(task.state) }}</div>
+                                    </div>
+                                    <div class="task-item-actions">
+                                        <button class="btn btn-secondary btn-sm task-log-btn" @click="toggleLog(task)">
+                                            {{ taskLogs[task.id] && taskLogs[task.id].open ? '收起日志' : '日志' }}
+                                        </button>
+                                        <button v-if="task.state === 'running' || task.state === 'queued'" class="btn btn-secondary btn-sm" @click="cancelTask(task.id)">
+                                            取消
+                                        </button>
+                                    </div>
+                                </div>
+                                <pre v-if="taskLogs[task.id] && taskLogs[task.id].open" class="task-log">{{ taskLogs[task.id].text || '（暂无日志）' }}</pre>
+                            </div>
+                        </div>
                     </div>
-                </div>
+                </template>
             </div>
         </div>
     `,
@@ -815,12 +825,28 @@ app.component('novel-detail-page', {
 
         // Task 数据结构（src/task_queue.py）没有 title/status 字段，
         // 真实字段是 type/state；这里派生一个人类可读的标题和状态文案
-        const TASK_TYPE_LABEL = { parse: '解析', tts: '生成人声', mix: '混音导出', precompute_embedding: '预计算音色' };
+        const TASK_TYPE_LABEL = {
+            parse: '解析', tts: '生成人声', mix: '混音导出',
+            precompute_embedding: '预计算音色', asset_gen: '素材生成',
+        };
         const TASK_STATE_LABEL = {
             queued: '排队中', running: '运行中', succeeded: '已完成',
             failed: '失败', cancelled: '已取消',
         };
-        const taskTitle = (task) => `${TASK_TYPE_LABEL[task.type] || task.type} · ${task.chapter_id || ''}`;
+        // 章节任务：「类型 · 章节 id」；全局任务（asset_gen / precompute_embedding，没有
+        // 小说也没有章节）不拼悬空的分隔符，改用 params 里能说明"对谁做"的信息
+        const taskDetail = (task) => {
+            if (task.chapter_id) return task.chapter_id;
+            const p = task.params || {};
+            if (task.type === 'asset_gen') return p.only && p.only.length ? p.only.join('、') : '全部待生成的素材';
+            if (task.type === 'precompute_embedding') return p.role_id || '';
+            return '';
+        };
+        const taskTitle = (task) => {
+            const label = TASK_TYPE_LABEL[task.type] || task.type;
+            const detail = taskDetail(task);
+            return detail ? `${label} · ${detail}` : label;
+        };
         const taskStateLabel = (state) => TASK_STATE_LABEL[state] || state;
 
         const flattenTree = (nodes) => {
@@ -861,13 +887,21 @@ app.component('novel-detail-page', {
             return 'parsed';
         };
 
+        // getTasks() 返回队列里所有任务（没有服务端 novel 过滤——SSE 推送也不过滤，
+        // 服务端过滤会让 REST 与 SSE 口径不一致），所以这里在客户端只保留本书的任务
+        // 和不属于任何小说的全局任务，别的小说的批次不该出现在这本书的面板里
+        const visibleTasks = computed(() =>
+            tasks.value.filter((t) => t.novel_id === props.novelId || !t.novel_id)
+        );
+
         const taskGroups = computed(() => {
             const groups = {};
-            tasks.value.forEach(task => {
+            visibleTasks.value.forEach(task => {
                 const groupId = task.group_id || task.id;
                 if (!groups[groupId]) {
                     groups[groupId] = {
                         id: groupId,
+                        global: !task.novel_id,
                         title: task.group_id ? `批量${TASK_TYPE_LABEL[task.type] || task.type}` : taskTitle(task),
                         tasks: [],
                         completed: 0,
@@ -882,6 +916,11 @@ app.component('novel-detail-page', {
             });
             return Object.values(groups);
         });
+
+        const taskSections = computed(() => [
+            { key: 'chapter', label: '本书任务', groups: taskGroups.value.filter((g) => !g.global) },
+            { key: 'global', label: '全局任务', groups: taskGroups.value.filter((g) => g.global) },
+        ]);
 
         const loadNovel = async () => {
             try {
@@ -1206,6 +1245,25 @@ app.component('novel-detail-page', {
         const batchTTS = () => runBatchTask('tts', '生成人声');
         const batchMix = () => runBatchTask('mix', '混音导出');
 
+        // 任务日志：GET /tasks/{id}/log?offset= 是为增量 tail 设计的（返回 next_offset），
+        // 只在展开时拉，收起就不再请求——不给几十个任务同时拉日志
+        const taskLogs = reactive({});
+        const fetchLog = async (id) => {
+            const entry = taskLogs[id];
+            try {
+                const res = await API.getTaskLog(id, entry.offset);
+                if (res.text) entry.text += res.text;
+                entry.offset = res.next_offset;
+            } catch (error) {
+                console.error('加载任务日志失败:', error);
+            }
+        };
+        const toggleLog = async (task) => {
+            const entry = taskLogs[task.id] || (taskLogs[task.id] = { open: false, text: '', offset: 0, finalFetched: false });
+            entry.open = !entry.open;
+            if (entry.open) await fetchLog(task.id);
+        };
+
         const toggleTaskPanel = () => {
             taskPanelExpanded.value = !taskPanelExpanded.value;
         };
@@ -1248,7 +1306,17 @@ app.component('novel-detail-page', {
 
         // task_update SSE 事件在 app.js 里转发成 window 上的 CustomEvent，
         // 收到就整体重新拉一次任务列表（任务量不大，简单可靠优先于精细 patch）
-        const onTaskUpdate = () => { loadTasks(); };
+        const onTaskUpdate = async () => {
+            await loadTasks();
+            // 已展开的日志随任务更新增量续拉；任务到终态后再拉最后一次就停
+            for (const id of Object.keys(taskLogs)) {
+                const entry = taskLogs[id];
+                if (!entry.open || entry.finalFetched) continue;
+                const task = tasks.value.find((t) => t.id === id);
+                await fetchLog(id);
+                if (task && ['succeeded', 'failed', 'cancelled'].includes(task.state)) entry.finalFetched = true;
+            }
+        };
 
         onMounted(async () => {
             await Promise.all([loadNovel(), loadTree(), loadTasks()]);
@@ -1272,6 +1340,10 @@ app.component('novel-detail-page', {
             mixStatusLabel,
             tasks,
             taskGroups,
+            taskSections,
+            visibleTasks,
+            taskLogs,
+            toggleLog,
             taskPanelExpanded,
             expandedGroups,
             chapterFileInput,
