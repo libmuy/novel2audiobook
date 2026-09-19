@@ -18,19 +18,28 @@ const app = createApp({
         const toast = ref(null);
         const confirmDialog = ref(null);
 
+        // 深色模式：纯前端偏好，跟 n2a.lastRoute 一样存本地，不经过后端配置。
+        // CSS 的 [data-theme] 选择器挂在 :root（即 <html>）上，但 #app 是
+        // Vue 的挂载目标本身——挂载目标自己的属性不会被当成响应式模板编译
+        // （in-DOM 根模板只编译容器的 innerHTML，容器自身的属性不受管），
+        // 所以不能用 :data-theme 模板绑定，必须在这里手动同步到
+        // document.documentElement。
+        const darkMode = ref(localStorage.getItem('n2a.darkMode') === '1');
+        const applyTheme = () => {
+            document.documentElement.dataset.theme = darkMode.value ? 'dark' : 'light';
+        };
+        const toggleDarkMode = () => {
+            darkMode.value = !darkMode.value;
+            localStorage.setItem('n2a.darkMode', darkMode.value ? '1' : '0');
+            applyTheme();
+        };
+
         let eventSource = null;
         let reconnectTimer = null;
         let errorCount = 0;
         const MAX_ERRORS = 3;
 
         const gpuOwnerClass = computed(() => gpuOwner.value);
-        const gpuOwnerIcon = computed(() => {
-            switch (gpuOwner.value) {
-                case 'llm': return '🟢';
-                case 'tts': return '🔵';
-                default: return '⚪';
-            }
-        });
         const gpuOwnerText = computed(() => {
             switch (gpuOwner.value) {
                 case 'llm': return 'LLM 占用';
@@ -69,6 +78,7 @@ const app = createApp({
         const routes = {
             '#/novels': { component: 'novels-page', props: {} },
             '#/roles': { component: 'roles-page', props: {} },
+            '#/assets': { component: 'assets-page', props: {} },
             '#/settings': { component: 'settings-page', props: {} },
         };
 
@@ -209,6 +219,7 @@ const app = createApp({
         provide('showToast', showToast);
 
         onMounted(() => {
+            applyTheme();
             restoreLastRoute();
             handleRouteChange();
             connectSSE();
@@ -235,11 +246,12 @@ const app = createApp({
             resource,
             gpuOwner,
             gpuOwnerClass,
-            gpuOwnerIcon,
             gpuOwnerText,
             sseDisconnected,
             toast,
             confirmDialog,
+            darkMode,
+            toggleDarkMode,
             formatMemory,
             showToast,
             showConfirm,
@@ -254,29 +266,25 @@ app.component('novels-page', {
         <div class="page-header">
             <h1 class="page-title">小说列表</h1>
             <div class="page-actions">
-                <button class="btn btn-primary" @click="showCreateDialog">
-                    <span>+</span> 新增小说
-                </button>
+                <button class="btn btn-primary" @click="showCreateDialog">+ 新增小说</button>
             </div>
         </div>
         
         <div class="search-box">
-            <span class="search-icon">🔍</span>
-            <input 
-                type="text" 
-                class="search-input" 
-                placeholder="搜索小说名称..." 
+            <input
+                type="text"
+                class="search-input"
+                placeholder="搜索小说名称..."
                 v-model="searchQuery"
             >
         </div>
-        
+
         <div v-if="loading" class="empty-state">
             <div class="loading-spinner"></div>
             <p class="mt-2">加载中...</p>
         </div>
-        
+
         <div v-else-if="filteredNovels.length === 0" class="empty-state">
-            <div class="empty-state-icon">📚</div>
             <h3 class="empty-state-title">暂无小说</h3>
             <p class="empty-state-description">点击上方按钮创建第一本小说</p>
         </div>
@@ -292,8 +300,8 @@ app.component('novels-page', {
                 <div class="card-header">
                     <h3 class="card-title">{{ novel.title }}</h3>
                     <div class="card-actions" @click.stop>
-                        <button class="action-btn" @click="editNovel(novel)">✏️</button>
-                        <button class="action-btn danger" @click="deleteNovel(novel)">🗑️</button>
+                        <button class="action-btn" @click="editNovel(novel)">编辑</button>
+                        <button class="action-btn danger" @click="deleteNovel(novel)">删除</button>
                     </div>
                 </div>
                 <div class="card-content">
@@ -520,14 +528,18 @@ app.component('tree-node', {
                 :style="{ paddingLeft: (depth * 16) + 'px' }"
                 @click="$emit('select', node)"
             >
-                <span class="tree-checkbox" @click.stop="$emit('toggle-select', node)">
-                    {{ selectedIds.includes(node.id) ? '☑️' : '☐' }}
-                </span>
+                <input
+                    type="checkbox"
+                    class="tree-checkbox"
+                    :checked="selectedIds.includes(node.id)"
+                    @click.stop
+                    @change="$emit('toggle-select', node)"
+                >
                 <span class="status-dot" :class="statusClass(node.status)"></span>
                 <span class="tree-node-name">{{ node.title }}</span>
                 <div class="tree-node-actions">
-                    <button class="action-btn" @click.stop="$emit('rename', node)">✏️</button>
-                    <button class="action-btn danger" @click.stop="$emit('delete', node)">🗑️</button>
+                    <button class="action-btn" @click.stop="$emit('rename', node)">改</button>
+                    <button class="action-btn danger" @click.stop="$emit('delete', node)">删</button>
                 </div>
             </div>
             <div v-if="node.children && node.children.length" ref="childrenContainer" :data-parent-id="node.id">
@@ -587,7 +599,7 @@ app.component('novel-detail-page', {
                     <h2 class="tree-title">{{ novel?.title || '加载中...' }}</h2>
                     <div class="tree-actions">
                         <button class="btn btn-secondary btn-sm" @click="refreshTree">
-                            🔄 刷新
+                            刷新
                         </button>
                     </div>
                 </div>
@@ -700,7 +712,6 @@ app.component('novel-detail-page', {
                         </div>
                     </div>
                     <div v-else class="empty-state">
-                        <div class="empty-state-icon">📋</div>
                         <h3 class="empty-state-title">选择左侧节点查看详情</h3>
                     </div>
                 </div>
@@ -1292,7 +1303,6 @@ app.component('workbench-page', {
                         <div class="loading-spinner"></div>
                     </div>
                     <div v-else-if="segments.length === 0" class="empty-state">
-                        <div class="empty-state-icon">📝</div>
                         <h3 class="empty-state-title">暂无分块</h3>
                         <p class="empty-state-description">请先解析该章节</p>
                     </div>
@@ -1411,7 +1421,6 @@ app.component('workbench-page', {
                         </div>
                     </div>
                     <div v-else class="empty-state">
-                        <div class="empty-state-icon">✏️</div>
                         <h3 class="empty-state-title">选择左侧分块进行编辑</h3>
                     </div>
                 </div>
@@ -1741,9 +1750,7 @@ app.component('roles-page', {
         <div class="page-header">
             <h1 class="page-title">全局角色库</h1>
             <div class="page-actions">
-                <button class="btn btn-primary" @click="showCreateDialog">
-                    <span>+</span> 新增角色
-                </button>
+                <button class="btn btn-primary" @click="showCreateDialog">+ 新增角色</button>
             </div>
         </div>
         
@@ -1798,7 +1805,6 @@ app.component('roles-page', {
         </div>
         
         <div v-else-if="filteredRoles.length === 0" class="empty-state">
-            <div class="empty-state-icon">👤</div>
             <h3 class="empty-state-title">暂无角色</h3>
             <p class="empty-state-description">点击上方按钮创建第一个角色</p>
         </div>
@@ -2118,6 +2124,73 @@ app.component('roles-page', {
     },
 });
 
+// 背景音/音效库：后端目前只有一个只读端点 GET /api/assets（扫描
+// assets/sfx、assets/ambience 目录拿文件名，见 src/utils.list_available_assets），
+// 没有分类树、标签、CRUD、也没有音频流式播放端点——effects 流水线本身
+// 还没打通（global_config.yaml 的 mixing.voice_only 默认 true）。这里只做
+// 诚实的只读展示，管理功能留 TODO，不假装能用，见
+// docs/plan/007-design-refresh.md
+app.component('assets-page', {
+    template: `
+        <div class="page-header">
+            <h1 class="page-title">背景音与音效库</h1>
+        </div>
+        <div class="info-banner">
+            素材库当前为只读展示。分类管理、标签筛选、新增/编辑/试听素材尚未接入
+            后端（TODO，见 docs/plan/007-design-refresh.md）——effects 生成流水线
+            还没打通，<code>mixing.voice_only</code> 默认开启。
+        </div>
+        <div v-if="loading" class="empty-state">
+            <div class="loading-spinner"></div>
+        </div>
+        <div v-else-if="assets.bgm.length === 0 && assets.sfx.length === 0" class="empty-state">
+            <h3 class="empty-state-title">素材库为空</h3>
+            <p class="empty-state-description">assets/ambience 与 assets/sfx 目录下还没有生成任何素材</p>
+        </div>
+        <div v-else class="flex flex-col gap-4">
+            <div class="content-section">
+                <h4 class="section-title">背景音（{{ assets.bgm.length }}）</h4>
+                <div class="card-grid">
+                    <div v-for="name in assets.bgm" :key="'bgm-' + name" class="asset-card">
+                        <span class="asset-kind-badge">背景音</span>
+                        <div class="asset-name">{{ name }}</div>
+                    </div>
+                </div>
+            </div>
+            <div class="content-section">
+                <h4 class="section-title">音效（{{ assets.sfx.length }}）</h4>
+                <div class="card-grid">
+                    <div v-for="name in assets.sfx" :key="'sfx-' + name" class="asset-card">
+                        <span class="asset-kind-badge">音效</span>
+                        <div class="asset-name">{{ name }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `,
+    setup() {
+        const loading = ref(true);
+        const assets = ref({ bgm: [], sfx: [] });
+
+        const loadAssets = async () => {
+            loading.value = true;
+            try {
+                assets.value = await API.getAssets();
+            } catch (error) {
+                console.error('加载素材库失败:', error);
+            } finally {
+                loading.value = false;
+            }
+        };
+
+        onMounted(() => {
+            loadAssets();
+        });
+
+        return { loading, assets };
+    },
+});
+
 app.component('settings-page', {
     template: `
         <div class="page-header">
@@ -2131,6 +2204,7 @@ app.component('settings-page', {
         <div v-else class="settings-form">
             <div class="settings-section">
                 <h3 class="settings-section-title">TTS 设置</h3>
+                <div class="settings-section-divider"></div>
                 <div class="form-group">
                     <label class="form-label">TTS 引擎选择</label>
                     <select class="form-select" v-model="form.tts_engine">
@@ -2143,6 +2217,7 @@ app.component('settings-page', {
 
             <div class="settings-section">
                 <h3 class="settings-section-title">文件设置</h3>
+                <div class="settings-section-divider"></div>
                 <div class="form-group">
                     <label class="form-label">文件输出根目录</label>
                     <input type="text" class="form-input" v-model="form.library_root" placeholder="/path/to/library">
@@ -2152,6 +2227,7 @@ app.component('settings-page', {
             
             <div class="settings-section">
                 <h3 class="settings-section-title">性能设置</h3>
+                <div class="settings-section-divider"></div>
                 <div class="form-group">
                     <label class="form-label">后台并发任务数</label>
                     <input type="number" class="form-input" v-model="form.cpu_workers" min="1" max="8">
@@ -2161,6 +2237,7 @@ app.component('settings-page', {
             
             <div class="settings-section">
                 <h3 class="settings-section-title">音频设置</h3>
+                <div class="settings-section-divider"></div>
                 <div class="form-row">
                     <div class="form-group">
                         <label class="form-label">音频输出格式</label>
@@ -2184,6 +2261,7 @@ app.component('settings-page', {
             
             <div class="settings-section">
                 <h3 class="settings-section-title">监控设置</h3>
+                <div class="settings-section-divider"></div>
                 <div class="form-group">
                     <label class="form-label">资源监控刷新间隔（秒）</label>
                     <input type="number" class="form-input" v-model="form.monitor_interval" min="1" max="60">

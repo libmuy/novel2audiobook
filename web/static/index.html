@@ -14,28 +14,30 @@
                 <nav class="nav-tabs">
                     <a href="#/novels" class="nav-tab" :class="{ active: currentRoute.startsWith('#/novels') }">小说</a>
                     <a href="#/roles" class="nav-tab" :class="{ active: currentRoute === '#/roles' }">角色库</a>
+                    <a href="#/assets" class="nav-tab" :class="{ active: currentRoute === '#/assets' }">音效库</a>
                     <a href="#/settings" class="nav-tab" :class="{ active: currentRoute === '#/settings' }">设置</a>
                 </nav>
             </div>
             <div class="header-right">
+                <div v-if="sseDisconnected" class="sse-status disconnected">实时连接已断开</div>
                 <div class="resource-bar">
                     <span class="resource-item">CPU <span class="resource-value">{{ resource.cpu_percent || 0 }}%</span></span>
                     <span class="resource-item">内存 <span class="resource-value">{{ formatMemory(resource.memory_used) }}/{{ formatMemory(resource.memory_total) }}</span></span>
                     <span class="resource-item">GPU <span class="resource-value">{{ resource.gpu_percent || 0 }}%</span></span>
                     <span class="resource-item">显存 <span class="resource-value">{{ formatMemory(resource.gpu_memory_used) }}/{{ formatMemory(resource.gpu_memory_total) }}</span></span>
                     <span class="resource-item gpu-owner">
-                        <span class="gpu-indicator" :class="gpuOwnerClass">{{ gpuOwnerIcon }}</span>
+                        <span class="gpu-indicator" :class="gpuOwnerClass"></span>
                         <span>{{ gpuOwnerText }}</span>
                     </span>
                 </div>
-                <div v-if="sseDisconnected" class="sse-status disconnected">实时连接已断开</div>
+                <button class="theme-toggle" @click="toggleDarkMode">{{ darkMode ? '浅色模式' : '深色模式' }}</button>
             </div>
         </header>
-        
+
         <main class="app-main">
             <component :is="currentPage" v-bind="currentPageProps"></component>
         </main>
-        
+
         <toast ref="toast"></toast>
         <confirm-dialog ref="confirmDialog"></confirm-dialog>
     </div>

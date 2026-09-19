@@ -242,6 +242,13 @@ const API = {
         return this.request('/monitor');
     },
 
+    // 音效/背景音素材库：只读列表（GET /api/assets 扫描 assets/sfx、
+    // assets/ambience 目录），没有分类/标签/CRUD——那套管理能力还没接后端，
+    // 见 docs/plan/007-design-refresh.md
+    async getAssets() {
+        return this.request('/assets');
+    },
+
     // SSE连接：后端发的是带 event: 字段的具名事件（resource/task_update/
     // tree_update），浏览器的 onmessage 只对没有 event: 字段的默认事件触发，
     // 必须逐个用 addEventListener 注册，onmessage 在这里永远不会被调用。

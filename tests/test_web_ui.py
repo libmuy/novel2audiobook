@@ -520,6 +520,30 @@ class TestSSEDegradation:
 
 
 # ---------------------------------------------------------------------------
+# 11. 深色模式（计划 007 引入，Cloud Design 重构界面自带的纯前端偏好，
+# 跟 n2a.lastRoute 一样存 localStorage，不经过后端）
+class TestDarkMode:
+    def test_toggle_persists_and_applies_theme_attribute(self, page, server):
+        toggle = page.locator(".theme-toggle")
+        assert toggle.count() == 1
+        assert "深色模式" in toggle.text_content()
+
+        toggle.click()
+        page.wait_for_timeout(200)
+        # data-theme 挂在 <html> 上（CSS :root[data-theme] 选择器需要），不是
+        # #app——#app 是 Vue 的挂载目标，容器自身属性不受模板绑定管理，
+        # 见 app.js 里 applyTheme() 的注释
+        assert page.evaluate("document.documentElement.dataset.theme") == "dark"
+        assert page.evaluate("localStorage.getItem('n2a.darkMode')") == "1"
+        assert "浅色模式" in toggle.text_content()
+
+        # 刷新后应该保持深色（从 localStorage 恢复，不是每次都是默认浅色）
+        page.reload()
+        page.wait_for_load_state("networkidle")
+        assert page.evaluate("document.documentElement.dataset.theme") == "dark"
+
+
+# ---------------------------------------------------------------------------
 # 10. 角色库引用计数
 class TestRoleReferenceCount:
     def test_role_categories_crud(self, page, server):
@@ -601,6 +625,12 @@ class TestFullNavigation:
         page.goto(f"{base_url}/#/roles")
         page.wait_for_load_state("networkidle")
         assert page.locator(".roles-page, .app-main").count() > 0
+
+        # Assets（新增的背景音/音效库页面，见计划 007，只读展示）
+        page.goto(f"{base_url}/#/assets")
+        page.wait_for_load_state("networkidle")
+        assert page.locator(".app-main").count() > 0
+        assert "背景音" in page.content()
 
         # Settings
         page.goto(f"{base_url}/#/settings")
