@@ -36,4 +36,4 @@
 - `cli.py test` 全程在隔离临时目录运行，不会污染 `library/`、`roles/` 等共享目录。
 - `parse` 不再自动注册角色：清单外说话人会被标记为 `speaker: null`，
   需人工在配音工作台指派后才能执行 TTS。
-- 旧 Gradio/Flask 界面已移除，等待计划 005 以 FastAPI 重新提供。
+- Web 界面 = FastAPI + Vue3 全局构建（`web/static/js/app.js`，模板字符串组件，无构建工具、模板内禁嵌套反引号、离线运行）；旧 Gradio/Flask 界面已于计划 005/006 移除。
