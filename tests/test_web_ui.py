@@ -1099,3 +1099,54 @@ class TestSettingsMixingParams:
         page.get_by_role("button", name="保存配置").click()
         expect(page.locator(".toast.success")).to_be_visible()
         assert httpx.get(f"{base}/api/config").json()["tts"]["segment_gap_ms"] == 350
+
+
+# ---------------------------------------------------------------------------
+# 15. 计划 010 阶段 4：预计算音色按钮 + handler 不再谎报成功
+class TestPrecomputeEmbeddingUi:
+    def _role_with_reference(self, server, name, with_reference):
+        import httpx
+        base = _api(server)
+        rid = httpx.post(f"{base}/api/roles", json={"name": name}).json()["role_id"]
+        ref = os.path.join(server["tmp"], "roles", rid, "reference.wav")
+        os.makedirs(os.path.dirname(ref), exist_ok=True)
+        if with_reference:
+            with open(ref, "wb") as f:
+                f.write(b"RIFFfake")
+        elif os.path.exists(ref):
+            os.remove(ref)
+        return rid
+
+    def test_button_disabled_without_reference_audio(self, page, server):
+        self._role_with_reference(server, "无参考音频角色", with_reference=False)
+        page.goto(f"{_api(server)}/#/roles")
+        page.wait_for_load_state("networkidle")
+        btn = page.locator(".role-card", has_text="无参考音频角色").locator(".precompute-embedding-btn")
+        expect(btn).to_be_disabled()
+        expect(btn).to_have_attribute("title", "没有参考音频，无法预计算")
+
+    def test_submit_then_failure_is_reported_as_failure_with_reason(self, page, server):
+        """测试环境没有 IndexTTS：任务必须以「失败 + 原因」结束，并且 toast 带着原因。
+        以前 handler 丢弃返回值，同样的情况会显示任务成功、embedding 却没变。"""
+        import httpx
+        base = _api(server)
+        rid = self._role_with_reference(server, "有参考音频角色", with_reference=True)
+        page.goto(f"{base}/#/roles")
+        page.wait_for_load_state("networkidle")
+        card = page.locator(".role-card", has_text="有参考音频角色")
+        btn = card.locator(".precompute-embedding-btn")
+        expect(btn).to_be_enabled()
+        expect(btn).to_have_text("预计算音色")
+
+        btn.click()
+        _confirm(page, "开始预计算")
+
+        toast = page.locator(".toast.error", has_text="有参考音频角色")
+        expect(toast).to_contain_text("音色预计算失败", timeout=15000)
+        expect(toast).to_contain_text("未就绪")  # 带上任务真实的失败原因
+
+        tasks = [t for t in httpx.get(f"{base}/api/tasks").json()
+                 if t["type"] == "precompute_embedding" and (t["params"] or {}).get("role_id") == rid]
+        assert tasks and tasks[0]["params"] == {"role_id": rid}
+        assert tasks[0]["state"] == "failed" and "未就绪" in tasks[0]["error"]  # 不是 succeeded
+        expect(btn).to_have_text("预计算音色")  # 失败后按钮恢复，可以重试

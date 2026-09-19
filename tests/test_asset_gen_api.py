@@ -52,6 +52,11 @@ class TestSubmitApi:
         resp = client.post("/api/tasks", json={"type": "precompute_embedding", "params": {"role_id": "narrator"}})
         assert resp.status_code == 200
 
+    def test_precompute_embedding_without_role_id_is_400(self, client):
+        """以前缺 role_id 会被接受，变成一个静默空操作的「成功」任务"""
+        assert client.post("/api/tasks", json={"type": "precompute_embedding"}).status_code == 400
+        assert client.post("/api/tasks", json={"type": "precompute_embedding", "params": {}}).status_code == 400
+
     def test_chapter_scoped_type_still_requires_novel_id(self, client):
         assert client.post("/api/tasks", json={"type": "mix", "scope": {}}).status_code == 400
 

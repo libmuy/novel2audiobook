@@ -22,6 +22,8 @@ tts:
     checkpoints_dir: "/srv/unsafe/models/tts/IndexTTS-2.5"
     timeout_sec: 10800  # 批量合成一整章（含模型加载）；实测本机 RTF ~6-9x，
                          # 121 句/3757 字约需 65-70 分钟，此处留足余量
+    precompute_timeout_sec: 900  # 单个角色的 embedding 预计算超时。不设则回落到上面的 timeout_sec——
+                                  # 那个是整章 TTS 的余量，拿来管一次挂死的预计算会占住唯一的 GPU 通道 3 小时
 
 asset_gen:
   spec_file: "assets/asset_specs.yaml"

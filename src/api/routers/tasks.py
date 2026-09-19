@@ -20,6 +20,8 @@ _ALLOWED_PARAMS = {
 
 
 def _validate_params(task_type: str, params: dict):
+    if task_type == tq.TYPE_PRECOMPUTE_EMBEDDING and not (params or {}).get("role_id"):
+        raise HTTPException(400, "precompute_embedding 必须提供 params.role_id")
     if not params:
         return
     allowed = _ALLOWED_PARAMS.get(task_type, set())

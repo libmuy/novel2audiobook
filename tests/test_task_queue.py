@@ -362,3 +362,80 @@ class TestHandleMix:
         task_queue._handle_mix(task, ctx)
 
         assert calls[0]["output_stem"] == "custom_name"
+
+
+class TestPrecomputeEmbeddingHandler:
+    """回归：以前 handler 丢弃 precompute_embedding 的 {"ok","error"} 返回值，
+    环境未就绪/超时/子进程失败全被记成任务「成功」。"""
+
+    @pytest.fixture
+    def arbiter(self, monkeypatch):
+        events = []
+
+        class FakeArbiter:
+            def __init__(self, config=None):
+                pass
+
+            def __enter__(self):
+                events.append("enter")
+
+            def __exit__(self, *exc):
+                events.append("exit")
+                return False
+
+        import tools.gpu_arbiter as ga
+        monkeypatch.setattr(ga, "LlmSuspendedForGpu", FakeArbiter)
+        return events
+
+    def _patch_roles(self, monkeypatch, precondition=None, result=None):
+        import src.roles as roles_mod
+        monkeypatch.setattr(roles_mod, "load_manifest", lambda *a, **k: {"roles": {"r1": {}}})
+        monkeypatch.setattr(roles_mod, "embedding_precondition_error", lambda *a, **k: precondition)
+        monkeypatch.setattr(roles_mod, "precompute_embedding",
+                            lambda *a, **k: result if result is not None else {"ok": True, "error": None})
+
+    def _task(self, params):
+        return Task(id="t", type="precompute_embedding", lane="gpu", params=params)
+
+    def test_failed_result_makes_the_task_fail_with_the_reason(self, monkeypatch, arbiter):
+        self._patch_roles(monkeypatch, result={"ok": False, "error": "预计算超时"})
+        logs = []
+        ctx = task_queue.TaskContext(log_fn=logs.append)
+        with pytest.raises(RuntimeError, match="预计算超时"):
+            task_queue._handle_precompute_embedding(self._task({"role_id": "r1"}), ctx)
+        assert arbiter == ["enter", "exit"]  # 失败也要走完换手的退出（恢复 llama-server）
+        assert any("预计算超时" in l for l in logs)
+
+    def test_success_runs_inside_gpu_handoff(self, monkeypatch, arbiter):
+        self._patch_roles(monkeypatch)
+        task_queue._handle_precompute_embedding(self._task({"role_id": "r1"}), task_queue.TaskContext())
+        assert arbiter == ["enter", "exit"]
+
+    def test_env_not_ready_fails_before_touching_the_gpu(self, monkeypatch, arbiter):
+        """环境没就绪就别去停 llama-server——为注定失败的任务白停一次 LLM 服务"""
+        self._patch_roles(monkeypatch, precondition="IndexTTS 推理环境未就绪（venv/权重缺失）")
+        with pytest.raises(RuntimeError, match="未就绪"):
+            task_queue._handle_precompute_embedding(self._task({"role_id": "r1"}), task_queue.TaskContext())
+        assert arbiter == []
+
+    @pytest.mark.parametrize("params", [None, {}, {"role_id": ""}])
+    def test_missing_role_id_fails_instead_of_silent_noop(self, monkeypatch, arbiter, params):
+        self._patch_roles(monkeypatch)
+        with pytest.raises(ValueError, match="role_id"):
+            task_queue._handle_precompute_embedding(self._task(params), task_queue.TaskContext())
+        assert arbiter == []
+
+    def test_end_to_end_through_the_queue_state_is_failed_with_error(self, isolated_queue, monkeypatch, arbiter):
+        self._patch_roles(monkeypatch, result={"ok": False, "error": "IndexTTS 推理环境未就绪"})
+        isolated_queue.start()
+        try:
+            task = isolated_queue.submit_global("precompute_embedding", params={"role_id": "r1"})
+            for _ in range(100):
+                if isolated_queue.get(task.id).state in ("succeeded", "failed", "cancelled"):
+                    break
+                time.sleep(0.05)
+        finally:
+            isolated_queue.stop()
+        done = isolated_queue.get(task.id)
+        assert done.state == "failed"
+        assert "未就绪" in done.error

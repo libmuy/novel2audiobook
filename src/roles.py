@@ -279,6 +279,32 @@ def get_embedding_status(role_id: str, manifest: dict, roles_dir: str = None) ->
     return status
 
 
+def _embedding_env(config: dict) -> dict:
+    tts_cfg = config.get("tts", {}).get("index_tts", {})
+    return {
+        "tts_cfg": tts_cfg,
+        "python_bin": resolve_path(tts_cfg.get("python_bin", "tools/indextts_env/bin/python")),
+        "script": resolve_path("tools/precompute_embeddings.py"),
+        "repo_dir": resolve_path(tts_cfg.get("repo_dir", "tools/indextts_repo")),
+        "checkpoints_dir": tts_cfg.get("checkpoints_dir", "/srv/unsafe/models/tts/IndexTTS-2.5"),
+    }
+
+
+def embedding_precondition_error(role_id: str, manifest: dict, config: dict = None):
+    """预计算的廉价前置检查（角色已注册、IndexTTS 推理环境就绪），失败返回错误文案，
+    通过返回 None。不碰 GPU、不起子进程——调用方可以在停 llama-server 腾显存**之前**先
+    过一遍，别为一个注定失败的任务白白停一次 LLM 服务。"""
+    if role_id not in manifest.get("roles", {}):
+        return f"角色 {role_id!r} 未注册"
+    if config is None:
+        config = load_global_config()
+    env = _embedding_env(config)
+    if not (os.path.exists(env["python_bin"]) and os.path.exists(env["script"])
+            and os.path.isdir(env["repo_dir"]) and os.path.isdir(env["checkpoints_dir"])):
+        return "IndexTTS 推理环境未就绪（venv/权重缺失），无法预计算 embedding"
+    return None
+
+
 def precompute_embedding(role_id: str, manifest: dict, roles_dir: str = None,
                          config: dict = None, force: bool = True) -> dict:
     """
@@ -292,21 +318,15 @@ def precompute_embedding(role_id: str, manifest: dict, roles_dir: str = None,
 
     返回 {"ok": bool, "error": str|None}。
     """
-    if role_id not in manifest.get("roles", {}):
-        return {"ok": False, "error": f"角色 {role_id!r} 未注册"}
-
     if config is None:
         config = load_global_config()
-    tts_cfg = config.get("tts", {}).get("index_tts", {})
-    python_bin = resolve_path(tts_cfg.get("python_bin", "tools/indextts_env/bin/python"))
-    script = resolve_path("tools/precompute_embeddings.py")
-    repo_dir = resolve_path(tts_cfg.get("repo_dir", "tools/indextts_repo"))
-    checkpoints_dir = tts_cfg.get("checkpoints_dir", "/srv/unsafe/models/tts/IndexTTS-2.5")
+    err = embedding_precondition_error(role_id, manifest, config)
+    if err:
+        return {"ok": False, "error": err}
+    env = _embedding_env(config)
+    tts_cfg, python_bin, script = env["tts_cfg"], env["python_bin"], env["script"]
+    repo_dir, checkpoints_dir = env["repo_dir"], env["checkpoints_dir"]
     base = roles_dir if roles_dir is not None else resolve_path("roles")
-
-    if not (os.path.exists(python_bin) and os.path.exists(script)
-            and os.path.isdir(repo_dir) and os.path.isdir(checkpoints_dir)):
-        return {"ok": False, "error": "IndexTTS 推理环境未就绪（venv/权重缺失），无法预计算 embedding"}
 
     cmd = [
         python_bin, script,
@@ -317,7 +337,11 @@ def precompute_embedding(role_id: str, manifest: dict, roles_dir: str = None,
         cmd.append("--force")
 
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=tts_cfg.get("timeout_sec", 1800))
+        # 单个角色的 embedding 只要几分钟，用专门的 precompute_timeout_sec；不设才回落到
+        # 整章 TTS 的 timeout_sec（10800 秒）——那个超时拿来管一个挂死的预计算，
+        # 会把唯一的 GPU 通道占住 3 小时
+        timeout = tts_cfg.get("precompute_timeout_sec", tts_cfg.get("timeout_sec", 1800))
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": "预计算超时"}
 

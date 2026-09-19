@@ -2079,6 +2079,13 @@ app.component('roles-page', {
                             <span class="embedding-status" :class="embeddingClass(role.embedding_status)">
                                 {{ embeddingLabel(role.embedding_status) }}
                             </span>
+                            <button v-if="!(role.embedding_status && role.embedding_status.valid)"
+                                    class="btn btn-secondary btn-sm precompute-embedding-btn"
+                                    :disabled="!role.has_reference || !!embeddingTasks[role.id]"
+                                    :title="role.has_reference ? '' : '没有参考音频，无法预计算'"
+                                    @click="precomputeEmbedding(role)">
+                                {{ embeddingButtonLabel(role) }}
+                            </button>
                             <span class="ml-2">
                                 被 {{ (role.novels || []).length }} 本小说、{{ role.segment_count || 0 }} 个分块引用
                             </span>
@@ -2369,6 +2376,58 @@ app.component('roles-page', {
             }
         };
 
+        // ---- 预计算音色（embedding）----
+        // 全局任务（没有小说/章节），所以这里没有别的地方能看到它的进度：用 assets-page 同一套
+        // SSE 模式——task-update 事件按 params.role_id 记到一张表里，终态时刷新角色并 toast。
+        // 不走 preflight（对全局任务它只返回写死的 create:1，弹窗没有信息量），直接提交。
+        const embeddingTasks = reactive({});
+        const TERMINAL_STATES = ['succeeded', 'failed', 'cancelled'];
+        // 任务可能失败得比 createTask 的响应还快（比如环境没就绪，毫秒级失败）：SSE 的终态事件
+        // 先到、把条目清掉，随后响应里那份「排队中」的提交时快照又把它写回去，按钮就永远卡在
+        // 「排队中…」。记下已经见过终态的任务 id，响应晚到时不再写回。
+        const finishedTaskIds = new Set();
+
+        const embeddingButtonLabel = (role) => {
+            const t = embeddingTasks[role.id];
+            if (!t) return '预计算音色';
+            return t.state === 'queued' ? '排队中…' : '预计算中…';
+        };
+
+        const precomputeEmbedding = async (role) => {
+            const confirmed = await showConfirm({
+                title: `预计算「${role.name}」的音色`,
+                message: '会用 IndexTTS 为该角色的参考音频提取音色特征，并写入缓存，之后合成时直接复用。',
+                warning: '这是一次 GPU 推理：会临时停掉 llama-server 腾显存、完成后自动恢复；' +
+                    'GPU 通道是单线程的，若有解析/配音任务在跑，会排在它们后面。',
+                confirmText: '开始预计算',
+                confirmClass: 'btn-primary',
+            });
+            if (!confirmed) return;
+            try {
+                const res = await API.createTask({ type: 'precompute_embedding', params: { role_id: role.id } });
+                if (!finishedTaskIds.has(res.tasks[0].id)) embeddingTasks[role.id] = res.tasks[0];
+            } catch (error) {
+                showToast?.(`提交失败: ${error.message}`, 'error');
+            }
+        };
+
+        const onTaskUpdate = (event) => {
+            const task = event.detail?.task;
+            const roleId = task?.params?.role_id;
+            if (!task || task.type !== 'precompute_embedding' || !roleId) return;
+            if (!TERMINAL_STATES.includes(task.state)) {
+                embeddingTasks[roleId] = task;
+                return;
+            }
+            finishedTaskIds.add(task.id);
+            delete embeddingTasks[roleId];
+            loadRoles(); // 刷新 embedding_status
+            const name = (roles.value.find((r) => r.id === roleId) || {}).name || roleId;
+            if (task.state === 'succeeded') showToast?.(`「${name}」的音色预计算完成`, 'success');
+            else if (task.state === 'cancelled') showToast?.(`「${name}」的音色预计算已取消`, 'success');
+            else showToast?.(`「${name}」的音色预计算失败: ${task.error || '未知错误'}`, 'error');
+        };
+
         const loadTagStats = async () => {
             try {
                 tagStats.value = (await API.getRoleTags()).tags || [];
@@ -2477,11 +2536,23 @@ app.component('roles-page', {
             }
         };
 
-        onMounted(() => {
+        onMounted(async () => {
+            window.addEventListener('task-update', onTaskUpdate);
             loadRoles();
             loadTree();
             loadTagStats();
+            // 切走再回来 / 刷新页面时，接上还在跑的预计算任务
+            try {
+                for (const t of await API.getTasks()) {
+                    if (t.type === 'precompute_embedding' && t.params?.role_id && !TERMINAL_STATES.includes(t.state)) {
+                        embeddingTasks[t.params.role_id] = t;
+                    }
+                }
+            } catch (error) {
+                console.error('加载任务失败:', error);
+            }
         });
+        onUnmounted(() => window.removeEventListener('task-update', onTaskUpdate));
 
         return {
             roles, loading, tree, collapsed, flatRows, selectedPath, tagStats, tagFilters,
@@ -2490,6 +2561,7 @@ app.component('roles-page', {
             toggleTagFilter, genderLabel, referenceUrl, embeddingLabel, embeddingClass,
             showCreateDialog, editRole, closeDialog, addTag, removeTag, handleFileUpload,
             saveRole, deleteRole,
+            embeddingTasks, embeddingButtonLabel, precomputeEmbedding,
         };
     },
 });
@@ -2745,6 +2817,9 @@ app.component('assets-page', {
         const audioNonce = ref(0);
 
         const genTask = ref(null);
+        // 同 roles-page 预计算任务的竞态：终态事件可能先于 createTask 的响应到达，
+        // 响应里的「排队中」旧快照不能再把已清掉的 genTask 写回去
+        const finishedGenIds = new Set();
         const genPercent = computed(() => {
             const p = genTask.value?.progress;
             return p && p.total ? Math.round((p.done / p.total) * 100) : 0;
@@ -2769,7 +2844,7 @@ app.component('assets-page', {
                 });
                 if (!confirmed) return;
                 const res = await API.createTask({ type: 'asset_gen', params });
-                genTask.value = res.tasks[0];
+                if (!finishedGenIds.has(res.tasks[0].id)) genTask.value = res.tasks[0];
             } catch (error) {
                 showToast?.(`提交失败: ${error.message}`, 'error');
             }
@@ -2789,6 +2864,7 @@ app.component('assets-page', {
             const task = event.detail?.task;
             if (!task || task.type !== 'asset_gen') return;
             if (TERMINAL.includes(task.state)) {
+                finishedGenIds.add(task.id);
                 genTask.value = null;
                 audioNonce.value++;
                 loadSpecs();

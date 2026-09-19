@@ -120,11 +120,32 @@ def _handle_mix(task, ctx):
 
 
 def _handle_precompute_embedding(task, ctx):
-    from src.roles import precompute_embedding, load_manifest
+    """以前丢弃了 precompute_embedding 的返回值 {"ok","error"}：环境未就绪、超时、
+    角色未注册、子进程非零退出全被记成任务「成功」，缺 role_id 还是静默空操作——用户看到
+    任务变绿但 embedding 没变。现在这些都会让任务失败并带上原因。"""
+    from src.roles import precompute_embedding, embedding_precondition_error, load_manifest
+    role_id = (task.params or {}).get("role_id")
+    if not role_id:
+        raise ValueError("precompute_embedding 任务缺少 params.role_id")
+    config = load_global_config()
     manifest = load_manifest()
-    role_id = task.params.get("role_id") if task.params else None
-    if role_id:
-        precompute_embedding(role_id, manifest)
+
+    # 廉价的前置检查放在换手之前：环境没就绪就别去停 llama-server
+    err = embedding_precondition_error(role_id, manifest, config)
+    if err:
+        ctx.log(f"预计算 {role_id} 失败: {err}")
+        raise RuntimeError(err)
+
+    # GPU 换手由调用方负责（roles.precompute_embedding 自己的 docstring 明确这么规定，
+    # tests/test_roles.py 也直接调它），所以包在 handler 这一层，而不是改 roles.py
+    from tools.gpu_arbiter import LlmSuspendedForGpu
+    ctx.log(f"开始预计算角色 {role_id} 的 embedding")
+    with LlmSuspendedForGpu(config):
+        res = precompute_embedding(role_id, manifest, config=config)
+    if not res.get("ok"):
+        ctx.log(f"预计算 {role_id} 失败: {res.get('error')}")
+        raise RuntimeError(res.get("error") or "预计算失败")
+    ctx.log(f"角色 {role_id} 的 embedding 预计算完成")
 
 
 def _handle_asset_gen(task, ctx):

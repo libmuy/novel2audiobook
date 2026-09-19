@@ -47,3 +47,15 @@
 - 设置页三处 `alert()` 全部换成 toast，被拒的键带上原因（`音效峰值限幅（超出范围（-60.0–0.0））`）；`saveConfig` 改为**只提交改动过的键**（不然每次保存都会把界面显示的默认值——如从旧比例换算出的 `ducking_gain_db`——实体化写进配置文件）；数值字段清空时前端直接拦截（`Number('') === 0` 会把「没填」悄悄存成 0）；`fillFormFromConfig` 数值一律用 `??`（0 dB / 0 ms 是假值，`||` 会换回默认）。
 - `global_config.yaml` 里给两个新键写了注释文档（可选键，未启用）。
 - 测试：后端 `test_tts_engine`（句间静音三种取值）、`test_audio_mixer::TestDuckingGainPrecedence`、`TestSystemAPI`（新键接受/拒绝/旧键不暴露）；E2E `TestSettingsMixingParams`（显示换算值、只写改动的键、`0` 不回退、越界带原因 toast、空值拦截、句间静音落在 tts 段）。
+### 阶段 4
+- **修 handler 谎报成功**（`task_queue._handle_precompute_embedding`）：以前丢弃 `precompute_embedding` 返回的 `{"ok","error"}`，环境未就绪/超时/角色未注册/子进程非零退出全被记成 SUCCEEDED，缺 `role_id` 还是静默空操作。
+  现在缺 `role_id` 抛 `ValueError`、`ok` 为假抛 `RuntimeError(error)`，任务以 FAILED 结束并带原因；`POST /tasks` 对该类型缺 `role_id` 直接 400。
+- **GPU 换手放在 handler 层**（`LlmSuspendedForGpu`），不改 `src/roles.py`——`roles.precompute_embedding` 的 docstring 明确「调用方负责换手」，`tests/test_roles.py` 也直接调它。
+  新增 `roles.embedding_precondition_error`（角色已注册 + 推理环境就绪的廉价检查），在换手**之前**调用：环境没就绪就别去停 llama-server；抛错时 `with` 仍会走完退出（恢复 llama-server）。
+- 新配置 `tts.index_tts.precompute_timeout_sec`（`global_config.yaml` 里设 900）；不设回落到整章 TTS 的 `timeout_sec`（10800 秒——拿来管一次挂死的单角色预计算会占住唯一的 GPU 通道 3 小时）。
+- 角色卡片：`.role-stats` 里 embedding 徽章之后加「预计算音色」按钮（`.precompute-embedding-btn`），`embedding_status.valid` 时隐藏、无参考音频时禁用；先弹确认框说明 GPU 换手与排队，**不走 preflight**（全局任务的 preflight 只返回写死的 `create:1`）；
+  进度用素材库页同一套 SSE 模式（按 `params.role_id` 索引，挂载时接上在跑的任务），终态刷新角色并 toast，失败 toast 带 `task.error`。
+- **E2E 抓到并修掉一个真实竞态**：任务失败得比 `createTask` 响应还快（环境未就绪是毫秒级失败）时，SSE 终态事件先清掉条目，随后响应里「排队中」的提交时快照又把它写回去，按钮永远卡在「排队中…」。
+  现在记下已见过终态的任务 id，响应晚到不再写回。素材库页的 `genTask` 有同样写法，一并修了。
+- 测试：handler 单测（失败变任务失败且带原因、成功也在换手内、环境未就绪不碰 GPU、缺 role_id 不再静默、经真实队列端到端为 failed）、`TestPrecomputeTimeout`、`TestEmbeddingPrecondition`、API 缺 role_id 400；
+  E2E 在无 IndexTTS 的环境里断言「任务以 failed + 原因结束、toast 带原因、按钮恢复可重试」以及「无参考音频时禁用」。

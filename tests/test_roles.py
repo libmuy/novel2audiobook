@@ -363,6 +363,47 @@ class TestPrecomputeEmbedding:
         assert "未就绪" in result["error"]
 
 
+class TestPrecomputeTimeout:
+    """单角色预计算不该再用整章 TTS 的 10800 秒超时（会把唯一的 GPU 通道占住 3 小时）"""
+
+    def _run(self, monkeypatch, tmp_roles_dir, index_tts_cfg):
+        seen = {}
+
+        class Done:
+            returncode = 0
+            stdout = stderr = ""
+
+        def fake_run(cmd, **kw):
+            seen["timeout"] = kw.get("timeout")
+            return Done()
+
+        monkeypatch.setattr(roles.subprocess, "run", fake_run)
+        monkeypatch.setattr(roles, "embedding_precondition_error", lambda *a, **k: None)
+        manifest = {"roles": {"narrator": {}}}
+        result = roles.precompute_embedding("narrator", manifest, tmp_roles_dir,
+                                            config={"tts": {"index_tts": index_tts_cfg}})
+        assert result["ok"] is True
+        return seen["timeout"]
+
+    def test_dedicated_precompute_timeout_wins(self, monkeypatch, tmp_roles_dir):
+        assert self._run(monkeypatch, tmp_roles_dir,
+                         {"timeout_sec": 10800, "precompute_timeout_sec": 900}) == 900
+
+    def test_falls_back_to_batch_timeout_when_unset(self, monkeypatch, tmp_roles_dir):
+        assert self._run(monkeypatch, tmp_roles_dir, {"timeout_sec": 10800}) == 10800
+
+
+class TestEmbeddingPrecondition:
+    def test_unregistered_role(self):
+        assert "未注册" in roles.embedding_precondition_error("nope", {"roles": {}}, {})
+
+    def test_env_missing(self, tmp_project_dir):
+        cfg = {"tts": {"index_tts": {"python_bin": os.path.join(tmp_project_dir, "no", "python"),
+                                      "repo_dir": os.path.join(tmp_project_dir, "no_repo"),
+                                      "checkpoints_dir": os.path.join(tmp_project_dir, "no_ckpt")}}}
+        assert "未就绪" in roles.embedding_precondition_error("narrator", {"roles": {"narrator": {}}}, cfg)
+
+
 class TestSetRoleReference:
     """替换角色参考音频功能测试"""
 
