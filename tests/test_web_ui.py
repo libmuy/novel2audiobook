@@ -12,6 +12,7 @@ Usage:
     .venv/bin/python -m pytest tests/test_web_ui.py -v --headed
 """
 
+import re
 import os
 import sys
 import time
@@ -1186,6 +1187,86 @@ class TestAssetEngineDrift:
         _confirm(page, "开始生成")
         expect(card.locator(".badge")).to_have_text("占位音", timeout=20000)  # 测试环境没有真实引擎 -> Mock 占位
         httpx.delete(f"{base}/api/asset-specs/sfx/e2e_drift?delete_files=true")
+
+
+# ---------------------------------------------------------------------------
+# 18. 计划 010 阶段 8：树状态点用整张章节状态表；多选出对比表。
+class TestChapterStatusMap:
+    def _novel_with_two_chapters(self, server):
+        """章 A：已混音（含素材、缺 1 个背景音）；章 B：只有原文"""
+        import httpx
+        import json as _json
+        import time
+        base = _api(server)
+        nid = httpx.post(f"{base}/api/novels", json={
+            "title": "状态表", "description": "", "levels": {"part": False, "volume": False}}).json()["novel_id"]
+        ids = []
+        for title in ("甲章", "乙章"):
+            cid = httpx.post(f"{base}/api/novels/{nid}/nodes", json={"type": "chapter", "title": title}).json()["node_id"]
+            httpx.put(f"{base}/api/novels/{nid}/chapters/{cid}/raw?confirm=1",
+                      files={"file": ("raw.txt", "x".encode(), "text/plain")})
+            ids.append(cid)
+        a_dir = os.path.join(server["library_dir"], nid, "chapters", ids[0])
+        for name in ("script_final.json", "timeline.json"):
+            with open(os.path.join(a_dir, name), "w", encoding="utf-8") as f:
+                _json.dump({"items": []} if name == "timeline.json" else [], f)
+        time.sleep(0.05)  # 成品必须比 timeline 新，否则会被判成「需要重新 mix」
+        os.makedirs(os.path.join(a_dir, "output"), exist_ok=True)
+        with open(os.path.join(a_dir, "output", "chapter.mp3"), "wb") as f:
+            f.write(b"x")
+        with open(os.path.join(a_dir, "output", "mix_meta.json"), "w", encoding="utf-8") as f:
+            _json.dump({"voice_only": False, "missing_assets": {"bgm": ["rain"], "sfx": []}}, f)
+        return nid, ids
+
+    def test_tree_dot_reflects_missing_assets(self, page, server):
+        nid, (a, b) = self._novel_with_two_chapters(server)
+        page.goto(f"{_api(server)}/#/novels/{nid}")
+        page.wait_for_load_state("networkidle")
+        expect(page.locator(f'[data-node-id="{a}"] > .tree-node .status-dot').first).to_have_class(re.compile(r"\bmissing\b"))
+        expect(page.locator(f'[data-node-id="{b}"] > .tree-node .status-dot').first).to_have_class(re.compile(r"\bpending\b"))
+
+    def test_multi_select_shows_comparison_table(self, page, server):
+        nid, (a, b) = self._novel_with_two_chapters(server)
+        page.goto(f"{_api(server)}/#/novels/{nid}")
+        page.wait_for_load_state("networkidle")
+        expect(page.locator(".chapter-compare")).to_have_count(0)  # 一个都没选：不出现
+        page.locator(f'[data-node-id="{a}"] > .tree-node .tree-checkbox').check()
+        expect(page.locator(".chapter-compare")).to_have_count(0)  # 只选一个：不出现
+        page.locator(f'[data-node-id="{b}"] > .tree-node .tree-checkbox').check()
+        table = page.locator(".chapter-compare")
+        expect(table).to_be_visible()
+        row_a = table.locator(f'tr[data-chapter-id="{a}"]')
+        row_b = table.locator(f'tr[data-chapter-id="{b}"]')
+        expect(row_a).to_contain_text("定稿")
+        expect(row_a).to_contain_text("MP3（含素材，缺 1 个）")
+        expect(row_b.locator("td").nth(2)).to_have_text("✗")  # 乙章没有解析产物
+        expect(row_b.locator("td").nth(4)).to_have_text("—")  # 也没有成品
+
+
+    def test_mix_finished_toasts_about_skipped_assets(self, page, server):
+        """混音任务新到终态 → 重取树 + 提示跳过了缺失素材（已经完成的旧任务不重复提示）"""
+        import json as _json
+        nid, (a, b) = self._novel_with_two_chapters(server)
+        mix_task = {"id": "t_mix_1", "type": "mix", "state": "succeeded", "novel_id": nid,
+                    "chapter_id": a, "params": {}, "progress": 1.0, "created_at": "2026-01-01T00:00:00"}
+        served = {"tasks": []}
+        page.route("**/api/tasks", lambda route: route.fulfill(
+            status=200, content_type="application/json", body=_json.dumps(served["tasks"]))
+            if route.request.method == "GET" else route.continue_())
+        page.goto(f"{_api(server)}/#/novels/{nid}")
+        page.wait_for_load_state("networkidle")
+        # 监听器在首轮数据（树 + 任务）加载完之后才挂上，先等树渲染出来再派发事件
+        expect(page.locator(f'[data-node-id="{a}"]')).to_be_visible()
+        page.wait_for_timeout(300)
+        expect(page.locator(".toast")).to_have_count(0)
+        served["tasks"] = [mix_task]
+        page.evaluate("window.dispatchEvent(new CustomEvent('task-update', {detail: {}}))")
+        expect(page.locator(".toast.warning")).to_contain_text("1 个章节混音时跳过了缺失素材")
+        # 再来一次事件：同一个任务不能重复提示
+        page.wait_for_timeout(3500)  # toast 3s 后消失
+        page.evaluate("window.dispatchEvent(new CustomEvent('task-update', {detail: {}}))")
+        page.wait_for_timeout(500)
+        expect(page.locator(".toast")).to_have_count(0)
 
 
 # ---------------------------------------------------------------------------

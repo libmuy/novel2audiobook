@@ -259,6 +259,7 @@ textarea { resize: vertical; }
 .status-dot.parsed { background: var(--text); }
 .status-dot.dubbed { background: var(--success); }
 .status-dot.stale { background: var(--warn); }
+.status-dot.missing { background: var(--warn); box-shadow: 0 0 0 2px var(--warnTint); }
 
 .tag-chip {
     font-size: 10.5px;

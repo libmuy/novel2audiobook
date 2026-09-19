@@ -536,6 +536,9 @@ app.component('tree-node', {
         depth: { type: Number, default: 0 },
         selectedId: { type: String, default: null },
         selectedIds: { type: Array, default: () => [] },
+        // GET /tree 里 status.chapters 按 chapter_id 建的整张表；节点自己的 status
+        // 只有一个字符串，看不出「混音时缺素材」，所以整张表往下传
+        statusMap: { type: Object, default: () => ({}) },
     },
     emits: ['select', 'toggle-select', 'rename', 'delete', 'reorder'],
     template: `
@@ -553,7 +556,7 @@ app.component('tree-node', {
                     @click.stop
                     @change="$emit('toggle-select', node)"
                 >
-                <span class="status-dot" :class="statusClass(node.status)"></span>
+                <span class="status-dot" :class="statusClass(node)"></span>
                 <span class="tree-node-name">{{ node.title }}</span>
                 <div class="tree-node-actions">
                     <button class="action-btn" @click.stop="$emit('rename', node)">改</button>
@@ -568,6 +571,7 @@ app.component('tree-node', {
                     :depth="depth + 1"
                     :selected-id="selectedId"
                     :selected-ids="selectedIds"
+                    :status-map="statusMap"
                     @select="(n) => $emit('select', n)"
                     @toggle-select="(n) => $emit('toggle-select', n)"
                     @rename="(n) => $emit('rename', n)"
@@ -580,10 +584,15 @@ app.component('tree-node', {
     setup(props, { emit }) {
         const childrenContainer = ref(null);
 
-        const statusClass = (status) => {
+        const statusClass = (node) => {
+            const entry = props.statusMap[node.id];
+            const status = (entry && entry.status) || node.status;
             if (!status) return 'pending';
             if (status.startsWith('STALE')) return 'stale';
-            if (status === 'completed') return 'dubbed';
+            if (status === 'completed') {
+                // 成品已出，但混音时带了素材且有缺失 → 提示「不完整」
+                return entry && entry.mixed_with_assets && entry.missing_assets_count > 0 ? 'missing' : 'dubbed';
+            }
             if (status === 'UNKNOWN') return 'pending';
             return 'parsed';
         };
@@ -648,6 +657,7 @@ app.component('novel-detail-page', {
                                 :node="node"
                                 :selected-id="selectedNode?.id"
                                 :selected-ids="selectedNodes"
+                                :status-map="statusByChapter"
                                 @select="selectNode"
                                 @toggle-select="toggleSelect"
                                 @rename="renameNode"
@@ -685,7 +695,34 @@ app.component('novel-detail-page', {
                 </div>
 
                 <div class="detail-content">
-                    <div v-if="selectedNode && selectedNode.type === 'chapter'">
+                    <div v-if="selectedChapterIds.length > 1" class="content-section chapter-compare">
+                        <h4 class="section-title">已选 {{ selectedChapterIds.length }} 个章节对比</h4>
+                        <div class="table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>章节</th>
+                                        <th class="center">原文</th>
+                                        <th class="center">解析</th>
+                                        <th class="center">配音</th>
+                                        <th>混音</th>
+                                        <th>状态</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="row in compareRows" :key="row.id" :data-chapter-id="row.id">
+                                        <td>{{ row.title }}</td>
+                                        <td class="center">{{ row.raw }}</td>
+                                        <td class="center">{{ row.parsed }}</td>
+                                        <td class="center">{{ row.dubbed }}</td>
+                                        <td>{{ row.mix }}</td>
+                                        <td>{{ row.status }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div v-else-if="selectedNode && selectedNode.type === 'chapter'">
                         <div class="stats-bar mb-4">
                             <div class="stat-item">
                                 <span class="stat-value">{{ chapterStats.total_segments || 0 }}</span>
@@ -818,6 +855,8 @@ app.component('novel-detail-page', {
         const selectedNode = ref(null);
         const selectedNodes = ref([]);
         const chapterStats = ref({});
+        // chapter_id → 该章状态摘要（GET /tree 的 status.chapters），树状态点和对比表共用
+        const statusByChapter = ref({});
         const chapterAssets = ref(null);
         const mixWithAssets = ref(false);
         const missingAssetNames = computed(() => {
@@ -882,6 +921,36 @@ app.component('novel-detail-page', {
                 .map((n) => n.id)
         );
 
+        // 多选对比表：每章一行。「配音」只认 timeline.json（audio_cache_count 只是
+        // 缓存 wav 的上界，不代表已配完，所以不拿它当「已配音」）
+        const compareRows = computed(() => {
+            const mark = (b) => (b ? '✓' : '✗');
+            return flattenTree(tree.value)
+                .filter((n) => n.type === 'chapter' && selectedNodes.value.includes(n.id))
+                .map((n) => {
+                    const st = statusByChapter.value[n.id] || {};
+                    let mix = '—';
+                    if (st.output) {
+                        mix = (st.output_format || '').toUpperCase() || '有成品';
+                        if (st.mixed_with_assets === true) {
+                            mix += st.missing_assets_count > 0
+                                ? `（含素材，缺 ${st.missing_assets_count} 个）` : '（含素材）';
+                        } else if (st.mixed_with_assets === false) {
+                            mix += '（仅人声）';
+                        }
+                    }
+                    return {
+                        id: n.id,
+                        title: n.title,
+                        raw: mark(st.raw),
+                        parsed: st.final ? '定稿' : st.draft ? '初稿' : '✗',
+                        dubbed: mark(st.timeline),
+                        mix,
+                        status: st.status || '—',
+                    };
+                });
+        });
+
         // 批量任务的按钮是常驻的（不依赖具体选中了哪种节点），这里给用户一个
         // 明确的范围提示，跟 buildTaskScope() 的判断逻辑保持一致
         const scopeLabel = computed(() => {
@@ -896,13 +965,6 @@ app.component('novel-detail-page', {
             return '整本小说';
         });
 
-        const statusClass = (status) => {
-            if (!status) return 'pending';
-            if (status.startsWith('STALE')) return 'stale';
-            if (status === 'completed') return 'dubbed';
-            if (status === 'UNKNOWN') return 'pending';
-            return 'parsed';
-        };
 
         // getTasks() 返回队列里所有任务（没有服务端 novel 过滤——SSE 推送也不过滤，
         // 服务端过滤会让 REST 与 SSE 口径不一致），所以这里在客户端只保留本书的任务
@@ -955,6 +1017,9 @@ app.component('novel-detail-page', {
                 // 后端已经把每个 chapter 节点的 status 内联进去了
                 const data = await API.getNovelTree(props.novelId);
                 tree.value = data.novel?.tree || [];
+                const map = {};
+                for (const ch of data.status?.chapters || []) map[ch.chapter_id] = ch;
+                statusByChapter.value = map;
             } catch (error) {
                 console.error('加载树形结构失败:', error);
             } finally {
@@ -1330,10 +1395,27 @@ app.component('novel-detail-page', {
             }
         };
 
+        // 已处理过终态的混音任务 id：挂载时先把当前已完成的登记进去，之后只对
+        // 「新完成」的提示，避免每次进页面都重复 toast
+        const seenMixDone = new Set();
+        const markMixDone = () => tasks.value
+            .filter((t) => t.type === 'mix' && t.state === 'succeeded')
+            .map((t) => t.id)
+            .filter((id) => !seenMixDone.has(id) && seenMixDone.add(id));
+
         // task_update SSE 事件在 app.js 里转发成 window 上的 CustomEvent，
         // 收到就整体重新拉一次任务列表（任务量不大，简单可靠优先于精细 patch）
         const onTaskUpdate = async () => {
             await loadTasks();
+            const newlyMixed = tasks.value.filter((t) =>
+                t.type === 'mix' && t.novel_id === props.novelId && markMixDone().includes(t.id));
+            if (newlyMixed.length) {
+                await loadTree();
+                const skipped = newlyMixed.filter((t) =>
+                    (statusByChapter.value[t.chapter_id] || {}).missing_assets_count > 0).length;
+                if (skipped) showToast(`${skipped} 个章节混音时跳过了缺失素材，可到「音效库」生成后重新混音`, 'warning');
+                else showToast('混音完成', 'success');
+            }
             // 已展开的日志随任务更新增量续拉；任务到终态后再拉最后一次就停
             for (const id of Object.keys(taskLogs)) {
                 const entry = taskLogs[id];
@@ -1346,6 +1428,7 @@ app.component('novel-detail-page', {
 
         onMounted(async () => {
             await Promise.all([loadNovel(), loadTree(), loadTasks()]);
+            markMixDone();
             window.addEventListener('task-update', onTaskUpdate);
         });
 
@@ -1356,6 +1439,9 @@ app.component('novel-detail-page', {
         return {
             novel,
             tree,
+            statusByChapter,
+            compareRows,
+            selectedChapterIds,
             loading,
             selectedNode,
             selectedNodes,
@@ -1376,7 +1462,6 @@ app.component('novel-detail-page', {
             reimportFileInput,
             treeContainer,
             onReorder,
-            statusClass,
             scopeLabel,
             taskTitle,
             taskStateLabel,

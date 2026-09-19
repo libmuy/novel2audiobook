@@ -86,3 +86,12 @@
 - 新建部/卷/章、重命名、创建角色失败以前只 `console.error`（界面毫无反应），现在弹错误 toast。
 - 取消任务的确认框措辞如实反映**当前**行为（排队中直接取消；运行中的要等当前步骤结束，配音任务可能要跑完整章）——阶段 12 真取消落地后再更新。
 - 测试：新增 `TestNativeDialogsReplaced`（空名称禁用提交、取消不创建、回车/Esc、改名预填、删除影响预览且取消无变化、上传章节文件选择器、失败 toast、全程无原生对话框）与 `TestWorkbenchDialogs`（批量绑定下拉、批量改语气 8 项、批量清空取消时**零请求**确认时才发一次、未绑定的 toast、创建并绑定角色）。这些路径此前全库没有一条测试。
+### 阶段 8
+纯前端，后端零改动（`GET /tree` 早就返回 `{novel, status}`，只是 `loadTree` 把 `status` 丢了）。
+- `loadTree` 把 `data.status.chapters` 按 `chapter_id` 建成 `statusByChapter`；`tree-node` 新增 `statusMap` prop 沿递归往下传。状态点原先只看节点内联的一个 `status` 字符串，看不出「混音时带了素材但缺素材」；现在 `completed` 且 `mixed_with_assets && missing_assets_count > 0` 时显示 `.status-dot.missing`（`--warn`，带一圈浅色光晕，和「已完成」的绿点区分）。
+- 删除 novel-detail 里从不被模板调用的重复 `statusClass`（连同导出）。
+- 多选 ≥2 个章节时右栏出现对比表（`.chapter-compare`，用早就写好但一直没人用的 `.table-wrap`）：原文 / 解析（定稿·初稿·✗）/ 配音 / 混音（格式 + 仅人声·含素材·缺 N 个）/ 状态。
+  「配音」列**只认 `timeline.json`**；`audio_cache_count` 只是缓存 wav 数的上界（含占位、含被丢弃的旧句），故意没有当成「已配音」。
+- 混音任务新到终态 → 重取树并 toast：有缺素材的章节提示「N 个章节混音时跳过了缺失素材，可到「音效库」生成后重新混音」（warning），否则「混音完成」。进页面时先把已完成的旧任务登记为「已处理」，不会每次进来重复提示。
+- 踩坑：模板用到的变量必须由 `setup` 返回——一开始漏了 `selectedChapterIds`，Vue 生产版对渲染错误只在控制台输出，表现为整页空白，所有 novel-detail 用例一起失败。
+- 测试：`TestChapterStatusMap`——树点 `missing`/`pending`、对比表 0/1/2 个选中的出现与内容、混音完成 toast（用 `page.route` 伪造任务列表，同一任务第二次事件不重复提示）。
