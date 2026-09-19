@@ -680,6 +680,56 @@ class TestSystemAPI:
         resp = client.get("/api/assets")
         assert resp.status_code == 200
 
+    def _seed_real_config(self, tmp_path):
+        import shutil
+        from tests.test_config_store import REAL
+        cfg_path = tmp_path / "global_config.yaml"
+        shutil.copy(REAL, cfg_path)
+        return cfg_path
+
+    def test_patch_config_preserves_comments_in_real_config(self, client, tmp_path):
+        """回归：以前 safe_dump 整文件回写，第一次保存就抹掉全部注释"""
+        cfg_path = self._seed_real_config(tmp_path)
+        before = cfg_path.read_text(encoding="utf-8")
+        resp = client.patch("/api/config", json={"mixing.bitrate": "256k"})
+        assert resp.json()["applied_keys"] == ["mixing.bitrate"]
+        after = cfg_path.read_text(encoding="utf-8")
+        for line in before.splitlines():
+            if "#" in line and "bitrate" not in line:
+                assert line in after.splitlines()
+        assert 'bitrate: "256k"' in after  # 原有的双引号风格也被保留
+
+    @pytest.mark.parametrize("key,value", [
+        ("tts.sample_rate", "24000"),       # 数值键不接受字符串
+        ("server.cpu_workers", 0),          # 超范围
+        ("server.cpu_workers", True),       # bool 不是整数
+        ("server.monitor_interval_ms", 5),
+        ("mixing.output_format", "ogg"),
+        ("mixing.bitrate", "loud"),
+        ("server.library_root", "  "),
+    ])
+    def test_patch_config_rejects_invalid_value_and_leaves_file_untouched(self, client, tmp_path, key, value):
+        cfg_path = self._seed_real_config(tmp_path)
+        before = cfg_path.read_bytes()
+        resp = client.patch("/api/config", json={key: value})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is False and body["applied_keys"] == []
+        assert body["rejected_keys"] == [key]
+        assert body["rejected"][0]["key"] == key and body["rejected"][0]["reason"]
+        assert cfg_path.read_bytes() == before
+
+    def test_patch_config_mixed_valid_and_invalid_applies_only_valid(self, client, tmp_path):
+        cfg_path = self._seed_real_config(tmp_path)
+        resp = client.patch("/api/config", json={"mixing.bitrate": "320k", "server.cpu_workers": "many", "nope.x": 1})
+        body = resp.json()
+        assert body["ok"] is True and body["applied_keys"] == ["mixing.bitrate"]
+        assert set(body["rejected_keys"]) == {"server.cpu_workers", "nope.x"}
+        reasons = {r["key"]: r["reason"] for r in body["rejected"]}
+        assert "白名单" in reasons["nope.x"]
+        assert 'bitrate: "320k"' in cfg_path.read_text(encoding="utf-8")
+        assert "cpu_workers: 2" in cfg_path.read_text(encoding="utf-8")  # 非法的没写进去
+
     def test_patch_config_accepts_mixing_voice_only(self, client, tmp_path):
         cfg_path = tmp_path / "global_config.yaml"
         cfg_path.write_text("mixing:\n  voice_only: true\n")

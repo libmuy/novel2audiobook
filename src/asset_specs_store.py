@@ -51,12 +51,20 @@ def spec_file_path(config: dict = None) -> str:
     return resolve_path(rel)
 
 
-def _yaml() -> YAML:
+def round_trip_yaml() -> YAML:
+    """保留注释/引号/缩进的 round-trip YAML（asset_specs 和 global_config 共用）。
+    width 拉大避免长 prompt 被折行；把 None 显式写成 `null`——ruamel 默认写成空值，
+    会把 `drm_card: null  # 注释` 改写成 `drm_card:  # 注释`，语义相同但产生无谓 diff。"""
     y = YAML(typ="rt")
     y.preserve_quotes = True
-    y.width = 4096  # 长 prompt 不要被折行
+    y.width = 4096
     y.indent(mapping=2, sequence=4, offset=2)
+    y.representer.add_representer(
+        type(None), lambda self, data: self.represent_scalar("tag:yaml.org,2002:null", "null"))
     return y
+
+
+_yaml = round_trip_yaml  # 旧名保留
 
 
 def load_raw(path: str = None):

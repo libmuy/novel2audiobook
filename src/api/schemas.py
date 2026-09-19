@@ -66,16 +66,6 @@ class TaskCreate(BaseModel):
     params: Optional[dict] = None
 
 
-class ConfigPatch(BaseModel):
-    tts_engine: Optional[str] = None
-    tts_sample_rate: Optional[int] = None
-    mixing_output_format: Optional[str] = None
-    mixing_bitrate: Optional[str] = None
-    cpu_workers: Optional[int] = None
-    monitor_interval_ms: Optional[int] = None
-    library_root: Optional[str] = None
-
-
 class GPUSwap(BaseModel):
     target: str
 

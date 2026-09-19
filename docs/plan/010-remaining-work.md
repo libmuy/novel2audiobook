@@ -31,3 +31,12 @@
 - 每个任务可展开「日志」（`API.getTaskLog` 之前全库无人调用），按 `next_offset` 增量续拉、随 `task-update` 刷新，终态后再拉一次就停，收起即停止请求。
 - 测试：新增 `TestTaskPanel`（徽章数 = 本书 + 全局、别的书的任务不混入、标题为中文且无悬空分隔符、日志展开/收起）；已做变异检查——去掉过滤后该用例确实失败。
   新钉选择器：`.task-section-title`、`.task-group-global`、`.task-log-btn`、`.task-log`。
+### 阶段 2
+- 新 `src/config_store.py`：`PATCH /api/config` 改用 ruamel round-trip 只改被更新的键。对真实 `global_config.yaml` 未改动往返**字节级一致**，改一个键只多出该键那一行 diff，
+  注释、原有引号（`bitrate: "192k"`）、键顺序都保留。之前 `yaml.safe_dump` 整文件回写，第一次在设置页保存就会永久抹掉全部注释（含素材引擎选型的决策记录）。
+- 共享 YAML 工厂 `asset_specs_store.round_trip_yaml`（旧名 `_yaml` 保留）加了 `null` 表示器：ruamel 默认把 `drm_card: null  # 注释` 写成 `drm_card:  # 注释`，语义相同但产生无谓 diff。
+- `_CONFIG_SPEC` 取代只有 bool 的 `_BOOL_CONFIG_KEYS`：逐键类型/范围/枚举校验（`tts.sample_rate` 8000–96000、`server.cpu_workers` 1–16、`server.monitor_interval_ms` 200–60000、`mixing.output_format ∈ mp3/wav/flac`、`mixing.bitrate` 形如 `192k`…）；
+  数值键不再接受字符串（`"24000"` 以前会原样落盘）；`mixing.voice_only` 仍宽松强转（JSON 字符串 `"false"` 是真值）。不合法的键**不写盘**。
+- 响应形状 `{ok, applied_keys, rejected_keys}` 与「全部被拒仍 HTTP 200」不变，新增附加字段 `rejected: [{key, reason}]`。先落盘再改内存，写盘失败时内存不会与磁盘不一致。
+- 删除死代码 `ConfigPatch`（无法表达点分键，无人引用）。
+- 测试：`tests/test_config_store.py`（真实文件字节往返、只改一行、缺失层级/文件、无残留 tmp）+ `TestSystemAPI` 新增（真实配置改后注释保留、7 种非法值拒绝且文件字节不变、合法/非法混合只应用合法的）。
