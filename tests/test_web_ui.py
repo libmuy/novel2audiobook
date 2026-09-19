@@ -1207,9 +1207,12 @@ class TestChapterStatusMap:
                       files={"file": ("raw.txt", "x".encode(), "text/plain")})
             ids.append(cid)
         a_dir = os.path.join(server["library_dir"], nid, "chapters", ids[0])
-        for name in ("script_final.json", "timeline.json"):
-            with open(os.path.join(a_dir, name), "w", encoding="utf-8") as f:
-                _json.dump({"items": []} if name == "timeline.json" else [], f)
+        with open(os.path.join(a_dir, "script_final.json"), "w", encoding="utf-8") as f:
+            _json.dump([{"seg_id": "1", "speaker": "旁白", "text": "a"},
+                        {"seg_id": "2", "speaker": None, "text": "b"},
+                        {"seg_id": "3", "speaker": "旁白", "text": "c"}], f, ensure_ascii=False)
+        with open(os.path.join(a_dir, "timeline.json"), "w", encoding="utf-8") as f:
+            _json.dump({"items": [{"seg_id": "1"}, {"seg_id": "3"}]}, f)
         time.sleep(0.05)  # 成品必须比 timeline 新，否则会被判成「需要重新 mix」
         os.makedirs(os.path.join(a_dir, "output"), exist_ok=True)
         with open(os.path.join(a_dir, "output", "chapter.mp3"), "wb") as f:
@@ -1240,7 +1243,28 @@ class TestChapterStatusMap:
         expect(row_a).to_contain_text("定稿")
         expect(row_a).to_contain_text("MP3（含素材，缺 1 个）")
         expect(row_b.locator("td").nth(2)).to_have_text("✗")  # 乙章没有解析产物
-        expect(row_b.locator("td").nth(4)).to_have_text("—")  # 也没有成品
+        expect(row_b.locator("td").nth(7)).to_have_text("—")  # 也没有成品
+
+    def test_comparison_table_numbers_are_lazy_loaded(self, page, server):
+        """数字列来自 /chapter-stats：只在对比表可见后才请求，且 0 与「还没取到」分得开"""
+        nid, (a, b) = self._novel_with_two_chapters(server)
+        requests = []
+        page.on("request", lambda r: requests.append(r.url) if "chapter-stats" in r.url else None)
+        page.goto(f"{_api(server)}/#/novels/{nid}")
+        page.wait_for_load_state("networkidle")
+        page.locator(f'[data-node-id="{a}"] > .tree-node .tree-checkbox').check()
+        page.wait_for_timeout(300)
+        assert requests == []  # 选一个 / 没有对比表，不请求
+        page.locator(f'[data-node-id="{b}"] > .tree-node .tree-checkbox').check()
+        row_a = page.locator(f'.chapter-compare tr[data-chapter-id="{a}"]')
+        row_b = page.locator(f'.chapter-compare tr[data-chapter-id="{b}"]')
+        # 列：章节 原文 解析 配音 分块 已合成 未绑定 混音 状态
+        expect(row_a.locator("td").nth(4)).to_have_text("3")
+        expect(row_a.locator("td").nth(5)).to_have_text("2")
+        expect(row_a.locator("td").nth(6)).to_have_text("1")
+        expect(row_a.locator("td").nth(6)).to_have_class(re.compile(r"\bdanger\b"))
+        expect(row_b.locator("td").nth(4)).to_have_text("0")  # 没有 script 的章节是真实的 0
+        assert len(requests) == 1
 
 
     def test_mix_finished_toasts_about_skipped_assets(self, page, server):

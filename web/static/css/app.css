@@ -436,6 +436,7 @@ textarea { resize: vertical; }
 .table-wrap th { text-align: left; padding: 8px 6px; font-weight: 800; border-bottom: 2px solid var(--border); }
 .table-wrap th.center, .table-wrap td.center { text-align: center; }
 .table-wrap td { padding: 8px 6px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.table-wrap td.danger { color: var(--danger); font-weight: 800; }
 
 /* ---------------------------------------------------------------------- */
 /* 任务队列面板 */

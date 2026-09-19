@@ -58,6 +58,11 @@ const API = {
         });
     },
 
+    // 每章分块数字（对比表用；要逐章解析 JSON，所以不塞进 /tree）
+    async getChapterStats(novelId) {
+        return this.request(`/novels/${novelId}/chapter-stats`);
+    },
+
     // 树形结构
     async getNovelTree(novelId) {
         return this.request(`/novels/${novelId}/tree`);

@@ -111,6 +111,52 @@ class TestNodesAPI:
         assert chapter_node["id"] == ch_id
         assert "status" in chapter_node and chapter_node["status"]
 
+    def _chapter_dir(self, tmp_path, nid, cid):
+        return tmp_path / "library" / nid / "chapters" / cid
+
+    def test_chapter_stats_counts_segments_voiced_and_unbound(self, client, tmp_path):
+        nid = self._create_novel(client, volume=False, part=False)
+        ids = [client.post(f"/api/novels/{nid}/nodes", json={"type": "chapter", "title": t}).json()["node_id"]
+               for t in ("甲", "乙")]
+        for cid in ids:
+            client.put(f"/api/novels/{nid}/chapters/{cid}/raw", files={"file": ("raw.txt", b"x")})
+        a = self._chapter_dir(tmp_path, nid, ids[0])
+        (a / "script_final.json").write_text(json.dumps([
+            {"seg_id": "1", "speaker": "旁白", "text": "a"},
+            {"seg_id": "2", "speaker": None, "text": "b"},
+            {"seg_id": "3", "speaker": "", "text": "c"},
+        ], ensure_ascii=False), encoding="utf-8")
+        (a / "timeline.json").write_text(json.dumps({"items": [{"seg_id": "1"}, {"seg_id": "2"}]}), encoding="utf-8")
+
+        resp = client.get(f"/api/novels/{nid}/chapter-stats")
+        assert resp.status_code == 200
+        stats = resp.json()["chapters"]
+        assert stats[ids[0]] == {"segment_count": 3, "voiced_count": 2, "unbound_count": 2}
+
+    def test_chapter_stats_missing_files_are_zero_not_404(self, client, tmp_path):
+        nid = self._create_novel(client, volume=False, part=False)
+        cid = client.post(f"/api/novels/{nid}/nodes", json={"type": "chapter", "title": "只有原文"}).json()["node_id"]
+        client.put(f"/api/novels/{nid}/chapters/{cid}/raw", files={"file": ("raw.txt", b"x")})
+        stats = client.get(f"/api/novels/{nid}/chapter-stats").json()["chapters"]
+        assert stats[cid] == {"segment_count": 0, "voiced_count": 0, "unbound_count": 0}
+
+    def test_chapter_stats_tolerates_corrupt_json(self, client, tmp_path):
+        nid = self._create_novel(client, volume=False, part=False)
+        cid = client.post(f"/api/novels/{nid}/nodes", json={"type": "chapter", "title": "坏文件"}).json()["node_id"]
+        client.put(f"/api/novels/{nid}/chapters/{cid}/raw", files={"file": ("raw.txt", b"x")})
+        d = self._chapter_dir(tmp_path, nid, cid)
+        (d / "script_final.json").write_text("{not json", encoding="utf-8")
+        (d / "timeline.json").write_text("[1, 2]", encoding="utf-8")  # 顶层不是 {items: []}
+        stats = client.get(f"/api/novels/{nid}/chapter-stats").json()["chapters"]
+        assert stats[cid] == {"segment_count": 0, "voiced_count": 0, "unbound_count": 0}
+
+    def test_chapter_stats_unknown_novel_is_404(self, client):
+        assert client.get("/api/novels/nope/chapter-stats").status_code == 404
+
+    def test_chapter_stats_novel_without_chapters(self, client):
+        nid = self._create_novel(client, volume=False, part=False)
+        assert client.get(f"/api/novels/{nid}/chapter-stats").json() == {"chapters": {}}
+
     def test_create_node_rejects_disallowed_level(self, client):
         nid = self._create_novel(client, volume=False, part=False)
         resp = client.post(f"/api/novels/{nid}/nodes", json={"type": "volume", "title": "不该存在的卷"})

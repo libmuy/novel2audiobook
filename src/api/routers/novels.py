@@ -56,6 +56,48 @@ def _merge_status_into_tree(nodes: list, status_by_chapter: dict) -> None:
             _merge_status_into_tree(children, status_by_chapter)
 
 
+def _read_json_or_none(path: str):
+    """读一个 JSON；文件不存在、读不了或格式损坏都当作「没有」。"""
+    import json
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+@router.get("/{nid}/chapter-stats")
+def get_chapter_stats(nid: str):
+    """每章的分块数字：segment_count（script_final.json 的分块数）、voiced_count
+    （timeline.json 的条目数，即已合成的句子数）、unbound_count（分块里没有绑定
+    角色的数量）。
+
+    要逐章解析两个 JSON，所以**不**塞进 /tree 那条每次进页面都走的热路径，前端
+    只在对比表可见时才来取。缺 script/timeline 的章节各项给 0，不 404——「还没
+    解析」是正常状态，不是错误。"""
+    try:
+        library.load_novel(nid)
+    except FileNotFoundError:
+        raise HTTPException(404, f"小说 {nid} 不存在")
+    chapters_dir = library.get_chapters_dir(nid)
+    stats = {}
+    if os.path.isdir(chapters_dir):
+        for cid in sorted(os.listdir(chapters_dir)):
+            ch_dir = os.path.join(chapters_dir, cid)
+            if not os.path.isdir(ch_dir):
+                continue
+            script = _read_json_or_none(os.path.join(ch_dir, "script_final.json"))
+            segments = script if isinstance(script, list) else []
+            timeline = _read_json_or_none(os.path.join(ch_dir, "timeline.json"))
+            items = timeline.get("items") if isinstance(timeline, dict) else None
+            stats[cid] = {
+                "segment_count": len(segments),
+                "voiced_count": len(items) if isinstance(items, list) else 0,
+                "unbound_count": sum(1 for s in segments if isinstance(s, dict) and not s.get("speaker")),
+            }
+    return {"chapters": stats}
+
+
 @router.get("/{nid}/tree")
 def get_novel_tree(nid: str):
     from src.status_tracker import get_novel_status_summary

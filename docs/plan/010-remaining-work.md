@@ -95,3 +95,10 @@
 - 混音任务新到终态 → 重取树并 toast：有缺素材的章节提示「N 个章节混音时跳过了缺失素材，可到「音效库」生成后重新混音」（warning），否则「混音完成」。进页面时先把已完成的旧任务登记为「已处理」，不会每次进来重复提示。
 - 踩坑：模板用到的变量必须由 `setup` 返回——一开始漏了 `selectedChapterIds`，Vue 生产版对渲染错误只在控制台输出，表现为整页空白，所有 novel-detail 用例一起失败。
 - 测试：`TestChapterStatusMap`——树点 `missing`/`pending`、对比表 0/1/2 个选中的出现与内容、混音完成 toast（用 `page.route` 伪造任务列表，同一任务第二次事件不重复提示）。
+### 阶段 9
+- 新增 `GET /api/novels/{novel_id}/chapter-stats`（`novels.py`）：每章 `segment_count`（`script_final.json` 分块数）、`voiced_count`（`timeline.json` 的 `items` 数）、`unbound_count`（分块里 `speaker` 为空的数量）。
+  缺文件、JSON 损坏、`timeline.json` 顶层形状不对，各项都给 0，不 404、不 500——「还没解析」是正常状态；只有小说本身不存在才 404。
+- **不进 `/tree`**：`/tree` 是每次进页面都走的热路径，逐章解析 JSON 会拖慢它；前端只在对比表变为可见时（`selectedChapterIds.length > 1` 由假变真）才取，对比表可见期间任务事件到来时再刷一次。数字没取回来时显示「—」而不是 0（0 是真实答案，测试里分开断言）。
+- 对比表新增「分块 / 已合成 / 未绑定」三列；未绑定 > 0 时标红（`.table-wrap td.danger`）。「已合成」= timeline 条目数，与工作台统计口径一致。
+- **记入但本次不做**：`novels-page.loadNovels` 每本书一次 `getNovelTree` 是 N+1，真正的修法是 `GET /novels/summary` 一次返回各书的章节计数；`chapter-stats` 也不该被往那里塞。
+- 测试：API 5 条（数字口径、缺文件为 0、损坏 JSON、未知小说 404、无章节）；E2E 断言未选/选一个时**零请求**、两个以上后数字出现、未绑定标红、无 script 的章节显示真实 0。

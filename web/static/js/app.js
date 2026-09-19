@@ -705,6 +705,9 @@ app.component('novel-detail-page', {
                                         <th class="center">原文</th>
                                         <th class="center">解析</th>
                                         <th class="center">配音</th>
+                                        <th class="center">分块</th>
+                                        <th class="center">已合成</th>
+                                        <th class="center">未绑定</th>
                                         <th>混音</th>
                                         <th>状态</th>
                                     </tr>
@@ -715,6 +718,9 @@ app.component('novel-detail-page', {
                                         <td class="center">{{ row.raw }}</td>
                                         <td class="center">{{ row.parsed }}</td>
                                         <td class="center">{{ row.dubbed }}</td>
+                                        <td class="center">{{ row.segments }}</td>
+                                        <td class="center">{{ row.voiced }}</td>
+                                        <td class="center" :class="{ danger: row.unboundWarn }">{{ row.unbound }}</td>
                                         <td>{{ row.mix }}</td>
                                         <td>{{ row.status }}</td>
                                     </tr>
@@ -857,6 +863,8 @@ app.component('novel-detail-page', {
         const chapterStats = ref({});
         // chapter_id → 该章状态摘要（GET /tree 的 status.chapters），树状态点和对比表共用
         const statusByChapter = ref({});
+        // chapter_id → {segment_count, voiced_count, unbound_count}；只在对比表可见时才去取
+        const chapterNumbers = ref({});
         const chapterAssets = ref(null);
         const mixWithAssets = ref(false);
         const missingAssetNames = computed(() => {
@@ -939,12 +947,18 @@ app.component('novel-detail-page', {
                             mix += '（仅人声）';
                         }
                     }
+                    // 数字还没取回来时显示 —，不显示 0（0 是一个真实的答案）
+                    const num = chapterNumbers.value[n.id];
                     return {
                         id: n.id,
                         title: n.title,
                         raw: mark(st.raw),
                         parsed: st.final ? '定稿' : st.draft ? '初稿' : '✗',
                         dubbed: mark(st.timeline),
+                        segments: num ? num.segment_count : '—',
+                        voiced: num ? num.voiced_count : '—',
+                        unbound: num ? num.unbound_count : '—',
+                        unboundWarn: !!num && num.unbound_count > 0,
                         mix,
                         status: st.status || '—',
                     };
@@ -1071,6 +1085,17 @@ app.component('novel-detail-page', {
         const refreshTree = () => {
             loadTree();
         };
+
+        // 对比表可见时才取（不进 /tree 热路径）；任务结束后数字会变，所以事件里也刷一次
+        const compareVisible = computed(() => selectedChapterIds.value.length > 1);
+        const loadChapterNumbers = async () => {
+            try {
+                chapterNumbers.value = (await API.getChapterStats(props.novelId)).chapters || {};
+            } catch (error) {
+                console.error('加载章节数值失败:', error);
+            }
+        };
+        watch(compareVisible, (visible) => { if (visible) loadChapterNumbers(); });
 
         const selectNode = (node) => {
             selectedNode.value = node;
@@ -1407,6 +1432,7 @@ app.component('novel-detail-page', {
         // 收到就整体重新拉一次任务列表（任务量不大，简单可靠优先于精细 patch）
         const onTaskUpdate = async () => {
             await loadTasks();
+            if (compareVisible.value) loadChapterNumbers();
             const newlyMixed = tasks.value.filter((t) =>
                 t.type === 'mix' && t.novel_id === props.novelId && markMixDone().includes(t.id));
             if (newlyMixed.length) {
