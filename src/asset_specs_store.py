@@ -24,7 +24,12 @@ VALID_KINDS = ("ambience", "sfx")
 DEFAULT_SPEC_PATH = "assets/asset_specs.yaml"
 
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_]{0,47}$")
-_SPEC_FIELDS = ("description", "prompt", "negative_prompt", "duration_sec", "seed")
+_SPEC_FIELDS = ("description", "prompt", "negative_prompt", "duration_sec", "seed",
+                "category", "tags")
+# 只是整理用的元数据（不影响生成结果，不进 compute_spec_hash）；空值 = 没有，
+# 写盘时直接不写这个键，避免文件里堆满 `category: ''` / `tags: []`
+_OPTIONAL_META = ("category", "tags")
+CATEGORY_TREE_KEY = "category_tree"
 
 # API 是多线程的，asset_gen 任务也会并发读文件：所有写操作串行化
 SPEC_LOCK = threading.Lock()
@@ -103,7 +108,24 @@ def validate_name(name: str):
         raise SpecError("素材名只能包含小写字母、数字、下划线，以字母或数字开头，最长 48 个字符")
 
 
+def normalize_tags(tags) -> list:
+    """去空白、去重（保序）。和角色标签同一套规则：标签只存在条目身上，没有注册表。"""
+    seen, out = set(), []
+    for t in tags or []:
+        t = str(t).strip()
+        if t and t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out
+
+
 def validate_spec(spec: dict):
+    category = spec.get("category")
+    if category is not None and not isinstance(category, str):
+        raise SpecError("category 必须是字符串")
+    tags = spec.get("tags")
+    if tags is not None and (not isinstance(tags, list) or any(not isinstance(t, str) for t in tags)):
+        raise SpecError("tags 必须是字符串数组")
     if not str(spec.get("prompt", "")).strip():
         raise SpecError("prompt 不能为空")
     duration = spec.get("duration_sec")
@@ -138,8 +160,16 @@ def create_spec(kind: str, name: str, spec: dict, path: str = None):
             raise SpecExists(f"素材 {kind}/{name} 已存在")
         entry = CommentedMap()
         for field in _SPEC_FIELDS:
-            if field in spec and spec[field] is not None:
-                entry[field] = spec[field]
+            value = spec.get(field)
+            if value is None:
+                continue
+            if field == "category":
+                value = value.strip()
+            elif field == "tags":
+                value = normalize_tags(value)
+            if field in _OPTIONAL_META and not value:
+                continue
+            entry[field] = value
         bucket[name] = entry
         save_raw(doc, path)
 
@@ -157,8 +187,18 @@ def update_spec(kind: str, name: str, patch: dict, path: str = None):
         merged.update({k: v for k, v in patch.items() if k in _SPEC_FIELDS and v is not None})
         validate_spec(merged)
         for field, value in patch.items():
-            if field in _SPEC_FIELDS and value is not None:
-                entry[field] = value  # 原地改值，条目上的行内注释保留
+            if field not in _SPEC_FIELDS or value is None:
+                continue
+            if field == "category":
+                value = value.strip()
+            elif field == "tags":
+                value = normalize_tags(value)
+            if field in _OPTIONAL_META and not value:
+                # 清空 = 删掉这个键（PATCH 里 "" / [] 是「去掉分类/标签」，None 才是「不改」）
+                if field in entry:
+                    del entry[field]
+                continue
+            entry[field] = value  # 原地改值，条目上的行内注释保留
         save_raw(doc, path)
 
 
@@ -186,3 +226,31 @@ def delete_spec(kind: str, name: str, delete_files: bool = False, path: str = No
                 os.remove(fp)
                 files_deleted = True
     return files_deleted
+
+
+# --------------------------------------------------------------------------
+# 分类树：存在同一份 yaml 的顶层 `category_tree` 键里（一域一文件，删规格时不用
+# 同步第二份；ruamel round-trip 保护注释）。asset_gen.load_asset_specs 只按
+# ambience/sfx 两个固定键取素材，同级的 category_tree 不会被当成素材。
+# --------------------------------------------------------------------------
+
+def _plain(node):
+    """ruamel 的 CommentedMap/Seq → 普通 dict/list（对外只交出纯数据）"""
+    if isinstance(node, dict):
+        return {k: _plain(v) for k, v in node.items()}
+    if isinstance(node, (list, tuple)):
+        return [_plain(v) for v in node]
+    return node
+
+
+def load_category_tree(path: str = None) -> list:
+    with SPEC_LOCK:
+        doc = load_raw(path)
+    return _plain(doc.get(CATEGORY_TREE_KEY) or [])
+
+
+def save_category_tree(tree: list, path: str = None):
+    with SPEC_LOCK:
+        doc = load_raw(path)
+        doc[CATEGORY_TREE_KEY] = tree
+        save_raw(doc, path)

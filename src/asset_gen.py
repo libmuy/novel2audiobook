@@ -79,13 +79,20 @@ def load_asset_specs(spec_path: str = None) -> dict:
                 "duration_sec": float(spec.get("duration_sec", 30.0)),
                 "seed": int(spec.get("seed", 0)),
             }
+            # 整理用元数据：只在文件里写了才带上（不影响生成，不进 compute_spec_hash）
+            if str(spec.get("category") or "").strip():
+                specs[kind][name]["category"] = str(spec["category"]).strip()
+            if spec.get("tags"):
+                specs[kind][name]["tags"] = [str(t) for t in spec["tags"]]
     return specs
 
 
 def compute_spec_hash(spec: dict) -> str:
     """
     对影响生成结果的字段（prompt/negative_prompt/duration_sec/seed）计算稳定哈希，
-    作为增量生成的缓存键；description 是纯中文说明，改动不应触发重新生成。
+    作为增量生成的缓存键；description 是纯中文说明，category/tags 是整理用元数据，
+    这些改动都不应触发重新生成——**不要**把它们加进 hashable，否则整个素材库会在
+    那一刻全部失效（有测试钉着）。
     """
     hashable = {k: spec.get(k) for k in ("prompt", "negative_prompt", "duration_sec", "seed")}
     canonical = json.dumps(hashable, sort_keys=True, ensure_ascii=False)

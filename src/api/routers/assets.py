@@ -3,11 +3,14 @@ import os
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
-from src import asset_gen, asset_specs_store as store
+from src import asset_gen, asset_specs_store as store, category_tree
 from src.utils import resolve_path
-from src.api.schemas import AssetSpecCreate, AssetSpecUpdate
+from src.api.schemas import AssetSpecCreate, AssetSpecUpdate, CategoryTreePut
 
 router = APIRouter(prefix="/asset-specs", tags=["assets"])
+# 分类树与标签汇总在 /api 根下（与 /role-category-tree、/role-tags 对称），不挂在
+# /asset-specs/{kind}/{name} 的路径空间里
+meta_router = APIRouter(tags=["assets"])
 
 
 def _rows(kind: str = None) -> list:
@@ -22,7 +25,7 @@ def _rows(kind: str = None) -> list:
         for name, spec in sorted(specs.get(k, {}).items()):
             st = status_by_key.get((k, name), {})
             rows.append({
-                "kind": k, "name": name, **spec,
+                "kind": k, "name": name, "category": "", "tags": [], **spec,
                 "status": st.get("status", "MISSING"),
                 "engine": st.get("engine", "-"),
                 "expected_engine": st.get("expected_engine"),
@@ -97,3 +100,37 @@ def get_asset_audio(kind: str, name: str):
     if not os.path.exists(path):
         raise HTTPException(404, f"素材 {kind}/{name} 还没有生成音频")
     return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "no-cache"})
+
+
+@meta_router.get("/asset-category-tree")
+def get_asset_category_tree():
+    """还没保存过树就是空树（不像角色库有旧的扁平 categories 可迁移）；
+    素材身上的 category 字符串仍然有效，界面把不在树里的显示成「未登记」。"""
+    tree = store.load_category_tree()
+    return {"tree": tree, "categories": category_tree.flatten_paths(tree)}
+
+
+@meta_router.put("/asset-category-tree")
+def put_asset_category_tree(data: CategoryTreePut):
+    """整树替换，语义与 PUT /role-category-tree 相同（校验 → 补 id → 落盘）。
+    删除/改名树节点**不会**改动素材自己的 category——同一条悬空引用容忍策略。"""
+    tree = category_tree.normalize_tree([n.model_dump() for n in data.tree])
+    try:
+        category_tree.validate_tree(tree)
+    except category_tree.TreeError as e:
+        raise HTTPException(400, str(e))
+    category_tree.assign_missing_ids(tree)
+    store.save_category_tree(tree)
+    return {"ok": True, "tree": tree, "categories": category_tree.flatten_paths(tree)}
+
+
+@meta_router.get("/asset-tags")
+def list_asset_tags():
+    """聚合所有素材用到的标签及数量（标签只存在素材身上，没有注册表）。"""
+    counts = {}
+    for bucket in asset_gen.load_asset_specs().values():
+        for spec in bucket.values():
+            for t in spec.get("tags", []):
+                counts[t] = counts.get(t, 0) + 1
+    tags = [{"name": n, "count": c} for n, c in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
+    return {"tags": tags}

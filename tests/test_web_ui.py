@@ -1196,6 +1196,85 @@ class TestAssetEngineDrift:
 
 
 # ---------------------------------------------------------------------------
+# 19. 计划 010 阶段 11：素材分类树 + 标签（布局与角色库一致）
+class TestAssetCategoriesAndTags:
+    def test_create_filter_and_delete_category(self, page, server):
+        import httpx
+        base = _api(server)
+        httpx.post(f"{base}/api/asset-specs", json={"kind": "sfx", "name": "e2e_plain", "prompt": "x"})
+        page.goto(f"{base}/#/assets")
+        page.wait_for_load_state("networkidle")
+
+        # 在左侧树里新建分类（复用角色库同一个 category-tree-pane）
+        page.get_by_role("button", name="+ 新建分类").click()
+        page.locator(".category-name-input").fill("e2e环境")
+        page.locator(".modal-footer button", has_text="保存").click()
+        row = page.locator('[data-category-path="e2e环境"]')
+        expect(row).to_be_visible()
+
+        # 新增素材：选分类、加标签（描述仍是弹窗里第 2 个 input.form-input，见 TestAssetsPageCrud）
+        page.get_by_role("button", name="+ 新增素材").click()
+        page.locator(".asset-name-input").fill("e2e_cat")
+        page.locator(".asset-prompt-input").fill("rain")
+        page.locator(".asset-category-select").select_option("e2e环境")
+        page.locator(".asset-tag-input").fill("e2e雨声")
+        page.locator(".asset-tag-input").press("Enter")
+        page.locator(".modal-footer button", has_text="创建").click()
+        card = page.locator(".asset-card", has_text="e2e_cat")
+        expect(card).to_contain_text("分类：e2e环境")
+        expect(card.locator(".tag-chip")).to_have_text("e2e雨声")
+        specs = httpx.get(f"{base}/api/asset-specs?kind=sfx").json()["specs"]
+        saved = [s for s in specs if s["name"] == "e2e_cat"][0]
+        assert saved["category"] == "e2e环境" and saved["tags"] == ["e2e雨声"]
+
+        # 按分类筛选：只剩这一条
+        row.click()
+        expect(page.locator(".asset-card", has_text="e2e_cat")).to_be_visible()
+        expect(page.locator(".asset-card", has_text="e2e_plain")).to_have_count(0)
+        page.locator(".category-row", has_text="全部").click()
+        expect(page.locator(".asset-card", has_text="e2e_plain")).to_be_visible()
+
+        # 按标签筛选
+        page.locator(".tag-filter-chip", has_text="e2e雨声").click()
+        expect(page.locator(".asset-card", has_text="e2e_cat")).to_be_visible()
+        expect(page.locator(".asset-card", has_text="e2e_plain")).to_have_count(0)
+        page.locator(".tag-filter-chip", has_text="e2e雨声").click()
+
+        # 删除分类：素材自己的 category 不清空（悬空引用容忍），编辑时显示「未登记」
+        row.locator("button", has_text="删").click()
+        page.locator(".confirm-footer button", has_text="删除").click()
+        expect(page.locator('[data-category-path="e2e环境"]')).to_have_count(0)
+        expect(page.locator(".asset-card", has_text="e2e_cat")).to_contain_text("分类：e2e环境")
+        page.locator(".asset-card", has_text="e2e_cat").get_by_role("button", name="编辑").click()
+        expect(page.locator(".asset-category-select")).to_have_value("e2e环境")
+        expect(page.locator(".asset-category-select option:checked")).to_contain_text("未登记")
+        page.locator(".modal-footer button", has_text="取消").click()
+
+        # 编辑里清空分类和标签
+        page.locator(".asset-card", has_text="e2e_cat").get_by_role("button", name="编辑").click()
+        page.locator(".asset-category-select").select_option("")
+        page.locator(".tag-chip-remove").click()
+        page.locator(".modal-footer button", has_text="保存").click()
+        expect(page.locator(".asset-card", has_text="e2e_cat")).not_to_contain_text("分类：")
+        saved = [s for s in httpx.get(f"{base}/api/asset-specs?kind=sfx").json()["specs"] if s["name"] == "e2e_cat"][0]
+        assert saved["category"] == "" and saved["tags"] == []
+        for n in ("e2e_cat", "e2e_plain"):
+            httpx.delete(f"{base}/api/asset-specs/sfx/{n}")
+
+    def test_new_asset_defaults_to_selected_category(self, page, server):
+        import httpx
+        base = _api(server)
+        httpx.put(f"{base}/api/asset-category-tree", json={"tree": [{"title": "e2e默认", "children": []}]})
+        page.goto(f"{base}/#/assets")
+        page.wait_for_load_state("networkidle")
+        page.locator('[data-category-path="e2e默认"]').click()
+        page.get_by_role("button", name="+ 新增素材").click()
+        expect(page.locator(".asset-category-select")).to_have_value("e2e默认")
+        page.locator(".modal-close").click()
+        httpx.put(f"{base}/api/asset-category-tree", json={"tree": []})
+
+
+# ---------------------------------------------------------------------------
 # 18. 计划 010 阶段 8：树状态点用整张章节状态表；多选出对比表。
 class TestChapterStatusMap:
     def _novel_with_two_chapters(self, server):

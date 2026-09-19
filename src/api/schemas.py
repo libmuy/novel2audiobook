@@ -78,6 +78,8 @@ class AssetSpecCreate(BaseModel):
     negative_prompt: str = ""
     duration_sec: float = 10.0
     seed: int = 0
+    category: str = ""
+    tags: list[str] = []
 
 
 class AssetSpecUpdate(BaseModel):
@@ -87,6 +89,9 @@ class AssetSpecUpdate(BaseModel):
     negative_prompt: Optional[str] = None
     duration_sec: Optional[float] = None
     seed: Optional[int] = None
+    # "" / [] 表示清空；None（不传）表示不改
+    category: Optional[str] = None
+    tags: Optional[list[str]] = None
 
 
 class CategoryNode(BaseModel):

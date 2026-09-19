@@ -2641,18 +2641,34 @@ app.component('roles-page', {
 });
 
 // 背景音/音效库：素材规格（assets/asset_specs.yaml）的增删改查 + 触发生成任务。
-// 规格本身没有分类/标签（后端没有对应元数据，素材分类树是后续项）；生成状态
-// MISSING / STALE / OK 来自后端 get_asset_status_list。还没有音频播放接口，
-// 所以卡片上没有试听——不放一个点了没反应的播放器。
+// 布局与角色库一致：左侧嵌套分类树（GET/PUT /asset-category-tree）+ 右侧卡片；
+// 素材自己的 category 存路径字符串、tags 存标签数组，都只是整理用元数据，不参与
+// spec_hash。删除/改名分类节点不改素材已有的 category（悬空引用容忍）。
+// 生成状态 MISSING / STALE / OK 来自后端 get_asset_status_list。
 app.component('assets-page', {
     template: `
-        <div class="page-pad assets-page">
-        <div class="page-header">
+        <div class="assets-page">
+        <div class="page-header roles-header">
             <h1 class="page-title">背景音与音效库</h1>
             <div class="page-actions">
                 <button class="btn btn-secondary" @click="generate(null)" :disabled="!!genTask">生成待生成的素材</button>
                 <button class="btn btn-primary" @click="openCreate">+ 新增素材</button>
             </div>
+        </div>
+
+        <div class="two-pane-layout">
+        <category-tree-pane
+            :rows="flatRows"
+            v-model:selectedPath="selectedPath"
+            :collapsed="collapsed"
+            :save="saveNode"
+            @toggle-collapse="toggleCollapse"
+            @remove="removeNode"
+        ></category-tree-pane>
+
+        <div class="content-pane">
+        <div class="content-pane-header">
+            <h3 class="content-pane-title">{{ selectedPath === null ? '全部素材' : selectedPath }}</h3>
         </div>
 
         <div v-if="genTask" class="info-banner asset-gen-banner">
@@ -2668,9 +2684,16 @@ app.component('assets-page', {
             <div class="progress-bar mt-2"><div class="progress-fill" :style="{ width: genPercent + '%' }"></div></div>
         </div>
 
-        <div class="flex gap-2 mb-4">
+        <div class="flex gap-2 mb-4" style="flex-wrap: wrap; align-items: center;">
             <span v-for="f in kindFilters" :key="f.value" class="category-tag"
                   :class="{ active: kindFilter === f.value }" @click="kindFilter = f.value">{{ f.label }}</span>
+            <template v-if="tagStats.length">
+                <span class="text-sm text-gray">标签筛选</span>
+                <button v-for="t in tagStats" :key="t.name" class="tag-filter-chip"
+                        :class="{ active: tagFilters.includes(t.name) }" @click="toggleTagFilter(t.name)">
+                    {{ t.name }} {{ t.count }}
+                </button>
+            </template>
         </div>
 
         <div v-if="loading" class="empty-state"><div class="loading-spinner"></div></div>
@@ -2689,6 +2712,10 @@ app.component('assets-page', {
                     {{ spec.duration_sec }}s · 种子 {{ spec.seed }}<span v-if="spec.engine && spec.engine !== '-'"> · {{ spec.engine }}</span>
                 </div>
                 <div class="asset-meta">{{ spec.description || '（无描述）' }}</div>
+                <div v-if="spec.category" class="asset-meta asset-category">分类：{{ spec.category }}</div>
+                <div v-if="(spec.tags || []).length" class="flex gap-2" style="flex-wrap: wrap;">
+                    <span v-for="tag in spec.tags" :key="tag" class="tag-chip">{{ tag }}</span>
+                </div>
                 <div class="asset-prompt" :title="spec.prompt">{{ spec.prompt }}</div>
                 <!-- 只要磁盘上有 wav 就能听（含规格已变更、旧音频还在的情况）；key 里带
                      audioNonce：一次生成完成后强制重建元素，不让它继续持有旧音频的缓冲 -->
@@ -2710,6 +2737,8 @@ app.component('assets-page', {
                     <button class="action-btn danger" @click="openDelete(spec)">删除</button>
                 </div>
             </div>
+        </div>
+        </div>
         </div>
 
         <div v-if="showDialog" class="modal-overlay" @click.self="showDialog = false">
@@ -2756,6 +2785,24 @@ app.component('assets-page', {
                             <input type="number" class="form-input" v-model.number="form.seed" min="0">
                         </div>
                     </div>
+                    <div class="form-group">
+                        <label class="form-label">分类</label>
+                        <select class="form-select asset-category-select" v-model="form.category">
+                            <option value="">未分类</option>
+                            <option v-for="opt in categoryOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                        </select>
+                        <p class="form-help">没有想要的分类？先在左侧分类树里新建</p>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">标签</label>
+                        <div class="flex gap-2 mb-2" style="flex-wrap: wrap;">
+                            <span v-for="tag in form.tags" :key="tag" class="tag-chip">
+                                {{ tag }}<button class="tag-chip-remove" @click="removeTag(tag)">&times;</button>
+                            </span>
+                        </div>
+                        <input type="text" class="form-input asset-tag-input" v-model="tagInput"
+                               @keydown.enter.prevent="addTag" placeholder="输入标签后按回车">
+                    </div>
                     <p class="form-help" v-if="editing">改 prompt / 反向提示词 / 时长 / 种子会让已生成的音频失效（需要重新生成）；只改描述不会。</p>
                 </div>
                 <div class="modal-footer">
@@ -2792,6 +2839,8 @@ app.component('assets-page', {
 
         const specs = ref([]);
         const loading = ref(true);
+        const tagStats = ref([]);
+        const tagFilters = ref([]);
         const kindFilter = ref('all');
         const kindFilters = [
             { value: 'all', label: '全部' },
@@ -2800,9 +2849,30 @@ app.component('assets-page', {
         ];
         const kindLabel = (kind) => (kind === 'ambience' ? '背景音' : '音效');
 
-        const visibleSpecs = computed(() =>
-            kindFilter.value === 'all' ? specs.value : specs.value.filter((s) => s.kind === kindFilter.value)
-        );
+        // ---- 分类树（逻辑在 category-tree.js，界面是 category-tree-pane）----
+        const {
+            tree, collapsed, selectedPath, flatRows, pathOptions, matchesPath,
+            toggleCollapse, reload: loadTree, saveNode, removeNode,
+        } = CategoryTree.useCategoryTree({
+            load: () => API.getAssetCategoryTree(),
+            save: (t) => API.putAssetCategoryTree(t),
+            showToast,
+            showConfirm,
+            deleteWarning: '已经使用这些分类的素材不会被清空——它们保留原来的分类名，只是不再出现在分类树里（编辑时显示为「未登记」）。',
+        });
+        const categoryOptions = computed(() => pathOptions(specs.value.map((s) => s.category)));
+
+        const visibleSpecs = computed(() => specs.value.filter((s) => {
+            if (kindFilter.value !== 'all' && s.kind !== kindFilter.value) return false;
+            if (!matchesPath(s.category)) return false;
+            if (tagFilters.value.length && !tagFilters.value.some((t) => (s.tags || []).includes(t))) return false;
+            return true;
+        }));
+
+        const toggleTagFilter = (name) => {
+            const i = tagFilters.value.indexOf(name);
+            if (i >= 0) tagFilters.value.splice(i, 1); else tagFilters.value.push(name);
+        };
 
         // 状态 -> 展示；STALE(...) 是带括号后缀的前缀匹配
         const statusInfo = (status) => {
@@ -2813,9 +2883,20 @@ app.component('assets-page', {
             return { label: '未生成', cls: 'badge-neutral' };
         };
 
+        const loadTags = async () => {
+            try {
+                tagStats.value = (await API.getAssetTags()).tags || [];
+                // 筛选中的标签如果已经没有素材在用，去掉，免得筛出一片空白
+                tagFilters.value = tagFilters.value.filter((t) => tagStats.value.some((s) => s.name === t));
+            } catch (error) {
+                console.error('加载标签失败:', error);
+            }
+        };
+
         const loadSpecs = async () => {
             try {
                 specs.value = (await API.getAssetSpecs()).specs || [];
+                loadTags();
             } catch (error) {
                 showToast?.(`加载素材失败: ${error.message}`, 'error');
             } finally {
@@ -2828,15 +2909,25 @@ app.component('assets-page', {
         const editing = ref(false);
         const blankForm = () => ({
             kind: 'sfx', name: '', description: '', prompt: '',
-            negative_prompt: '', duration_sec: 5, seed: 0,
+            negative_prompt: '', duration_sec: 5, seed: 0, category: '', tags: [],
         });
         const form = reactive(blankForm());
+        const tagInput = ref('');
+        const addTag = () => {
+            const t = tagInput.value.trim();
+            if (t && !form.tags.includes(t)) form.tags.push(t);
+            tagInput.value = '';
+        };
+        const removeTag = (tag) => { form.tags = form.tags.filter((t) => t !== tag); };
 
         const canSave = computed(() => form.name.trim() && form.prompt.trim());
 
         const openCreate = () => {
             editing.value = false;
             Object.assign(form, blankForm());
+            tagInput.value = '';
+            // 在某个分类下点「新增」，默认就归到这个分类
+            form.category = selectedPath.value || '';
             showDialog.value = true;
         };
         const openEdit = (spec) => {
@@ -2845,14 +2936,18 @@ app.component('assets-page', {
                 kind: spec.kind, name: spec.name, description: spec.description || '',
                 prompt: spec.prompt, negative_prompt: spec.negative_prompt || '',
                 duration_sec: spec.duration_sec, seed: spec.seed,
+                category: spec.category || '', tags: [...(spec.tags || [])],
             });
+            tagInput.value = '';
             showDialog.value = true;
         };
         const save = async () => {
+            addTag();  // 输入框里还没按回车的标签也算
             const body = {
                 description: form.description, prompt: form.prompt,
                 negative_prompt: form.negative_prompt,
                 duration_sec: Number(form.duration_sec), seed: Number(form.seed),
+                category: form.category, tags: form.tags,  // "" / [] = 清空
             };
             try {
                 if (editing.value) {
@@ -2959,7 +3054,7 @@ app.component('assets-page', {
 
         onMounted(async () => {
             window.addEventListener('task-update', onTaskUpdate);
-            await loadSpecs();
+            await Promise.all([loadSpecs(), loadTree()]);
             // 页面刷新/切走再回来时，接上还在跑的生成任务
             try {
                 const tasks = await API.getTasks();
@@ -2972,6 +3067,8 @@ app.component('assets-page', {
 
         return {
             specs, loading, kindFilter, kindFilters, kindLabel, visibleSpecs, statusInfo,
+            tree, collapsed, selectedPath, flatRows, toggleCollapse, saveNode, removeNode,
+            categoryOptions, tagStats, tagFilters, toggleTagFilter, tagInput, addTag, removeTag,
             showDialog, editing, form, canSave, openCreate, openEdit, save,
             deleting, deleteFiles, openDelete, confirmDelete,
             genTask, genPercent, generate, cancelGen, onAudioPlay, audioNonce, API,

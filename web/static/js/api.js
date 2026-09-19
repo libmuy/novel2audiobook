@@ -225,6 +225,22 @@ const API = {
         return this.request('/role-tags');
     },
 
+    // 素材分类树（存在 asset_specs.yaml 顶层）与标签；语义同角色库的对应接口
+    async getAssetCategoryTree() {
+        return this.request('/asset-category-tree');
+    },
+
+    async putAssetCategoryTree(tree) {
+        return this.request('/asset-category-tree', {
+            method: 'PUT',
+            body: JSON.stringify({ tree }),
+        });
+    },
+
+    async getAssetTags() {
+        return this.request('/asset-tags');
+    },
+
     // 任务相关
     async getTasks() {
         return this.request('/tasks');

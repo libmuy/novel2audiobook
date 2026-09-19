@@ -558,7 +558,7 @@ textarea { resize: vertical; }
 
 /* 简单页面（小说列表 / 设置 / 素材库）的内容容器；两栏页面（详情/工作台/角色库）铺满不用它 */
 .page-pad { padding: 28px 32px; max-width: 1280px; width: 100%; margin: 0 auto; }
-.roles-page { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.roles-page, .assets-page { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .roles-header { padding: 20px 24px 16px; margin-bottom: 0; border-bottom: 1px solid var(--border); }
 .category-row .action-btn { padding: 0 3px; }
 .tag-chip-remove {

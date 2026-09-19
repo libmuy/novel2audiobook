@@ -111,3 +111,12 @@
   与计划稿相比有一处偏差：计划里 emits 还有 `create/rename`，实际改成页面传一个 `save(mode, row, title) → Promise<boolean>`——保存要等服务端校验（重名/超深度会 400）再决定关不关对话框，事件表达不了「等结果」。
 - 硬编码的 `row.depth < 3` 换成 `maxDepth`（默认 4，对应 `category_tree.MAX_DEPTH`）；删除警告文案由页面传入。CSS 不用改。
 - 新增一条测试确认 `category-tree.js` 已加载且排在 `app.js` 之前。
+### 阶段 11
+素材加分类 + 标签，音效库页改成与角色库同构的「左树右卡片」。
+- **数据**：`asset_specs.yaml` 每条素材可选 `category`（路径字符串，如 `环境/室内`）和 `tags`（字符串数组）。写入口 `asset_specs_store` 的 `_SPEC_FIELDS` 加入两项并扩展 `validate_spec`；空值（`""` / `[]`）**不写进文件**（PATCH 里 `""`/`[]` = 清空，`None`/不传 = 不改），文件里不会堆 `category: ''`。标签去空白、去重、保序。ruamel round-trip 保证 20 行头说明与 `door_creak` 行内诊断注释不丢（有测试）。
+- **两个透传陷阱同一提交处理**：① `asset_gen.load_asset_specs` 只规整 5 个字段，现在有值时透传 `category/tags`（无值不带键，`test_asset_gen` 里钉死的完整字典比较不受影响；API 行里缺省补 `""`/`[]`）；② `compute_spec_hash` **没有**加入它们——加进去会让整个已有素材库在那一刻全部判 STALE。`TestSpecHashPinned` 钉死这一点，做过变异检查（把 `category` 加进哈希后两条测试都失败）。
+- **分类树存放**：`asset_specs.yaml` 顶层新增 `category_tree` 键（一域一文件，删规格时无需同步第二份）；`load_asset_specs` 只按 `ambience`/`sfx` 两个键取素材，同级的 `category_tree` 不会被当成素材（有测试：列表仍是 12 条）。`GET/PUT /api/asset-category-tree`（GET 没保存过就是空树，不写盘；PUT 整树 `normalize → validate → 补 id → 落盘`，400 时文件不动）与 `GET /api/asset-tags`（标签只存在素材身上，无注册表）。挂在独立的 `meta_router`（`/api` 根下，与 `/role-category-tree`、`/role-tags` 对称）。
+  沿用同一条**悬空引用容忍**策略：删除/改名树节点不改素材自己的 `category`，编辑时显示「未登记」。
+- **界面**：`assets-page` 由单列 `.page-pad` 改为 roles 的布局（`.assets-page` 复用 `.roles-page` 的 flex 规则 + `.two-pane-layout` + 阶段 10 的 `category-tree-pane` + `.content-pane`）。类型筛选 chip 移到标签筛选旁；卡片显示分类与标签；在某个分类下点「新增素材」默认归到该分类。
+  **顺序硬约束**：分类用 `<select>`、标签输入放在弹窗最末——`.modal input.form-input` 的 `.nth(1)` 钉的是「描述」，`TestAssetsPageCrud` 未改一字仍通过。保存时输入框里没按回车的标签也算。
+- 测试：`tests/test_asset_categories.py`（20 条：读回/去空白去重、空值不落盘、PATCH 设置与清空、不传不改、类型校验、注释保留、哈希钉死、树的往返/校验/文件不动/不被当素材/悬空引用、标签聚合）；E2E `TestAssetCategoriesAndTags`（新建分类→建带分类标签素材→按分类/标签筛选→删分类后素材保留并显示「未登记」→清空）。已截图目视核对布局。
