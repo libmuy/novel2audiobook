@@ -78,3 +78,11 @@
 - 新增 `src/killable_proc.py`（TTS 与素材生成共用）：SIGTERM → 宽限 5 秒 → SIGKILL → **收尸**（不留僵尸）。**安全护栏**：`os.killpg` 只有子进程在独立进程组时才安全，动手前核对子进程的 pgid 不等于服务器自己的，不满足就退化成只终止这一个进程——宁可杀不干净也不误杀 API 服务器（有专门测试，含升级到 SIGKILL 时也不 killpg）。
 - 测试（此前 `IndexTTSBackend` 子进程行为**零覆盖**，全新写，用 `FakePopen` 不需要 GPU）：`test_killable_proc.py`、`test_index_tts_backend.py`（超时杀进程发生在仲裁器退出之前——用记录顺序的假仲裁器断言、独立 session、新实例 `terminate_current` 安全、stderr 坏字节、截断输出被删）、`test_asset_gen_subprocess.py`、`TestFallbackDoesNotPoisonTheCache`（标记/时间线标记/重跑重试/仍失败继续重试/整章缓存/严格模式/状态不把标记文件算进 `audio_cache_count`）。
   已做变异检查：换回旧版 `tts_engine.py` 后，超时顺序、新实例安全、截断输出三条回归测试都会失败。
+### 阶段 7
+- 新增 `prompt-dialog` 组件（文本输入 / 下拉选择两种形态，回车确定、Esc 取消、可传 `validate`），根组件 `provide('showPrompt')`，`index.html` 挂载。`showPrompt` 在确定按钮的点击处理里**同步** resolve，
+  所以调用方 `await` 之后接着做的事（如触发隐藏文件输入的 `click()`）仍在同一次点击的用户手势窗口里——`uploadChapter` 由此保持可用，有 E2E 用 `page.expect_file_chooser()` 证明文件选择器确实被打开。
+- 转换了全部 14 处原生调用（`prompt` ×7、`confirm` ×5、`alert` ×1，加上设置页在阶段 3 已换掉的 3 处 `alert`）；app.js 里不再有任何原生对话框。
+- 三处是升级而不是直译：**删除节点**先取 `DELETE` 不带 confirm 返回的影响预览，弹窗写明「将影响 N 个章节（含已生成音频）、数据移入回收站，不是永久删除」（以前是盲确认）；**批量绑定角色**由手敲角色名改为从现有角色里选；**批量改语气**由手敲英文标签改为 8 个语气的下拉（`EMOTION_OPTIONS`）。
+- 新建部/卷/章、重命名、创建角色失败以前只 `console.error`（界面毫无反应），现在弹错误 toast。
+- 取消任务的确认框措辞如实反映**当前**行为（排队中直接取消；运行中的要等当前步骤结束，配音任务可能要跑完整章）——阶段 12 真取消落地后再更新。
+- 测试：新增 `TestNativeDialogsReplaced`（空名称禁用提交、取消不创建、回车/Esc、改名预填、删除影响预览且取消无变化、上传章节文件选择器、失败 toast、全程无原生对话框）与 `TestWorkbenchDialogs`（批量绑定下拉、批量改语气 8 项、批量清空取消时**零请求**确认时才发一次、未绑定的 toast、创建并绑定角色）。这些路径此前全库没有一条测试。

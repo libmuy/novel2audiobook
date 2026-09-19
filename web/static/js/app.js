@@ -1,5 +1,13 @@
 const { createApp, ref, reactive, computed, watch, onMounted, onUnmounted, nextTick, provide, inject } = Vue;
 
+// 语气标签（值 = 后端 emotion 枚举，label 给人看）。批量改语气的下拉用它。
+const EMOTION_OPTIONS = [
+    { value: 'neutral', label: '中性' }, { value: 'happy', label: '开心' },
+    { value: 'angry', label: '生气' }, { value: 'sad', label: '悲伤' },
+    { value: 'serious', label: '严肃' }, { value: 'afraid', label: '害怕' },
+    { value: 'surprised', label: '惊讶' }, { value: 'calm', label: '平静' },
+];
+
 const app = createApp({
     setup() {
         const currentRoute = ref(window.location.hash || '#/novels');
@@ -17,6 +25,7 @@ const app = createApp({
         const sseDisconnected = ref(false);
         const toast = ref(null);
         const confirmDialog = ref(null);
+        const promptDialog = ref(null);
 
         // 深色模式：纯前端偏好，跟 n2a.lastRoute 一样存本地，不经过后端配置。
         // CSS 的 [data-theme] 选择器挂在 :root（即 <html>）上，但 #app 是
@@ -212,11 +221,17 @@ const app = createApp({
             return confirmDialog.value ? confirmDialog.value.show(options) : Promise.resolve(false);
         };
 
+        // 取代原生 prompt()：文本输入或下拉选择，取消/关闭返回 null
+        const showPrompt = (options) => {
+            return promptDialog.value ? promptDialog.value.show(options) : Promise.resolve(null);
+        };
+
         // 通过 provide/inject 暴露给子组件，不要用 window.app.__vue_app__.
         // _instance.proxy 这种够 Vue 内部私有属性的写法——顶层 const app 在经典
         // <script> 里不会自动挂到 window 上，之前那样写点了就直接抛异常。
         provide('showConfirm', showConfirm);
         provide('showToast', showToast);
+        provide('showPrompt', showPrompt);
 
         onMounted(() => {
             applyTheme();
@@ -250,6 +265,7 @@ const app = createApp({
             sseDisconnected,
             toast,
             confirmDialog,
+            promptDialog,
             darkMode,
             toggleDarkMode,
             formatMemory,
@@ -794,6 +810,7 @@ app.component('novel-detail-page', {
     setup(props) {
         const showConfirm = inject('showConfirm');
         const showToast = inject('showToast');
+        const showPrompt = inject('showPrompt');
 
         const novel = ref(null);
         const tree = ref([]);
@@ -1039,95 +1056,92 @@ app.component('novel-detail-page', {
             }
         };
 
-        const addPart = async () => {
-            const title = prompt('请输入部名称:');
-            if (title) {
-                try {
-                    await API.createNode(props.novelId, { title, type: 'part' });
-                    await loadTree();
-                } catch (error) {
-                    console.error('创建部失败:', error);
-                }
+        // 新建部/卷/章：弹输入框取名，失败要让用户看到原因（之前只 console.error，界面上毫无反应）
+        const createNodeWithPrompt = async (type, label, parentId) => {
+            const title = await showPrompt({
+                title: `新增${label}`, label: `${label}名称`, placeholder: `请输入${label}名称`, confirmText: '创建',
+            });
+            if (!title) return;
+            try {
+                const body = { title, type };
+                if (parentId) body.parent_id = parentId;
+                await API.createNode(props.novelId, body);
+                await loadTree();
+            } catch (error) {
+                console.error(`创建${label}失败:`, error);
+                showToast?.(`创建${label}失败: ${error.message}`, 'error');
             }
         };
 
-        const addVolume = async () => {
-            const title = prompt('请输入卷名称:');
-            if (title) {
-                try {
-                    await API.createNode(props.novelId, { title, type: 'volume' });
-                    await loadTree();
-                } catch (error) {
-                    console.error('创建卷失败:', error);
-                }
-            }
-        };
-
-        const addChapter = async () => {
-            const title = prompt('请输入章节名称:');
-            if (title) {
-                try {
-                    await API.createNode(props.novelId, { title, type: 'chapter' });
-                    await loadTree();
-                } catch (error) {
-                    console.error('创建章节失败:', error);
-                }
-            }
-        };
+        const addPart = () => createNodeWithPrompt('part', '部');
+        const addVolume = () => createNodeWithPrompt('volume', '卷');
+        const addChapter = () => createNodeWithPrompt('chapter', '章节');
 
         const renameNode = async (node) => {
-            const title = prompt('请输入新名称:', node.title);
+            const title = await showPrompt({
+                title: '重命名', label: '新名称', value: node.title, confirmText: '保存',
+            });
             if (title && title !== node.title) {
                 try {
                     await API.updateNode(props.novelId, node.id, { title });
                     await loadTree();
                 } catch (error) {
                     console.error('重命名失败:', error);
+                    showToast?.(`重命名失败: ${error.message}`, 'error');
                 }
             }
         };
 
+        // 删除节点：DELETE 不带 confirm 本来就返回影响预览（{affected_chapters, has_audio, confirmed:false}），
+        // 之前是盲确认——用户不知道这一刀会带走几章、有没有已经生成好的音频。
         const deleteNode = async (node) => {
-            const confirmed = confirm(`确定要删除「${node.title}」吗？`);
-            if (confirmed) {
-                try {
-                    await API.deleteNode(props.novelId, node.id, true);
-                    await loadTree();
-                    if (selectedNode.value?.id === node.id) {
-                        selectedNode.value = null;
-                    }
-                } catch (error) {
-                    console.error('删除失败:', error);
+            let preview = null;
+            try {
+                preview = await API.deleteNode(props.novelId, node.id, false);
+            } catch (error) {
+                showToast?.(`无法删除: ${error.message}`, 'error');
+                return;
+            }
+            const n = preview.affected_chapters || 0;
+            const confirmed = await showConfirm({
+                title: '删除节点',
+                message: `确定要删除「${node.title}」吗？`,
+                warning: (n > 0 ? `将影响 ${n} 个章节${preview.has_audio ? '，其中包含已经生成的音频' : ''}。` : '这里面没有章节。') +
+                    '章节数据会被移入回收站（library/<小说>/.trash/），不是永久删除。',
+                confirmText: '删除',
+                confirmClass: 'btn-danger',
+            });
+            if (!confirmed) return;
+            try {
+                await API.deleteNode(props.novelId, node.id, true);
+                await loadTree();
+                if (selectedNode.value?.id === node.id) {
+                    selectedNode.value = null;
                 }
+            } catch (error) {
+                console.error('删除失败:', error);
+                showToast?.(`删除失败: ${error.message}`, 'error');
             }
         };
 
-        const addChildNode = async () => {
+        const addChildNode = () => {
             const type = selectedNode.value.type === 'part' ? 'volume' : 'chapter';
-            const title = prompt(`请输入${type === 'volume' ? '卷' : '章'}名称:`);
-            if (title) {
-                try {
-                    await API.createNode(props.novelId, {
-                        title,
-                        type,
-                        parent_id: selectedNode.value.id,
-                    });
-                    await loadTree();
-                } catch (error) {
-                    console.error('创建节点失败:', error);
-                }
-            }
+            return createNodeWithPrompt(type, type === 'volume' ? '卷' : '章节', selectedNode.value.id);
         };
 
         // 章节上传：选中一个部/卷作为父节点时用——先建一个空的 chapter 节点，
         // 再把选中文件的内容 PUT 上去；新节点还没有 raw.txt，upload_raw 会直接
-        // 写入，不会触发"重新导入"的覆盖确认
-        const uploadChapter = () => {
+        // 写入，不会触发"重新导入"的覆盖确认。
+        // 注意 chapterFileInput.click() 必须还处在「用户手势」窗口里：showPrompt 在确定按钮的
+        // 点击处理里同步 resolve，await 之后的这一行仍在同一次点击的手势窗口内。
+        const uploadChapter = async () => {
             if (!selectedNode.value) return;
-            pendingChapterTitle.value = prompt('请输入章节名称:');
-            if (pendingChapterTitle.value) {
-                chapterFileInput.value?.click();
-            }
+            const title = await showPrompt({
+                title: '上传章节', label: '章节名称', placeholder: '请输入章节名称', confirmText: '选择文件',
+            });
+            if (!title) return;
+            pendingChapterTitle.value = title;
+            chapterFileInput.value?.click();
         };
 
         const onChapterFileSelected = async (event) => {
@@ -1280,7 +1294,13 @@ app.component('novel-detail-page', {
         const cancelGroup = async (groupId) => {
             const group = taskGroups.value.find(g => g.id === groupId);
             if (group) {
-                const confirmed = confirm(`确定要取消该批次的 ${group.tasks.length} 个任务吗？`);
+                const confirmed = await showConfirm({
+                    title: '取消批次',
+                    message: `确定要取消该批次的 ${group.tasks.length} 个任务吗？`,
+                    warning: '排队中的任务会直接取消；已经在运行的任务只会在当前步骤结束后才停下（配音任务可能要等整章跑完）。已合成的语音保留在缓存里，重跑会续上。',
+                    confirmText: '取消任务',
+                    confirmClass: 'btn-danger',
+                });
                 if (confirmed) {
                     for (const task of group.tasks) {
                         if (task.state === 'running' || task.state === 'queued') {
@@ -1293,7 +1313,13 @@ app.component('novel-detail-page', {
         };
 
         const cancelTask = async (taskId) => {
-            const confirmed = confirm('确定要取消该任务吗？');
+            const confirmed = await showConfirm({
+                title: '取消任务',
+                message: '确定要取消该任务吗？',
+                warning: '排队中的任务会直接取消；已经在运行的任务只会在当前步骤结束后才停下（配音任务可能要等整章跑完）。已合成的语音保留在缓存里，重跑会续上。',
+                confirmText: '取消任务',
+                confirmClass: 'btn-danger',
+            });
             if (confirmed) {
                 try {
                     await API.deleteTask(taskId);
@@ -1610,6 +1636,7 @@ app.component('workbench-page', {
     setup(props) {
         const showConfirm = inject('showConfirm');
         const showToast = inject('showToast');
+        const showPrompt = inject('showPrompt');
 
         const segments = ref([]);
         const loading = ref(true);
@@ -1745,17 +1772,19 @@ app.component('workbench-page', {
         };
 
         const createAndBindRole = async () => {
-            const name = prompt('请输入角色名称:');
-            if (name) {
-                try {
-                    const { role_id } = await API.createRole({ name });
-                    editForm.speaker = role_id;
-                    await loadRoles();
-                } catch (error) {
-                    console.error('创建角色失败:', error);
-                }
-            }
             showRoleDropdown.value = false;
+            const name = await showPrompt({
+                title: '新建角色并绑定', label: '角色名称', placeholder: '请输入角色名称', confirmText: '创建并绑定',
+            });
+            if (!name) return;
+            try {
+                const { role_id } = await API.createRole({ name });
+                editForm.speaker = role_id;
+                await loadRoles();
+            } catch (error) {
+                console.error('创建角色失败:', error);
+                showToast?.(`创建角色失败: ${error.message}`, 'error');
+            }
         };
 
         // 分块本身不存 md5，音频文件名（audio_cache/<md5>.wav）是后端按
@@ -1777,9 +1806,12 @@ app.component('workbench-page', {
         // 同一条任务提交路径
         const regenerateVoice = async () => {
             if (!selectedSegment.value) return;
-            const confirmed = confirm(
-                '会对整章重新跑一次增量 TTS（其余已合成且未改动的分块会命中缓存，不会重新生成）。确定继续吗？'
-            );
+            const confirmed = await showConfirm({
+                title: '重新生成本块人声',
+                message: '会对整章重新跑一次增量 TTS（其余已合成且未改动的分块会命中缓存，不会重新生成）。',
+                confirmText: '继续',
+                confirmClass: 'btn-primary',
+            });
             if (confirmed) {
                 try {
                     await API.createTask({ type: 'tts', novel_id: props.novelId, scope: { chapter_ids: [props.chapterId] } });
@@ -1827,17 +1859,20 @@ app.component('workbench-page', {
         };
 
         const batchBindRole = async () => {
-            const roleName = prompt('请输入要绑定的角色名称:');
-            if (!roleName) return;
-            const role = roles.value.find((r) => r.name === roleName);
-            if (!role) {
-                showToast?.(`没有找到名为「${roleName}」的角色`, 'error');
+            // 以前是让用户手敲角色名，敲错一个字就只能得到「没有找到」——改成从现有角色里选
+            if (roles.value.length === 0) {
+                showToast?.('还没有任何角色，请先在角色库或上面的下拉里新建', 'error');
                 return;
             }
+            const roleId = await showPrompt({
+                title: '批量绑定角色', label: `给选中的 ${selectedSegments.value.length} 个分块绑定角色`,
+                options: roles.value.map((r) => ({ value: r.id, label: r.name })), confirmText: '绑定',
+            });
+            if (!roleId) return;
             try {
                 await API.batchUpdateSegments(props.novelId, props.chapterId, {
                     seg_ids: selectedSegments.value,
-                    set: { speaker: role.id },
+                    set: { speaker: roleId },
                 });
                 await loadSegments();
                 selectedSegments.value = [];
@@ -1884,7 +1919,11 @@ app.component('workbench-page', {
         };
 
         const batchChangeTone = async () => {
-            const emotion = prompt('请输入语气标签 (neutral/happy/angry/sad/serious/afraid/surprised/calm):');
+            // 以前是让用户手敲英文标签，写错一个字母后端就存进一个不存在的语气
+            const emotion = await showPrompt({
+                title: '批量修改语气', label: `给选中的 ${selectedSegments.value.length} 个分块设置语气`,
+                options: EMOTION_OPTIONS, confirmText: '修改',
+            });
             if (emotion) {
                 try {
                     await API.batchUpdateSegments(props.novelId, props.chapterId, {
@@ -1901,7 +1940,13 @@ app.component('workbench-page', {
         };
 
         const batchClearRole = async () => {
-            const confirmed = confirm('确定要清空选中分块的角色绑定吗？');
+            const confirmed = await showConfirm({
+                title: '批量清空角色',
+                message: `确定要清空选中的 ${selectedSegments.value.length} 个分块的角色绑定吗？`,
+                warning: '清空后这些分块会变成「未绑定」，需要重新指派角色才能生成人声。',
+                confirmText: '清空',
+                confirmClass: 'btn-danger',
+            });
             if (confirmed) {
                 try {
                     await API.batchUpdateSegments(props.novelId, props.chapterId, {
@@ -1923,7 +1968,7 @@ app.component('workbench-page', {
                 .length;
 
             if (unboundCount > 0) {
-                alert(`选中的分块中有 ${unboundCount} 个未绑定角色，请先指派`);
+                showToast?.(`选中的分块中有 ${unboundCount} 个未绑定角色，请先指派`, 'error');
                 return;
             }
 
@@ -3198,6 +3243,92 @@ app.component('toast', {
             toasts,
             show,
         };
+    },
+});
+
+// 取代原生 prompt()。两种形态：文本输入（默认）和下拉选择（传 options）。
+// show() 返回 Promise<string|null>：确定 → 值，取消/点遮罩 → null。
+// 确定按钮的点击处理里同步 resolve——这样调用方在 await 之后接着做的事（比如触发隐藏
+// 文件输入的 click()）仍然处在这次用户点击的「用户手势」窗口内，不会被浏览器拦掉。
+app.component('prompt-dialog', {
+    template: `
+        <div v-if="visible" class="modal-overlay" @click.self="cancel">
+            <div class="modal">
+                <div class="modal-header">
+                    <h2 class="modal-title">{{ title }}</h2>
+                </div>
+                <div class="modal-body">
+                    <div v-if="message" class="confirm-message">{{ message }}</div>
+                    <div class="form-group">
+                        <label class="form-label">{{ label }}</label>
+                        <select v-if="options.length" class="form-select prompt-select" v-model="value">
+                            <option v-for="opt in options" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                        </select>
+                        <input v-else ref="inputEl" type="text" class="form-input prompt-input" v-model="value"
+                               :placeholder="placeholder" @keyup.enter="confirm" @keyup.esc="cancel">
+                    </div>
+                    <div v-if="error" class="confirm-warning prompt-error">{{ error }}</div>
+                </div>
+                <div class="confirm-footer">
+                    <button class="btn btn-secondary" @click="cancel">取消</button>
+                    <button class="btn btn-primary prompt-confirm" @click="confirm" :disabled="!canConfirm">{{ confirmText }}</button>
+                </div>
+            </div>
+        </div>
+    `,
+    setup() {
+        const visible = ref(false);
+        const title = ref('');
+        const message = ref('');
+        const label = ref('');
+        const value = ref('');
+        const placeholder = ref('');
+        const options = ref([]);
+        const confirmText = ref('确定');
+        const error = ref('');
+        const inputEl = ref(null);
+        let validateFn = null;
+        let resolvePromise = null;
+
+        const canConfirm = computed(() => options.value.length > 0 || String(value.value).trim().length > 0);
+
+        const show = (opts = {}) => {
+            title.value = opts.title || '请输入';
+            message.value = opts.message || '';
+            label.value = opts.label || '';
+            value.value = opts.value ?? (opts.options && opts.options.length ? opts.options[0].value : '');
+            placeholder.value = opts.placeholder || '';
+            options.value = opts.options || [];
+            confirmText.value = opts.confirmText || '确定';
+            error.value = '';
+            validateFn = opts.validate || null;
+            visible.value = true;
+            nextTick(() => inputEl.value && inputEl.value.focus());
+            return new Promise((resolve) => { resolvePromise = resolve; });
+        };
+
+        const finish = (result) => {
+            visible.value = false;
+            if (resolvePromise) {
+                const r = resolvePromise;
+                resolvePromise = null;
+                r(result);
+            }
+        };
+
+        const confirm = () => {
+            if (!canConfirm.value) return;
+            const result = options.value.length ? value.value : String(value.value).trim();
+            const problem = validateFn ? validateFn(result) : null;
+            if (problem) {
+                error.value = problem;
+                return;
+            }
+            finish(result);
+        };
+        const cancel = () => finish(null);
+
+        return { visible, title, message, label, value, placeholder, options, confirmText, error, inputEl, canConfirm, show, confirm, cancel };
     },
 });
 

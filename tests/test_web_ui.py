@@ -1186,3 +1186,235 @@ class TestAssetEngineDrift:
         _confirm(page, "开始生成")
         expect(card.locator(".badge")).to_have_text("占位音", timeout=20000)  # 测试环境没有真实引擎 -> Mock 占位
         httpx.delete(f"{base}/api/asset-specs/sfx/e2e_drift?delete_files=true")
+
+
+# ---------------------------------------------------------------------------
+# 17. 计划 010 阶段 7：原生 prompt/confirm/alert 全部换成应用内对话框。
+# 这些路径之前完全没有测试（全库没有 page.on("dialog")）——转换的同时补上。
+class TestNativeDialogsReplaced:
+    def _novel(self, server, title, **levels):
+        import httpx
+        return httpx.post(f"{_api(server)}/api/novels", json={
+            "title": title, "description": "", "levels": levels or {"part": False, "volume": False}}).json()["novel_id"]
+
+    def _tree(self, server, nid):
+        import httpx
+        return httpx.get(f"{_api(server)}/api/novels/{nid}/tree").json()["novel"]["tree"]
+
+    def _no_native_dialog(self, page):
+        """任何原生对话框弹出都算失败（以前每一个操作都会弹一个）"""
+        seen = []
+        page.on("dialog", lambda d: (seen.append(d.message), d.dismiss()))
+        return seen
+
+    def test_add_chapter_through_in_app_prompt(self, page, server):
+        nid = self._novel(server, "对话框-新增")
+        native = self._no_native_dialog(page)
+        page.goto(f"{_api(server)}/#/novels/{nid}")
+        page.wait_for_load_state("networkidle")
+
+        page.get_by_role("button", name="+ 新增章节").click()
+        confirm = page.locator(".prompt-confirm")
+        expect(confirm).to_be_disabled()  # 空名称不能提交
+        page.locator(".prompt-input").fill("第一章 风起")
+        confirm.click()
+        expect(page.locator(".tree-node-name", has_text="第一章 风起")).to_be_visible()
+        assert [n["title"] for n in self._tree(server, nid)] == ["第一章 风起"]
+        assert native == []
+
+    def test_cancelling_the_prompt_creates_nothing(self, page, server):
+        nid = self._novel(server, "对话框-取消")
+        page.goto(f"{_api(server)}/#/novels/{nid}")
+        page.wait_for_load_state("networkidle")
+        page.get_by_role("button", name="+ 新增章节").click()
+        page.locator(".prompt-input").fill("不该出现")
+        page.locator(".confirm-footer button", has_text="取消").click()
+        expect(page.locator(".prompt-input")).to_have_count(0)
+        assert self._tree(server, nid) == []
+
+    def test_enter_key_submits_and_escape_cancels(self, page, server):
+        nid = self._novel(server, "对话框-键盘")
+        page.goto(f"{_api(server)}/#/novels/{nid}")
+        page.wait_for_load_state("networkidle")
+        page.get_by_role("button", name="+ 新增章节").click()
+        page.locator(".prompt-input").fill("回车创建")
+        page.locator(".prompt-input").press("Enter")
+        expect(page.locator(".tree-node-name", has_text="回车创建")).to_be_visible()
+        page.get_by_role("button", name="+ 新增章节").click()
+        page.locator(".prompt-input").press("Escape")
+        expect(page.locator(".prompt-input")).to_have_count(0)
+
+    def test_rename_prefills_current_title(self, page, server):
+        import httpx
+        nid = self._novel(server, "对话框-改名")
+        httpx.post(f"{_api(server)}/api/novels/{nid}/nodes", json={"type": "chapter", "title": "旧名字"})
+        page.goto(f"{_api(server)}/#/novels/{nid}")
+        page.wait_for_load_state("networkidle")
+
+        row = page.locator(".tree-node", has_text="旧名字")
+        row.hover()
+        row.locator("button", has_text="改").click()
+        expect(page.locator(".prompt-input")).to_have_value("旧名字")
+        page.locator(".prompt-input").fill("新名字")
+        page.locator(".prompt-confirm").click()
+        expect(page.locator(".tree-node-name", has_text="新名字")).to_be_visible()
+        assert self._tree(server, nid)[0]["title"] == "新名字"
+
+    def test_delete_shows_impact_preview_before_confirming(self, page, server):
+        """以前是盲确认：不知道这一刀会带走几章、有没有已生成的音频"""
+        import httpx
+        base = _api(server)
+        nid = self._novel(server, "对话框-删除", volume=True)
+        vol = httpx.post(f"{base}/api/novels/{nid}/nodes", json={"type": "volume", "title": "第一卷"}).json()["node_id"]
+        for t in ("甲", "乙"):
+            httpx.post(f"{base}/api/novels/{nid}/nodes", json={"type": "chapter", "title": t, "parent_id": vol})
+        page.goto(f"{base}/#/novels/{nid}")
+        page.wait_for_load_state("networkidle")
+
+        row = page.locator(".tree-node", has_text="第一卷")
+        row.hover()
+        row.locator("button", has_text="删").click()
+        dialog = page.locator(".modal", has_text="删除节点")
+        expect(dialog).to_contain_text("将影响 2 个章节")
+        expect(dialog).to_contain_text("回收站")
+        # 取消：什么都没变
+        page.locator(".confirm-footer button", has_text="取消").click()
+        assert len(self._tree(server, nid)) == 1
+
+        row.hover()
+        row.locator("button", has_text="删").click()
+        _confirm(page, "删除")
+        expect(page.locator(".tree-node-name", has_text="第一卷")).to_have_count(0)
+        assert self._tree(server, nid) == []
+
+    def test_upload_chapter_opens_file_chooser_after_the_prompt(self, page, server, tmp_path):
+        """uploadChapter 在 prompt 之后立刻 chapterFileInput.click()——必须仍在用户手势窗口内，
+        否则文件选择器会被浏览器拦掉。"""
+        import httpx
+        base = _api(server)
+        nid = self._novel(server, "对话框-上传", volume=True)
+        httpx.post(f"{base}/api/novels/{nid}/nodes", json={"type": "volume", "title": "第一卷"})
+        f = tmp_path / "chapter.txt"
+        f.write_text("这是上传的正文。", encoding="utf-8")
+        native = self._no_native_dialog(page)
+        page.goto(f"{base}/#/novels/{nid}")
+        page.wait_for_load_state("networkidle")
+
+        page.locator(".tree-node-name", has_text="第一卷").click()
+        page.get_by_role("button", name="上传章节").click()
+        page.locator(".prompt-input").fill("上传的章")
+        with page.expect_file_chooser(timeout=5000) as chooser:
+            page.locator(".prompt-confirm").click()
+        chooser.value.set_files(str(f))
+
+        expect(page.locator(".tree-node-name", has_text="上传的章")).to_be_visible()
+        vol = self._tree(server, nid)[0]
+        ch = vol["children"][0]
+        raw = os.path.join(server["library_dir"], nid, "chapters", ch["id"], "raw.txt")
+        assert open(raw, encoding="utf-8").read() == "这是上传的正文。"
+        assert native == []
+
+    def test_create_failure_is_reported_not_silent(self, page, server):
+        """以前建部/卷/章失败只 console.error，界面上毫无反应。这里让请求直接失败。"""
+        nid = self._novel(server, "对话框-失败")
+        page.goto(f"{_api(server)}/#/novels/{nid}")
+        page.wait_for_load_state("networkidle")
+        page.route("**/api/novels/*/nodes", lambda route: route.abort())
+        page.get_by_role("button", name="+ 新增章节").click()
+        page.locator(".prompt-input").fill("会失败")
+        page.locator(".prompt-confirm").click()
+        expect(page.locator(".toast.error")).to_contain_text("创建章节失败")
+        assert self._tree(server, nid) == []
+
+
+def _workbench_with_roles(server, title, speakers):
+    import httpx
+    base = _api(server)
+    for name in ("批量角色甲", "批量角色乙"):
+        httpx.post(f"{base}/api/roles", json={"name": name})
+    script = [{"seg_id": i + 1, "speaker": sp, "text": f"第{i+1}句", "emotion": "neutral"}
+              for i, sp in enumerate(speakers)]
+    return _make_chapter_with_script(server, script, None, title)
+
+
+class TestWorkbenchDialogs:
+    def _open(self, page, server, speakers):
+        nid, cid, _ = _workbench_with_roles(server, "工作台对话框", speakers)
+        page.goto(f"{_api(server)}/#/novels/{nid}/chapters/{cid}")
+        page.wait_for_load_state("networkidle")
+        return nid, cid
+
+    def _script(self, server, nid, cid):
+        import httpx
+        return httpx.get(f"{_api(server)}/api/novels/{nid}/chapters/{cid}/script").json()
+
+    def test_batch_bind_role_is_a_dropdown_of_existing_roles(self, page, server):
+        """以前让用户手敲角色名，敲错一个字只能得到「没有找到」"""
+        import httpx
+        nid, cid = self._open(page, server, [None, None])
+        page.get_by_role("button", name="全选未绑定").click()
+        page.get_by_role("button", name="批量绑定角色").click()
+        select = page.locator(".prompt-select")
+        expect(select).to_be_visible()
+        expect(select.locator("option", has_text="批量角色乙")).to_have_count(1)
+        target = [r for r in httpx.get(f"{_api(server)}/api/roles").json() if r["name"] == "批量角色乙"][0]
+        select.select_option(target["id"])
+        page.locator(".prompt-confirm").click()
+        expect(page.locator(".segment-card.unbound")).to_have_count(0, timeout=10000)
+        assert {s["speaker"] for s in self._script(server, nid, cid)} == {target["id"]}
+
+    def test_batch_change_tone_is_a_dropdown_of_the_eight_emotions(self, page, server):
+        nid, cid = self._open(page, server, [None, None])
+        page.get_by_role("button", name="全选未绑定").click()
+        page.get_by_role("button", name="批量修改语气").click()
+        select = page.locator(".prompt-select")
+        assert select.locator("option").count() == 8
+        select.select_option("angry")
+        page.locator(".prompt-confirm").click()
+        page.wait_for_timeout(500)
+        assert {s["emotion"] for s in self._script(server, nid, cid)} == {"angry"}
+
+    def test_batch_clear_role_asks_first_and_only_sends_the_request_on_confirm(self, page, server):
+        """批量清空以前是原生 confirm：这里断言取消时**没有任何请求发出**，确认时才发一次。
+        （分块只能通过「全选未绑定」被选中，所以用两个未绑定分块来驱动这个流程。）"""
+        nid, cid = self._open(page, server, [None, None])
+        sent = []
+        page.on("request", lambda r: sent.append(r.url) if r.method == "POST" and r.url.endswith("/segments/batch") else None)
+        seen = []
+        page.on("dialog", lambda d: (seen.append(d.message), d.dismiss()))
+
+        page.get_by_role("button", name="全选未绑定").click()
+        page.get_by_role("button", name="批量清空角色").click()
+        dialog = page.locator(".modal", has_text="批量清空角色")
+        expect(dialog).to_contain_text("2 个分块")
+        expect(dialog).to_contain_text("未绑定")
+        page.locator(".confirm-footer button", has_text="取消").click()
+        expect(dialog).to_have_count(0)
+        page.wait_for_timeout(300)
+        assert sent == [], "取消后不该有任何批量更新请求"
+
+        page.get_by_role("button", name="批量清空角色").click()
+        _confirm(page, "清空")
+        page.wait_for_timeout(500)
+        assert len(sent) == 1
+        assert seen == []  # 全程没有原生对话框
+
+    def test_batch_tts_with_unbound_segments_shows_toast_not_alert(self, page, server):
+        nid, cid = self._open(page, server, [None, "narrator"])
+        seen = []
+        page.on("dialog", lambda d: (seen.append(d.message), d.dismiss()))
+        page.get_by_role("button", name="全选未绑定").click()
+        page.get_by_role("button", name="批量生成人声").click()
+        expect(page.locator(".toast.error")).to_contain_text("1 个未绑定角色")
+        assert seen == []
+
+    def test_create_and_bind_role_through_prompt(self, page, server):
+        import httpx
+        nid, cid = self._open(page, server, [None])
+        page.locator(".segment-card").first.click()
+        page.get_by_role("button", name="选择角色").click()
+        page.locator(".dropdown-item.create-new").click()
+        page.locator(".prompt-input").fill("对话框新角色")
+        page.locator(".prompt-confirm").click()
+        expect(page.locator(".dropdown-toggle")).to_contain_text("对话框新角色", timeout=10000)
+        assert any(r["name"] == "对话框新角色" for r in httpx.get(f"{_api(server)}/api/roles").json())
