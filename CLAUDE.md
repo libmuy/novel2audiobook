@@ -16,14 +16,21 @@
   （当前 `global_config.yaml` 的 `mixing.voice_only` 默认 `true`，只出旁白/
   角色人声成片，不叠加环境音/音效；效果音流水线待后续阶段再打通，需要时加
   `--with-assets` 单次覆盖）
-- 执行全流程或单模块自检：`python cli.py test --module {llm,tts,audio,all,dry-run}`
+- 执行全流程或单模块自检：`python cli.py test --module {llm,tts,audio,assets,all,dry-run}`（`--all` 同 `--module all`）
 - 管理常驻 IndexTTS 推理服务（交互式试听用，避免每次都重新加载模型）：
   `python cli.py tts-serve {start,stop,status}`；启动会与 llama-server
   争抢显存，交互式终端下默认会先询问换手确认（`--yes` 跳过）
 - 小说/章节管理：`python cli.py novel|node|chapter ...`（见 `python cli.py --help`）
 
-以上 `python` 需为项目 venv（`../dev-env/venvs/novel2audiobook/bin/python`，或先 `source ../dev-env/venvs/novel2audiobook/bin/activate`）；
+以上 `python` 需为项目 venv（`/srv/unsafe/dev-env/venvs/novel2audiobook/bin/python`，或先 `source /srv/unsafe/dev-env/venvs/novel2audiobook/bin/activate`）；
 依赖清单见 `requirements.txt`。
+
+## 配置
+- 配置分两层：`global_config.yaml`（入库，与机器无关的参数）+ `local_config.yaml`
+  （gitignore，本机专属的 venv/权重绝对路径、外部命令、espeak 路径，模板见
+  `local_config.example.yaml`），后者按键深合并覆盖前者。换机器只改 local。
+- 不要往代码里写死路径/端口；路径类配置缺失时应报错或降级，不要回落到某台机器的字面量。
+- 文档索引见 `docs/README.md`（环境搭建、系统功能说明、阶段计划 001–010）。
 
 ## 补充说明
 - `parse` 依赖本机 llama-server（Qwen），`tts` 依赖独立部署的 IndexTTS-2.5

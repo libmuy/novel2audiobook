@@ -1,7 +1,12 @@
 # 计划 002: Gradio 全流程管理界面
 
-> **状态：已实现**（见 `src/webui_app.py`、`webui.py`、`cli.py` 及
-> `tests/test_webui_app.py`）。计划 001/003 的产出被直接复用：
+> **状态：已废弃**。Gradio 界面及其全部代码（`src/webui_app.py`、`webui.py`、
+> `tests/test_webui_app.py`）已由计划 004 任务 8 删除（见 `004-multi-novel-library.md`），
+> 现行界面是 FastAPI + Vue3（计划 005/006）。本文仅作历史归档，以下为当时的原文。
+>
+> ---
+>
+> 原状态：已实现。计划 001/003 的产出被直接复用：
 > - `src/roles.py` 的 `precompute_embedding` / `get_embedding_status` /
 >   `delete_role` / `set_role_reference` 直接调用，本计划没有再往
 >   `src/roles.py` 加任何函数。

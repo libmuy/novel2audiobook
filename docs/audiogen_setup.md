@@ -12,15 +12,12 @@
 | ambience（BGM/环境音） | **AudioLDM-S-Full-v2**，CPU，见 `docs/audioldm_setup.md` | 当前默认 |
 | sfx（音效） | [TangoFlux](https://github.com/declare-lab/TangoFlux)，CPU | 本文档已覆盖 |
 
-> **ambience 模型变更说明**：本文档下方 ACE-Step 1.5 相关内容（环境搭建、
-> 已知坑）**保留作参考，但已不是默认引擎**。诊断发现 ACE-Step 本质是音乐生成
-> 模型，生成写实环境录音（雨声/矿洞/风声）会带出音乐化的调性音色（频谱分析：
-> 多条素材有异常突出的单一音高主峰，占能量 15%-34%），已换成训练数据为真实
-> 音频事件的 AudioLDM，接入也更简单（标准 diffusers pipeline，CPU 推理，
-> 不需要下面这些 ROCm 专属坑）。`AceStepBackend`、`tools/acestep_*` 代码/环境
-> 未删除，`global_config.yaml` 的 `ace_step:` 配置段也原样保留，如需切回可以
-> 直接改 `src/asset_gen.build_asset_gen_backend()` 里 ambience 对应的 backend
-> 类。详见 `docs/audioldm_setup.md`。
+> **ambience 模型变更说明**：下方 ACE-Step 1.5 相关内容（环境搭建、已知坑）**保留
+> 作参考，但已不是默认引擎**——它本质是音乐生成模型，生成写实环境音会带出音乐化
+> 调性，换引擎的诊断数据与理由见 `docs/audioldm_setup.md`。`AceStepBackend`、
+> `tools/acestep_*` 代码/环境未删除，`global_config.yaml` 的 `ace_step:` 配置段
+> 也原样保留，如需切回可以直接改 `src/asset_gen.build_asset_gen_backend()` 里
+> ambience 对应的 backend 类。
 
 原计划音效用 Stable Audio 3 Small SFX（官方明确该档位专为 CPU 设计，不需要
 Flash-Attention 2——那只是 Medium/Large 档位的要求，最初调研时的 ROCm+FA2
@@ -184,27 +181,28 @@ tokenizer+约束解码器+权重约 1 分钟——这部分是子进程启动后
 
 ## GPU 显存互斥（llama-server ⇄ ACE-Step）
 
-与 IndexTTS 完全复用同一套机制（原来叫 `LlmSuspendedForTts`，现已泛化改名为
-`LlmSuspendedForGpu`，`src/tts_engine.py` 里的旧引用保留别名兼容）：
-`src/asset_gen.SubprocessAudioGenBackend.generate_batch()` 在
-`with LlmSuspendedForGpu(config):` 块内跑子进程，批量生成前自动停 llama-server，
-结束后自动重新拉起。`python cli.py assets gen` 期间 Qwen 服务会短暂不可用，
-命令结束后自动恢复，无需手动干预。ACE-Step XL（约 12GB）单独驻卡显存很宽裕，
-**只是不与 `parse` 并发**。TangoFlux 跑在 CPU 上，不占显存，不需要也不参与这套
-换卡机制，理论上可以和 llama-server/ACE-Step 同时跑（`SubprocessAudioGenBackend`
-统一走同一套 subprocess 协议，TangoFlux 那次调用也会象征性暂停/恢复一下
-llama-server，多余但无害，不值得为此分叉逻辑）。
+与 IndexTTS 完全复用同一套机制，原理与手动控制命令见
+[`indextts_setup.md`](indextts_setup.md) 的「GPU 显存互斥」一节（上下文管理器原名
+`LlmSuspendedForTts`，现已泛化为 `LlmSuspendedForGpu`，旧名保留别名兼容）。本引擎的差异点：
+
+- `src/asset_gen.SubprocessAudioGenBackend.generate_batch()` 在
+  `with LlmSuspendedForGpu(config):` 块内跑子进程，`python cli.py assets gen`
+  期间 Qwen 服务会短暂不可用，命令结束后自动恢复。
+- ACE-Step XL（约 12GB）单独驻卡显存很宽裕，**只是不与 `parse` 并发**。
+- TangoFlux 跑在 CPU 上，不占显存，不需要也不参与换卡；但
+  `SubprocessAudioGenBackend` 统一走同一套 subprocess 协议，TangoFlux 那次调用也会
+  象征性暂停/恢复一下 llama-server，多余但无害，不值得为此分叉逻辑。
 
 ## ACE-Step 冒烟测试
 
 ```bash
 # 1. 先用 mock 后端确认脚手架本身没问题（不需要真实环境）
-../dev-env/venvs/novel2audiobook/bin/python cli.py assets gen --kind ambience --only rain_heavy --backend mock
+/srv/unsafe/dev-env/venvs/novel2audiobook/bin/python cli.py assets gen --kind ambience --only rain_heavy --backend mock
 
 # 2. 真实环境搭好后，去掉 --backend mock，验证会调用 ACE-Step 并自动换卡
-../dev-env/venvs/novel2audiobook/bin/python cli.py assets gen --kind ambience --only rain_heavy --force
-../dev-env/venvs/novel2audiobook/bin/python cli.py assets list   # 期望 rain_heavy 一行 engine=ace_step，used_fallback=false
-../dev-env/venvs/novel2audiobook/bin/python tools/gpu_arbiter.py status   # 确认 llama-server 已自动恢复
+/srv/unsafe/dev-env/venvs/novel2audiobook/bin/python cli.py assets gen --kind ambience --only rain_heavy --force
+/srv/unsafe/dev-env/venvs/novel2audiobook/bin/python cli.py assets list   # 期望 rain_heavy 一行 engine=ace_step，used_fallback=false
+/srv/unsafe/dev-env/venvs/novel2audiobook/bin/python tools/gpu_arbiter.py status   # 确认 llama-server 已自动恢复
 ```
 成功会在 `assets/ambience/rain_heavy.wav` 生成一段真实的雨声环境音（而非 Mock
 的滤波噪声占位），试听确认循环接缝（首尾交叉淡化后）没有明显咔哒声。
@@ -257,6 +255,6 @@ print('OK')
 ## 冒烟测试（sfx / TangoFlux）
 
 ```bash
-../dev-env/venvs/novel2audiobook/bin/python cli.py assets gen --kind sfx --only sword_clash --force
-../dev-env/venvs/novel2audiobook/bin/python cli.py assets list   # 期望 sword_clash 一行 engine=tangoflux，used_fallback=false
+/srv/unsafe/dev-env/venvs/novel2audiobook/bin/python cli.py assets gen --kind sfx --only sword_clash --force
+/srv/unsafe/dev-env/venvs/novel2audiobook/bin/python cli.py assets list   # 期望 sword_clash 一行 engine=tangoflux，used_fallback=false
 ```

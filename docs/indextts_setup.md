@@ -2,7 +2,7 @@
 
 本项目的人声合成使用 [IndexTTS-2.5](https://github.com/index-tts/index-tts)，
 在本机 AMD RX 7900XTX（gfx1100）上通过 ROCm 运行。因为该模型的依赖版本（尤其
-`torch==2.8.*` + 一批锁定版本的科学计算库）与项目主 venv（`.venv/`，Python 3.12）
+`torch==2.8.*` + 一批锁定版本的科学计算库）与项目主 venv（`/srv/unsafe/dev-env/venvs/novel2audiobook`，Python 3.12）
 的依赖树不兼容，IndexTTS 运行在**完全独立**的 venv 中，主项目通过子进程调用它。
 
 ## 目录结构
@@ -30,8 +30,8 @@ git clone --depth 1 https://github.com/index-tts/index-tts.git tools/indextts_re
 
 # 2. 下载权重主体（约 5GB，国内网络建议用镜像）
 mkdir -p /srv/unsafe/dev-env/models/tts/IndexTTS-2.5
-uv pip install --python ../dev-env/venvs/novel2audiobook/bin/python huggingface_hub
-HF_ENDPOINT="https://hf-mirror.com" ../dev-env/venvs/novel2audiobook/bin/hf download IndexTeam/IndexTTS-2.5 \
+uv pip install --python /srv/unsafe/dev-env/venvs/novel2audiobook/bin/python huggingface_hub
+HF_ENDPOINT="https://hf-mirror.com" /srv/unsafe/dev-env/venvs/novel2audiobook/bin/hf download IndexTeam/IndexTTS-2.5 \
     --local-dir /srv/unsafe/dev-env/models/tts/IndexTTS-2.5
 
 # 3. 建独立 venv（官方要求 Python 3.10/3.11，且 torch 锁定 2.8.*）
@@ -112,7 +112,9 @@ uv pip install --python /srv/unsafe/dev-env/venvs/indextts/bin/python ninja
 
 RX 7900XTX 共 24GB 显存，`llama-server`（Qwen3.8-27B-UD-Q4_K_M）常驻占用约 22GB，
 留给 IndexTTS 的空间不足其所需的 ~6GB。`src/tts_engine.IndexTTSBackend.synthesize_batch()`
-通过 `tools/gpu_arbiter.py` 的 `LlmSuspendedForTts` 上下文管理器自动处理：
+通过 `tools/gpu_arbiter.py` 的 `LlmSuspendedForGpu` 上下文管理器自动处理（本节是
+GPU 换手机制的权威说明，`audiogen_setup.md` 的 ACE-Step 复用同一套；旧名
+`LlmSuspendedForTts` 保留为别名，`src/tts_engine.py` 仍在用）：
 
 1. 批量合成前：若 llama-server 正在跑，发送 SIGTERM 停止它；
 2. 合成结束（无论成功/失败/超时）：若之前是运行状态，用
@@ -120,7 +122,7 @@ RX 7900XTX 共 24GB 显存，`llama-server`（Qwen3.8-27B-UD-Q4_K_M）常驻占�
    `global_config.yaml` 的 `llm.serve_model_registry_name`）重新拉起，并轮询
    `/v1/models` 直到就绪或超时。
 
-即：`python cli.py tts --chapter XXXX` 期间 Qwen 服务会短暂不可用，命令结束后自动恢复，
+即：`python cli.py tts --novel <novel_id> --chapter XXXX` 期间 Qwen 服务会短暂不可用，命令结束后自动恢复，
 无需手动干预。若要单独查看/控制：
 ```bash
 python tools/gpu_arbiter.py status   # 查看 llama-server 是否在跑

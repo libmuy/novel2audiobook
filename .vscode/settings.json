@@ -1,4 +1,4 @@
 {
-  "python.defaultInterpreterPath": "${workspaceFolder}/../dev-env/venvs/novel2audiobook/bin/python",
+  "python.defaultInterpreterPath": "/srv/unsafe/dev-env/venvs/novel2audiobook/bin/python",
   "python.terminal.activateEnvironment": true
 }
