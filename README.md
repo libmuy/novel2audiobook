@@ -19,7 +19,7 @@ raw.txt → script_draft.json → script_final.json → 增量 TTS → timeline.
 | 混音 | `python cli.py mix --novel <novel_id> --chapter 0001` | 按 `mixing.voice_only`（默认 `true`）只导出旁白/角色人声成片到 `output/<novel_id>_ch_0001.mp3`；加 `--with-assets` 单次覆盖为「环境音 + 自动闪避 + 音效叠加」 |
 | 状态 | `python cli.py status [--novel <novel_id>]` | 查看各章节各阶段产物是否齐全，及是否存在"上游更新但下游未重跑"的陈旧状态 |
 | 自检 | `python cli.py test --module {llm,tts,audio,assets,all,dry-run}` | 隔离临时工作区跑通全链路（Mock 引擎，不依赖网络/GPU），用于快速回归验证 |
-| 界面 | `python cli.py webui` | 启动 FastAPI + Vue3 管理界面（小说库、配音工作台、音效库、系统配置）。监听地址/端口取自 `global_config.yaml` 的 `server.host`/`server.port`（默认 `127.0.0.1:7860`），可用 `--host`/`--port` 覆盖 |
+| 界面 | `python cli.py webui` | 启动 FastAPI + Vue3 管理界面（小说库、配音工作台、音效库、系统配置）。监听地址/端口取自 `global_config.yaml` 的 `server.host`/`server.port`（默认 `0.0.0.0:7860`，监听所有网卡；只想本机访问就把 `server.host` 改为 `127.0.0.1`），可用 `--host`/`--port` 覆盖 |
 | 素材 | `python cli.py assets [list\|gen] [--kind ambience\|sfx] [--only a,b] [--force]` | 管理/按 `assets/asset_specs.yaml` 增量生成环境音与音效素材库 |
 | 常驻 TTS | `python cli.py tts-serve {start,stop,status}` | 常驻 IndexTTS 推理服务（试听用，避免每次重载模型）；启动会与 llama-server 争抢显存 |
 | 管理 | `python cli.py novel\|node\|chapter ...` | 小说/部卷/章节的增删改（见 `python cli.py --help`） |

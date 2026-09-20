@@ -203,7 +203,7 @@ def resolve_webui_bind(host, port, config: dict):
     （此前 server.host/port 写在配置里、设置页也能看到，却没有任何代码读取。）"""
     server_cfg = (config or {}).get("server", {}) or {}
     return (
-        host or server_cfg.get("host") or "127.0.0.1",
+        host or server_cfg.get("host") or "0.0.0.0",
         port or server_cfg.get("port") or 7860,
     )
 
@@ -260,7 +260,7 @@ def main():
 
     # 8. webui
     parser_webui = subparsers.add_parser("webui", help="启动 FastAPI 管理界面")
-    parser_webui.add_argument("--host", default=None, help="监听地址（默认取配置 server.host，缺省 127.0.0.1）")
+    parser_webui.add_argument("--host", default=None, help="监听地址（默认取配置 server.host，缺省 0.0.0.0）")
     parser_webui.add_argument("--port", type=int, default=None, help="监听端口（默认取配置 server.port，缺省 7860）")
 
     # 9. novel

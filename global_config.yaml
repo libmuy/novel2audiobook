@@ -62,7 +62,7 @@ asset_gen:
 
 server:
   # library_root（小说库根目录，相对项目根或绝对路径，缺省 "library"）见 local_config.yaml
-  host: "127.0.0.1"
+  host: "0.0.0.0"             # 监听所有网卡（局域网可访问）；只允许本机访问请改为 127.0.0.1
   port: 7860
   cpu_workers: 2              # CPU lane 的并发数；GPU lane 恒为 1，不可配
   gpu_chunk_size: 8           # 常驻 daemon 后端的切批大小，决定取消的响应粒度

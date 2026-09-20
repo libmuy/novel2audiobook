@@ -249,9 +249,9 @@ class TestWebuiBind:
         assert resolve_webui_bind(None, 8123, {"server": {"host": "10.0.0.1", "port": 9000}}) == ("10.0.0.1", 8123)
 
     @pytest.mark.parametrize("cfg", [{}, {"server": {}}, {"server": None}, None])
-    def test_defaults_to_loopback_when_unconfigured(self, cfg):
+    def test_defaults_to_all_interfaces_when_unconfigured(self, cfg):
         from cli import resolve_webui_bind
-        assert resolve_webui_bind(None, None, cfg) == ("127.0.0.1", 7860)
+        assert resolve_webui_bind(None, None, cfg) == ("0.0.0.0", 7860)
 
 
 # --------------------------------------------------------------------------
