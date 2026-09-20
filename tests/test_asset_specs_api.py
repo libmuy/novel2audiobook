@@ -206,7 +206,8 @@ class TestSpecFileConfig:
         (tmp_path / "custom").mkdir()
         (tmp_path / "custom" / "my.yaml").write_text(
             "sfx:\n  only_one:\n    prompt: hi\n    duration_sec: 2\n    seed: 1\n", encoding="utf-8")
-        (tmp_path / "global_config.yaml").write_text(
+        (tmp_path / "config").mkdir()
+        (tmp_path / "config" / "global_config.yaml").write_text(
             "asset_gen:\n  spec_file: custom/my.yaml\n", encoding="utf-8")
 
         assert list(asset_gen.load_asset_specs()["sfx"]) == ["only_one"]

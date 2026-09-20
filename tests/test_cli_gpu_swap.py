@@ -7,7 +7,7 @@ src.tts_daemon.IndexTTSDaemon 的方法——不读真实终端输入，不碰�
 llama-server/常驻 TTS 服务/GPU，也不对 chapters/ 等共享目录做任何操作。
 """
 import pytest
-import cli
+from src import cli
 from tools import gpu_arbiter
 from src.tts_daemon import IndexTTSDaemon
 

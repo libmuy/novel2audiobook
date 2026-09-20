@@ -46,7 +46,7 @@ def run_test_module(module_name: str):
     自检脚本路由。为保证自检快速、可重复、不依赖外部服务（LLM API / GPU），
     统一在隔离临时工作区中运行，使用启发式解析器 + Mock TTS/素材生成后端。
     真实 Qwen/IndexTTS/ACE-Step/TangoFlux 链路的验证见
-    `python cli.py parse|tts|mix|assets`。
+    `./run.sh parse|tts|mix|assets`。
     """
     print(f"--> 开始运行自检模块: [{module_name}]（隔离临时工作区，Mock 引擎）")
     chapter_dir, roles_dir, tmp_root = _make_isolated_test_workspace()
@@ -209,7 +209,7 @@ def resolve_webui_bind(host, port, config: dict):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="千万字全本地离线有声书生成流水线")
+    parser = argparse.ArgumentParser(prog="./run.sh", description="千万字全本地离线有声书生成流水线")
     subparsers = parser.add_subparsers(dest="command", help="子命令列表")
 
     # 1. status
@@ -325,7 +325,7 @@ def main():
         else:
             novels = library.list_novels()
             if not novels:
-                print("小说库为空。使用 `python cli.py novel create --title 标题` 创建第一本小说。")
+                print("小说库为空。使用 `./run.sh novel create --title 标题` 创建第一本小说。")
                 return
             print(f"{'小说 ID':<20} | {'标题':<12} | {'章节数':<6} | 状态分布")
             print("-" * 70)

@@ -45,8 +45,8 @@ uv pip install --python /srv/unsafe/dev-env/venvs/audioldm/bin/python \
 mkdir -p /srv/unsafe/dev-env/models/audiogen/audioldm
 
 # 5. 冒烟测试（会触发模型下载，网络慢的话预计几分钟到十几分钟）
-/srv/unsafe/dev-env/venvs/novel2audiobook/bin/python cli.py assets gen --kind ambience --only rain_heavy --force
-/srv/unsafe/dev-env/venvs/novel2audiobook/bin/python cli.py assets list   # 期望 rain_heavy 一行 engine=audioldm，used_fallback=false
+./run.sh assets gen --kind ambience --only rain_heavy --force
+./run.sh assets list   # 期望 rain_heavy 一行 engine=audioldm，used_fallback=false
 ```
 
 ## 关键点
@@ -90,7 +90,7 @@ bug fixes...`——这是 diffusers 后续推荐迁移到 `AudioLDM2Pipeline`（
 ## 冒烟测试（全量）
 
 ```bash
-/srv/unsafe/dev-env/venvs/novel2audiobook/bin/python cli.py assets gen --kind ambience --force
-/srv/unsafe/dev-env/venvs/novel2audiobook/bin/python cli.py assets list   # 期望全部 6 条 engine=audioldm，used_fallback=false
+./run.sh assets gen --kind ambience --force
+./run.sh assets list   # 期望全部 6 条 engine=audioldm，used_fallback=false
 ```
-成功后可用 `python cli.py webui` 启动的管理界面（音效库页）逐条试听确认。
+成功后可用 `./run.sh webui` 启动的管理界面（音效库页）逐条试听确认。

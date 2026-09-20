@@ -699,7 +699,8 @@ class TestSystemAPI:
         assert "server" in resp.json()
 
     def test_patch_config_persists_to_disk(self, client, tmp_path):
-        cfg_path = tmp_path / "global_config.yaml"
+        (tmp_path / "config").mkdir(exist_ok=True)
+        cfg_path = tmp_path / "config" / "global_config.yaml"
         cfg_path.write_text("server:\n  cpu_workers: 2\n")
 
         resp = client.patch("/api/config", json={"server.cpu_workers": 9})
@@ -729,7 +730,8 @@ class TestSystemAPI:
     def _seed_real_config(self, tmp_path):
         import shutil
         from tests.test_config_store import REAL
-        cfg_path = tmp_path / "global_config.yaml"
+        (tmp_path / "config").mkdir(exist_ok=True)
+        cfg_path = tmp_path / "config" / "global_config.yaml"
         shutil.copy(REAL, cfg_path)
         return cfg_path
 
@@ -813,7 +815,8 @@ class TestSystemAPI:
         assert "cpu_workers: 2" in cfg_path.read_text(encoding="utf-8")  # 非法的没写进去
 
     def test_patch_config_accepts_mixing_voice_only(self, client, tmp_path):
-        cfg_path = tmp_path / "global_config.yaml"
+        (tmp_path / "config").mkdir(exist_ok=True)
+        cfg_path = tmp_path / "config" / "global_config.yaml"
         cfg_path.write_text("mixing:\n  voice_only: true\n")
         resp = client.patch("/api/config", json={"mixing.voice_only": False})
         assert resp.status_code == 200
@@ -826,7 +829,8 @@ class TestSystemAPI:
     def test_patch_config_coerces_string_bool_for_voice_only(self, client, tmp_path):
         """JSON 字符串 "false" 在 Python 里是真值，写配置前必须强制转成真正的
         bool，否则前端传什么字符串都会被当成"开"，voice_only 就永远关不掉。"""
-        cfg_path = tmp_path / "global_config.yaml"
+        (tmp_path / "config").mkdir(exist_ok=True)
+        cfg_path = tmp_path / "config" / "global_config.yaml"
         cfg_path.write_text("mixing:\n  voice_only: true\n")
         resp = client.patch("/api/config", json={"mixing.voice_only": "false"})
         assert resp.status_code == 200

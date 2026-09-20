@@ -14,7 +14,7 @@
   触发（见 CLAUDE.md/docs/plan/003-*.md 的"显式确认换手"设计），不能在用户
   还在调音色的时候悄悄把模型卸掉。
 
-与 IndexTTSBackend（一次性批量子进程，cli.py tts 走这条路径）完全独立、
+与 IndexTTSBackend（一次性批量子进程，run.sh tts 走这条路径）完全独立、
 互不影响：常驻服务只用于 Tab 4 试听这类交互式小批量请求。
 """
 import json
@@ -31,7 +31,7 @@ from tools import gpu_arbiter
 # 而任务队列的取消（src/cancel_scope.py 的杀进程钩子）只接在「一次性子进程」后端
 # （IndexTTSBackend / SubprocessAudioGenBackend）上——队列路径本来也走不到守护进程
 # （build_tts_backend 只返回 IndexTTS 或 Mock）。守护进程只服务交互式试听，
-# 想中断它请用 `python cli.py tts-serve stop`。
+# 想中断它请用 `./run.sh tts-serve stop`。
 #
 # 有意不在本模块复制一份 pidfile/socket 路径常量：路径/格式由
 # tools/gpu_arbiter.py 统一定义（它也要读这份状态来做 owner 探测），本模块

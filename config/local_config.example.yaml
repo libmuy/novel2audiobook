@@ -1,5 +1,5 @@
 # 本机专属配置模板。首次使用：
-#     cp local_config.example.yaml local_config.yaml
+#     cp config/local_config.example.yaml config/local_config.yaml
 # 然后把下面的占位路径改成本机实际路径。local_config.yaml 已 gitignore，不会入库。
 #
 # 加载时它按键深合并覆盖 global_config.yaml（同名键以本文件为准）。全部键都是可选的：
@@ -30,6 +30,7 @@ server:
   library_root: "library"   # 小说库根目录，相对项目根或绝对路径
 
 tools:
+  project_python: "/path/to/venvs/novel2audiobook/bin/python"   # 主项目 venv 的 python，run.sh / scripts/activate.sh 据此找环境
   llm_serve_command: "ai"   # 拉起 llama-server 的外部命令，实际调用 `<cmd> llm serve <serve_model_registry_name> --port <serve_port>`
   # 以下三项仅 tools/generate_seed_reference.py（生成种子参考音频）需要；不用可省略
   espeak_bin: "/path/to/espeak_ng/bin/espeak-ng"

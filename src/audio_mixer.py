@@ -189,7 +189,7 @@ def _validate_timeline_assets(items: list, chapter_dir: str):
     if missing:
         raise FileNotFoundError(
             f"timeline.json 中 {len(missing)} 个句段缺失对应人声音频文件（seg_id={missing[:10]}…），"
-            "请先重新运行 `python cli.py tts` 生成完整音轨。"
+            "请先重新运行 `./run.sh tts` 生成完整音轨。"
         )
 
 

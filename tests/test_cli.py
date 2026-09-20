@@ -3,7 +3,7 @@
 """
 import os
 import pytest
-from cli import run_test_module
+from src.cli import run_test_module
 
 
 class TestRunTestModule:

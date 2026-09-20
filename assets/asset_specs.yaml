@@ -2,7 +2,7 @@
 #
 # 每条素材经本地模型批量生成后落到 assets/ambience/<name>.wav 或
 # assets/sfx/<name>.wav（供 src/audio_mixer.py 直接使用），生成方式见
-# `python cli.py assets gen`（实现见 src/asset_gen.py）。
+# `./run.sh assets gen`（实现见 src/asset_gen.py）。
 #
 # 字段说明：
 #   description       中文，会进入 Qwen 解析提示词的素材词表，帮助模型按语义选材
@@ -17,7 +17,7 @@
 #   seed              固定随机种子，保证同一份 prompt 复现同一段素材
 #
 # 改动 prompt/negative_prompt/duration_sec/seed 会使该条素材的增量缓存失效，
-# 下次 `python cli.py assets gen` 会重新生成；只改 description 不会触发重新生成。
+# 下次 `./run.sh assets gen` 会重新生成；只改 description 不会触发重新生成。
 
 ambience:
   rain_heavy:

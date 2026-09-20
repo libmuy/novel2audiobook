@@ -1,7 +1,7 @@
 # 音效 / 背景音本地生成环境搭建（RX 7900XTX / ROCm）
 
 本项目的 BGM（环境音）与音效由本地模型批量生成，产物落在 `assets/ambience/`、
-`assets/sfx/` 下供 `python cli.py assets gen` 增量生成、`src/audio_mixer.py`
+`assets/sfx/` 下供 `./run.sh assets gen` 增量生成、`src/audio_mixer.py`
 直接使用（见 `src/asset_gen.py` 的模块说明）。两类素材各用一个专门模型，均运行在
 **独立于项目主 venv 的隔离环境**中，理由与 `docs/indextts_setup.md` 相同：
 依赖版本（尤其 `torch` 的 ROCm 构建）互相冲突，通过子进程 + `jobs.json` ⇄
@@ -15,7 +15,7 @@
 > **ambience 模型变更说明**：下方 ACE-Step 1.5 相关内容（环境搭建、已知坑）**保留
 > 作参考，但已不是默认引擎**——它本质是音乐生成模型，生成写实环境音会带出音乐化
 > 调性，换引擎的诊断数据与理由见 `docs/audioldm_setup.md`。`AceStepBackend`、
-> `tools/acestep_*` 代码/环境未删除，`global_config.yaml` 的 `ace_step:` 配置段
+> `tools/acestep_*` 代码/环境未删除，`config/global_config.yaml` 的 `ace_step:` 配置段
 > 也原样保留，如需切回可以直接改 `src/asset_gen.build_asset_gen_backend()` 里
 > ambience 对应的 backend 类。
 
@@ -134,7 +134,7 @@ ROCm 版 PyTorch 复用 CUDA 的设备命名空间（`torch.cuda.*` API 在 ROCm
 ### 4. 首次运行会下载模型，超时要给够
 `tools/acestep_infer.py` 只负责推理，不负责下载——权重必须在步骤 7 里**预先**
 下载完整，否则子进程内 `initialize_service()` 触发的按需下载会撞上
-`global_config.yaml:asset_gen.ace_step.timeout_sec`（默认 3600 秒）而被杀掉，
+`config/global_config.yaml:asset_gen.ace_step.timeout_sec`（默认 3600 秒）而被杀掉，
 留下不完整目录。若怀疑目录不完整，删掉对应子目录重新跑步骤 7（同
 `docs/indextts_setup.md` 已知坑 §2 的排障思路）。
 
@@ -176,7 +176,7 @@ tokenizer+约束解码器+权重约 1 分钟——这部分是子进程启动后
 的固定成本（`tools/acestep_infer.py` 设计成单次加载、批量循环生成，见文件顶部
 说明），不会随素材条数线性增加。单条生成里，8 步扩散只要 ~5 秒，VAE 解码
 （tiled，本机显存档位下）约 90 秒是单条最大头的部分，60 秒长的 ambience 素材
-解码时间预计等比更长——`global_config.yaml:asset_gen.ace_step.timeout_sec`
+解码时间预计等比更长——`config/global_config.yaml:asset_gen.ace_step.timeout_sec`
 （3600 秒）留的余量对付批量跑几条是够的，如果一次性生成条目很多可以按需调大。
 
 ## GPU 显存互斥（llama-server ⇄ ACE-Step）
@@ -186,7 +186,7 @@ tokenizer+约束解码器+权重约 1 分钟——这部分是子进程启动后
 `LlmSuspendedForTts`，现已泛化为 `LlmSuspendedForGpu`，旧名保留别名兼容）。本引擎的差异点：
 
 - `src/asset_gen.SubprocessAudioGenBackend.generate_batch()` 在
-  `with LlmSuspendedForGpu(config):` 块内跑子进程，`python cli.py assets gen`
+  `with LlmSuspendedForGpu(config):` 块内跑子进程，`./run.sh assets gen`
   期间 Qwen 服务会短暂不可用，命令结束后自动恢复。
 - ACE-Step XL（约 12GB）单独驻卡显存很宽裕，**只是不与 `parse` 并发**。
 - TangoFlux 跑在 CPU 上，不占显存，不需要也不参与换卡；但
@@ -197,11 +197,11 @@ tokenizer+约束解码器+权重约 1 分钟——这部分是子进程启动后
 
 ```bash
 # 1. 先用 mock 后端确认脚手架本身没问题（不需要真实环境）
-/srv/unsafe/dev-env/venvs/novel2audiobook/bin/python cli.py assets gen --kind ambience --only rain_heavy --backend mock
+./run.sh assets gen --kind ambience --only rain_heavy --backend mock
 
 # 2. 真实环境搭好后，去掉 --backend mock，验证会调用 ACE-Step 并自动换卡
-/srv/unsafe/dev-env/venvs/novel2audiobook/bin/python cli.py assets gen --kind ambience --only rain_heavy --force
-/srv/unsafe/dev-env/venvs/novel2audiobook/bin/python cli.py assets list   # 期望 rain_heavy 一行 engine=ace_step，used_fallback=false
+./run.sh assets gen --kind ambience --only rain_heavy --force
+./run.sh assets list   # 期望 rain_heavy 一行 engine=ace_step，used_fallback=false
 /srv/unsafe/dev-env/venvs/novel2audiobook/bin/python tools/gpu_arbiter.py status   # 确认 llama-server 已自动恢复
 ```
 成功会在 `assets/ambience/rain_heavy.wav` 生成一段真实的雨声环境音（而非 Mock
@@ -255,6 +255,6 @@ print('OK')
 ## 冒烟测试（sfx / TangoFlux）
 
 ```bash
-/srv/unsafe/dev-env/venvs/novel2audiobook/bin/python cli.py assets gen --kind sfx --only sword_clash --force
-/srv/unsafe/dev-env/venvs/novel2audiobook/bin/python cli.py assets list   # 期望 sword_clash 一行 engine=tangoflux，used_fallback=false
+./run.sh assets gen --kind sfx --only sword_clash --force
+./run.sh assets list   # 期望 sword_clash 一行 engine=tangoflux，used_fallback=false
 ```

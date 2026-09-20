@@ -3,7 +3,7 @@ import re
 from fastapi import APIRouter
 from src.api.deps import get_config, set_config
 from src import config_store, monitor
-from src.utils import LOCAL_CONFIG_NAME, read_yaml_dict, resolve_path
+from src.utils import global_config_path, local_config_path, read_yaml_dict
 
 router = APIRouter(tags=["system"])
 
@@ -69,17 +69,17 @@ def _coerce_config_value(key: str, value):
 
 
 def _target_config_file(dotted_key: str) -> str:
-    """该配置键应写回哪一层：local_config.yaml 里已定义的写 local（否则 global 里的写入
-    会被 local 覆盖层影子掉，设置页"保存成功"却不生效），其余写 global_config.yaml。
+    """该配置键应写回哪一层：config/local_config.yaml 里已定义的写 local（否则 global 里的写入
+    会被 local 覆盖层影子掉，设置页"保存成功"却不生效），其余写 config/global_config.yaml。
 
     故意不做成模块级常量：常量会在 system.py 首次被 import 时把 PROJECT_ROOT
     冻结下来，测试里 monkeypatch PROJECT_ROOT 就不生效了（这个坑真的踩过，
-    见 005 review）。resolve_path() 在每次调用时动态读取。"""
-    local_path = resolve_path(LOCAL_CONFIG_NAME)
+    见 005 review）。global_config_path()/local_config_path() 在每次调用时动态读取。"""
+    local_path = local_config_path()
     node = read_yaml_dict(local_path)
     for part in dotted_key.split("."):
         if not isinstance(node, dict) or part not in node:
-            return resolve_path("global_config.yaml")
+            return global_config_path()
         node = node[part]
     return local_path
 

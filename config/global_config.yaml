@@ -73,7 +73,7 @@ server:
 mixing:
   voice_only: true          # 当前阶段先只做旁白/角色人声成片，跳过环境音/音效
                              # 叠加与自动闪避（效果音流水线待后续阶段再打通）；
-                             # `python cli.py mix --with-assets` 可单次覆盖为 false
+                             # `./run.sh mix --with-assets` 可单次覆盖为 false
   ducking_threshold: -20.0  # dBFS RMS 阈值
   ducking_volume_ratio: 0.3 # BGM 闪避时降低到的音量比例 (30%)。注意是线性比例，不是 dB；
                              # 设置页改用下面的 ducking_gain_db，两者都有时 ducking_gain_db 优先

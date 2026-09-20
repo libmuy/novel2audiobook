@@ -6,7 +6,7 @@ import pytest
 
 from src import config_store
 
-REAL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "global_config.yaml")
+REAL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "global_config.yaml")
 
 
 def _comment_lines(text):

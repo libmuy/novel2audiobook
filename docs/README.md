@@ -5,7 +5,7 @@
 
 ## 环境搭建
 
-每个外部推理引擎都是独立 venv + 独立权重目录，路径通过 `local_config.yaml` 配置（见根 README 的「配置」）。
+每个外部推理引擎都是独立 venv + 独立权重目录，路径通过 `config/local_config.yaml` 配置（见根 README 的「配置」）。
 
 | 文档 | 内容 | 状态 |
 |---|---|---|

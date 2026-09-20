@@ -44,7 +44,19 @@ def calculate_file_md5(file_path: str) -> str:
     return h.hexdigest()
 
 
-LOCAL_CONFIG_NAME = "local_config.yaml"
+CONFIG_DIR_NAME = "config"
+GLOBAL_CONFIG_NAME = os.path.join(CONFIG_DIR_NAME, "global_config.yaml")
+LOCAL_CONFIG_NAME = os.path.join(CONFIG_DIR_NAME, "local_config.yaml")
+
+
+# 故意做成函数而不是模块级绝对路径常量：常量会在 import 时把 PROJECT_ROOT 冻结下来，
+# 测试里 monkeypatch PROJECT_ROOT 就不生效了。
+def global_config_path() -> str:
+    return resolve_path(GLOBAL_CONFIG_NAME)
+
+
+def local_config_path() -> str:
+    return resolve_path(LOCAL_CONFIG_NAME)
 
 
 def _deep_merge(base: dict, overlay: dict) -> dict:
@@ -74,9 +86,9 @@ def load_global_config(config_path: str = None, local_path: str = None) -> dict:
     显式传 local_path。
     """
     if config_path is None:
-        config_path = os.path.join(PROJECT_ROOT, "global_config.yaml")
+        config_path = global_config_path()
         if local_path is None:
-            local_path = os.path.join(PROJECT_ROOT, LOCAL_CONFIG_NAME)
+            local_path = local_config_path()
     else:
         config_path = resolve_path(config_path)
     config = read_yaml_dict(config_path)

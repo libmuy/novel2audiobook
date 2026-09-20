@@ -119,10 +119,10 @@ GPU 换手机制的权威说明，`audiogen_setup.md` 的 ACE-Step 复用同一�
 1. 批量合成前：若 llama-server 正在跑，发送 SIGTERM 停止它；
 2. 合成结束（无论成功/失败/超时）：若之前是运行状态，用
    `ai llm serve <serve_model_registry_name> --port <serve_port>`（配置见
-   `global_config.yaml` 的 `llm.serve_model_registry_name`）重新拉起，并轮询
+   `config/global_config.yaml` 的 `llm.serve_model_registry_name`）重新拉起，并轮询
    `/v1/models` 直到就绪或超时。
 
-即：`python cli.py tts --novel <novel_id> --chapter XXXX` 期间 Qwen 服务会短暂不可用，命令结束后自动恢复，
+即：`./run.sh tts --novel <novel_id> --chapter XXXX` 期间 Qwen 服务会短暂不可用，命令结束后自动恢复，
 无需手动干预。若要单独查看/控制：
 ```bash
 python tools/gpu_arbiter.py status   # 查看 llama-server 是否在跑
