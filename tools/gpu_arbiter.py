@@ -93,13 +93,22 @@ def stop_llama_server(port: int, wait_sec: float = 15.0) -> bool:
     return True  # 已发送 kill，即便进程退出较慢也不阻塞主流程
 
 
-def start_llama_server(model_registry_name: str, port: int, api_base: str, startup_timeout_sec: float = 180.0) -> bool:
-    """通过 `ai llm serve <name> --port <port>` 拉起 llama-server，并等待其响应就绪"""
+DEFAULT_SERVE_COMMAND = "ai"
+
+
+def serve_command_from_config(config: dict) -> str:
+    """拉起 llama-server 的外部命令名，取配置 tools.llm_serve_command（local_config.yaml），缺省 ai"""
+    return (config.get("tools") or {}).get("llm_serve_command") or DEFAULT_SERVE_COMMAND
+
+
+def start_llama_server(model_registry_name: str, port: int, api_base: str, startup_timeout_sec: float = 180.0,
+                       serve_command: str = DEFAULT_SERVE_COMMAND) -> bool:
+    """通过 `<serve_command> llm serve <name> --port <port>`（默认 ai）拉起 llama-server，并等待其响应就绪"""
     if is_server_up(api_base, timeout=2.0):
         return True
-    logger.info("重新拉起 llama-server: ai llm serve %s --port %d", model_registry_name, port)
+    logger.info("重新拉起 llama-server: %s llm serve %s --port %d", serve_command, model_registry_name, port)
     subprocess.Popen(
-        ["ai", "llm", "serve", model_registry_name, "--port", str(port)],
+        [serve_command, "llm", "serve", model_registry_name, "--port", str(port)],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
     )
     deadline = time.time() + startup_timeout_sec
@@ -151,7 +160,8 @@ def recover_orphaned_suspension(config: dict = None) -> dict:
     api_base = llm_cfg.get("api_base", f"http://localhost:{port}/v1")
     startup_timeout = llm_cfg.get("server_start_timeout_sec", 180)
 
-    ok = start_llama_server(model_registry_name, port, api_base, startup_timeout)
+    ok = start_llama_server(model_registry_name, port, api_base, startup_timeout,
+                            serve_command=serve_command_from_config(config))
     try:
         os.remove(LLM_SUSPENDED_PATH)
     except OSError:
@@ -181,6 +191,7 @@ class LlmSuspendedForGpu:
         self.api_base = llm_cfg.get("api_base", f"http://localhost:{self.port}/v1")
         self.model_registry_name = llm_cfg.get("serve_model_registry_name", "")
         self.startup_timeout = llm_cfg.get("server_start_timeout_sec", 180)
+        self.serve_command = serve_command_from_config(config)
         self._was_running = False
 
     def __enter__(self):
@@ -210,7 +221,8 @@ class LlmSuspendedForGpu:
         if self._was_running:
             if self.model_registry_name:
                 t0 = time.time()
-                start_llama_server(self.model_registry_name, self.port, self.api_base, self.startup_timeout)
+                start_llama_server(self.model_registry_name, self.port, self.api_base, self.startup_timeout,
+                                   serve_command=self.serve_command)
                 record_swap_seconds("llm_start", time.time() - t0)
             try:
                 os.remove(LLM_SUSPENDED_PATH)
@@ -371,6 +383,7 @@ if __name__ == "__main__":
             llm_cfg.get("serve_port", 8080),
             llm_cfg.get("api_base", "http://localhost:8080/v1"),
             llm_cfg.get("server_start_timeout_sec", 180),
+            serve_command=serve_command_from_config(cfg),
         )
         sys.exit(0 if ok else 1)
     else:

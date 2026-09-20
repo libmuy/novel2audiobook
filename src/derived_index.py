@@ -19,7 +19,8 @@ def compute_fingerprint(library_dir: str = None) -> str:
     (相对路径, mtime, size) 三元组排序后拼起来算 md5。
     只 stat 不读内容——几千个文件也是毫秒级。"""
     if library_dir is None:
-        library_dir = os.path.join(PROJECT_ROOT, "library")
+        from src.library import library_root  # 延迟导入：library 依赖 status_tracker，避免循环
+        library_dir = library_root()
 
     pattern = os.path.join(library_dir, "*", "chapters", "*", "script_final.json")
     files = sorted(glob.glob(pattern))
@@ -44,23 +45,17 @@ def build_role_refs(library_dir: str = None) -> dict:
      "roles": {"su_yan": {"novels": ["nv_xianni"], "segment_count": 87,
                           "by_novel": {"nv_xianni": 87}}}}"""
     if library_dir is None:
-        library_dir = os.path.join(PROJECT_ROOT, "library")
+        from src.library import library_root  # 延迟导入：library 依赖 status_tracker，避免循环
+        library_dir = library_root()
 
     fingerprint = compute_fingerprint(library_dir)
     roles = {}
 
     pattern = os.path.join(library_dir, "*", "chapters", "*", "script_final.json")
     for script_path in sorted(glob.glob(pattern)):
-        # 解析 novel_id 和 chapter_id
-        parts = script_path.split(os.sep)
-        # 找到 library 之后的部分
-        try:
-            lib_idx = parts.index("library")
-        except ValueError:
-            continue
-        if lib_idx + 1 >= len(parts):
-            continue
-        novel_id = parts[lib_idx + 1]
+        # novel_id = 库目录下的第一级目录名。基于相对路径取，不依赖库目录本身叫什么
+        # （server.library_root 可配，且路径里恰好还有别的 "library" 段时旧写法会取错）
+        novel_id = os.path.relpath(script_path, library_dir).split(os.sep)[0]
 
         try:
             with open(script_path, "r", encoding="utf-8") as f:

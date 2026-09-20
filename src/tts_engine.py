@@ -19,7 +19,9 @@ import logging
 import subprocess
 import tempfile
 
-from src.utils import calculate_md5, update_chapter_status, load_global_config, resolve_path
+from src.utils import (
+    calculate_md5, update_chapter_status, load_global_config, resolve_path, resolve_optional_path,
+)
 from src import roles as roles_mod
 from src.pipeline_errors import TaskCancelled
 from src.killable_proc import kill_on_cancel, terminate_process_group
@@ -143,15 +145,17 @@ class IndexTTSBackend:
     def __init__(self, config: dict):
         self.config = config
         tts_cfg = config.get("tts", {}).get("index_tts", {})
-        self.python_bin = resolve_path(tts_cfg.get("python_bin", "/srv/unsafe/dev-env/venvs/indextts/bin/python"))
+        self.python_bin = resolve_optional_path(tts_cfg.get("python_bin"))
         self.infer_script = resolve_path(tts_cfg.get("infer_script", "tools/indextts_infer.py"))
         self.repo_dir = resolve_path(tts_cfg.get("repo_dir", "tools/indextts_repo"))
-        self.checkpoints_dir = resolve_path(tts_cfg.get("checkpoints_dir", "/srv/unsafe/dev-env/models/tts/IndexTTS-2.5"))
+        self.checkpoints_dir = resolve_optional_path(tts_cfg.get("checkpoints_dir"))
         self.timeout = tts_cfg.get("timeout_sec", 1800)
 
     def is_available(self) -> bool:
-        return (
-            os.path.exists(self.python_bin)
+        # python_bin / checkpoints_dir 是本机专属路径，没配（local_config.yaml）就视为环境未就绪
+        return bool(
+            self.python_bin and self.checkpoints_dir
+            and os.path.exists(self.python_bin)
             and os.path.exists(self.infer_script)
             and os.path.isdir(self.repo_dir)
             and os.path.isdir(self.checkpoints_dir)

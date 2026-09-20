@@ -13,7 +13,10 @@ from datetime import datetime
 
 import yaml
 
-from src.utils import resolve_path, get_chapter_dir as _utils_get_chapter_dir
+from src.utils import (
+    resolve_path, get_project_root, load_global_config,
+    get_chapter_dir as _utils_get_chapter_dir,
+)
 from src.status_tracker import get_all_chapters_status
 
 try:
@@ -43,10 +46,27 @@ def _get_novel_lock(novel_id: str) -> threading.RLock:
 # 路径
 # --------------------------------------------------------------------------
 
+# server.library_root 的读取缓存。library_root() 被几乎每个路径函数高频调用，不能每次读盘解析
+# YAML；以项目根为键（测试里 monkeypatch PROJECT_ROOT 时自然隔离）。配置被 PATCH 改动后由
+# src/api/deps.set_config 调 invalidate_library_root() 清掉，下次调用重新读。
+_root_cache: dict = {}
+
+
+def invalidate_library_root():
+    _root_cache.clear()
+
+
 def library_root(library_dir: str = None) -> str:
+    """小说库根目录。显式传入的 library_dir 优先；否则取配置 server.library_root
+    （相对项目根或绝对路径），缺省 LIBRARY_DIR_NAME。"""
     if library_dir is not None:
         return library_dir
-    return resolve_path(LIBRARY_DIR_NAME)
+    project_root = get_project_root()
+    name = _root_cache.get(project_root)
+    if name is None:
+        server_cfg = load_global_config().get("server", {}) or {}
+        name = _root_cache[project_root] = server_cfg.get("library_root") or LIBRARY_DIR_NAME
+    return resolve_path(name)
 
 
 def get_novel_dir(novel_id: str, library_dir: str = None) -> str:

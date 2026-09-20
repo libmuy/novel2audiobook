@@ -1,5 +1,7 @@
+# 与机器无关的参数。本机专属的绝对路径（venv、模型权重、外部命令、espeak）放在同目录的
+# local_config.yaml（gitignore，模板见 local_config.example.yaml），加载时按键深合并覆盖本文件。
 llm:
-  model_name: "/srv/unsafe/dev-env/models/llm/unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_M.gguf"
+  # model_name（GGUF 权重绝对路径）是本机专属，见 local_config.yaml
   api_base: "http://localhost:8080/v1"  # 本机 llama-server（ai llm serve qwen3.8-27b-unsloth）实际监听端口
   serve_port: 8080
   serve_model_registry_name: "qwen3.8-27b-unsloth"  # `ai llm serve <name>` 使用的注册表名（与 api_base 端口对应）
@@ -16,12 +18,12 @@ tts:
   channels: 1
   format: "wav"
   index_tts:
-    python_bin: "/srv/unsafe/dev-env/venvs/indextts/bin/python"       # 独立 venv（ROCm torch），见 docs/indextts_setup.md
+    # python_bin（独立 venv）与 checkpoints_dir（权重目录）是本机专属，见 local_config.yaml
     infer_script: "tools/indextts_infer.py"
     repo_dir: "tools/indextts_repo"                   # index-tts 官方源码仓库
-    checkpoints_dir: "/srv/unsafe/dev-env/models/tts/IndexTTS-2.5"
     timeout_sec: 10800  # 批量合成一整章（含模型加载）；实测本机 RTF ~6-9x，
                          # 121 句/3757 字约需 65-70 分钟，此处留足余量
+    daemon_startup_timeout_sec: 180  # 常驻 TTS 服务（tts-serve start）等待模型加载完成的超时
     precompute_timeout_sec: 900  # 单个角色的 embedding 预计算超时。不设则回落到上面的 timeout_sec——
                                   # 那个是整章 TTS 的余量，拿来管一次挂死的预计算会占住唯一的 GPU 通道 3 小时
 
@@ -43,24 +45,23 @@ asset_gen:
                                    # （原计划用 Stable Audio 3 Small SFX，但它是 HuggingFace
                                    # gated repo 且审批不顺畅，改用公开、无需申请的 TangoFlux）
   ace_step:
-    python_bin: "/srv/unsafe/dev-env/venvs/acestep/bin/python"       # 独立 venv（ROCm torch），见 docs/audiogen_setup.md
+    # python_bin / checkpoints_dir 是本机专属，见 local_config.yaml
+    # 注：tools/acestep_infer.py 内部对 ACESTEP_ROCM_DTYPE 做了 setdefault("bfloat16")（ROCm 下避免 fp32），
+    #     没有对应的配置键；要改只能在调用环境里导出该变量，见 docs/audiogen_setup.md
     infer_script: "tools/acestep_infer.py"
     repo_dir: "tools/acestep_repo"                   # ACE-Step 官方源码仓库
-    checkpoints_dir: "/srv/unsafe/dev-env/models/audiogen/ACE-Step-1.5"
     timeout_sec: 3600
   audioldm:
-    python_bin: "/srv/unsafe/dev-env/venvs/audioldm/bin/python"      # 独立 venv（CPU torch + diffusers），见 docs/audioldm_setup.md
+    # python_bin / checkpoints_dir 是本机专属，见 local_config.yaml
     infer_script: "tools/audioldm_infer.py"
-    checkpoints_dir: "/srv/unsafe/dev-env/models/audiogen/audioldm"  # HF_HOME 缓存根目录，非直接模型路径
     timeout_sec: 1800
   tangoflux:
-    python_bin: "/srv/unsafe/dev-env/venvs/tangoflux/bin/python"     # 独立 venv（CPU torch），见 docs/audiogen_setup.md
+    # python_bin / checkpoints_dir 是本机专属，见 local_config.yaml
     infer_script: "tools/tangoflux_infer.py"
-    checkpoints_dir: "/srv/unsafe/dev-env/models/audiogen/tangoflux"  # HF_HOME 缓存根目录，非直接模型路径
     timeout_sec: 1800
 
 server:
-  library_root: "library"   # 小说库根目录，相对项目根
+  # library_root（小说库根目录，相对项目根或绝对路径，缺省 "library"）见 local_config.yaml
   host: "127.0.0.1"
   port: 7860
   cpu_workers: 2              # CPU lane 的并发数；GPU lane 恒为 1，不可配

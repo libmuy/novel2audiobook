@@ -3,7 +3,7 @@ import re
 from fastapi import APIRouter
 from src.api.deps import get_config, set_config
 from src import config_store, monitor
-from src.utils import resolve_path
+from src.utils import LOCAL_CONFIG_NAME, read_yaml_dict, resolve_path
 
 router = APIRouter(tags=["system"])
 
@@ -68,11 +68,20 @@ def _coerce_config_value(key: str, value):
     return True, value, None
 
 
-def _config_file_path() -> str:
-    # 故意不做成模块级常量：常量会在 system.py 首次被 import 时把 PROJECT_ROOT
-    # 冻结下来，测试里 monkeypatch PROJECT_ROOT 就不生效了（这个坑真的踩过，
-    # 见 005 review）。resolve_path() 在每次调用时动态读取。
-    return resolve_path("global_config.yaml")
+def _target_config_file(dotted_key: str) -> str:
+    """该配置键应写回哪一层：local_config.yaml 里已定义的写 local（否则 global 里的写入
+    会被 local 覆盖层影子掉，设置页"保存成功"却不生效），其余写 global_config.yaml。
+
+    故意不做成模块级常量：常量会在 system.py 首次被 import 时把 PROJECT_ROOT
+    冻结下来，测试里 monkeypatch PROJECT_ROOT 就不生效了（这个坑真的踩过，
+    见 005 review）。resolve_path() 在每次调用时动态读取。"""
+    local_path = resolve_path(LOCAL_CONFIG_NAME)
+    node = read_yaml_dict(local_path)
+    for part in dotted_key.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return resolve_path("global_config.yaml")
+        node = node[part]
+    return local_path
 
 
 @router.get("/config")
@@ -100,7 +109,11 @@ def patch_config(data: dict):
     if applied:
         # 先落盘再改内存：写盘失败时内存配置不会跟磁盘不一致。落盘走 round-trip，
         # 只改被更新的键，文件里的注释原样保留（见 src/config_store.py）
-        config_store.round_trip_update(_config_file_path(), applied)
+        by_file = {}
+        for key, value in applied.items():
+            by_file.setdefault(_target_config_file(key), {})[key] = value
+        for path, updates in by_file.items():
+            config_store.round_trip_update(path, updates)
         for key, value in applied.items():
             *parents, leaf = key.split(".")
             section = config

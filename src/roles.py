@@ -17,7 +17,7 @@ import shutil
 import subprocess
 import threading
 
-from src.utils import resolve_path, load_global_config, calculate_file_md5
+from src.utils import resolve_path, resolve_optional_path, load_global_config, calculate_file_md5
 
 try:
     from pypinyin import lazy_pinyin
@@ -283,10 +283,10 @@ def _embedding_env(config: dict) -> dict:
     tts_cfg = config.get("tts", {}).get("index_tts", {})
     return {
         "tts_cfg": tts_cfg,
-        "python_bin": resolve_path(tts_cfg.get("python_bin", "/srv/unsafe/dev-env/venvs/indextts/bin/python")),
+        "python_bin": resolve_optional_path(tts_cfg.get("python_bin")),
         "script": resolve_path("tools/precompute_embeddings.py"),
         "repo_dir": resolve_path(tts_cfg.get("repo_dir", "tools/indextts_repo")),
-        "checkpoints_dir": tts_cfg.get("checkpoints_dir", "/srv/unsafe/dev-env/models/tts/IndexTTS-2.5"),
+        "checkpoints_dir": resolve_optional_path(tts_cfg.get("checkpoints_dir")),
     }
 
 
@@ -299,7 +299,8 @@ def embedding_precondition_error(role_id: str, manifest: dict, config: dict = No
     if config is None:
         config = load_global_config()
     env = _embedding_env(config)
-    if not (os.path.exists(env["python_bin"]) and os.path.exists(env["script"])
+    if not (env["python_bin"] and env["checkpoints_dir"]
+            and os.path.exists(env["python_bin"]) and os.path.exists(env["script"])
             and os.path.isdir(env["repo_dir"]) and os.path.isdir(env["checkpoints_dir"])):
         return "IndexTTS 推理环境未就绪（venv/权重缺失），无法预计算 embedding"
     return None

@@ -24,6 +24,12 @@ def resolve_path(relative_path: str) -> str:
     return os.path.join(PROJECT_ROOT, relative_path)
 
 
+def resolve_optional_path(path) -> str:
+    """resolve_path 的可缺省版：配置里没给（None/空串）就返回 None，而不是回落到某台机器的
+    路径字面量。调用方据此判定"环境未配置"并降级（is_available() 判假）。"""
+    return resolve_path(path) if path else None
+
+
 def calculate_md5(key_string: str) -> str:
     """计算文本串的 MD5 哈希值"""
     return hashlib.md5(key_string.encode("utf-8")).hexdigest()
@@ -38,16 +44,45 @@ def calculate_file_md5(file_path: str) -> str:
     return h.hexdigest()
 
 
-def load_global_config(config_path: str = None) -> dict:
-    """读取全局 YAML 配置文件（默认取项目根目录下的 global_config.yaml）"""
+LOCAL_CONFIG_NAME = "local_config.yaml"
+
+
+def _deep_merge(base: dict, overlay: dict) -> dict:
+    """dict 按键递归合并；其余类型（标量、列表）由 overlay 整体替换。返回新 dict，不改入参。"""
+    merged = dict(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def read_yaml_dict(path: str) -> dict:
+    if not os.path.exists(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def load_global_config(config_path: str = None, local_path: str = None) -> dict:
+    """读取全局配置：global_config.yaml（入库、与机器无关的参数），再用 local_config.yaml
+    （gitignore、本机专属的路径/外部命令）按键深合并覆盖。
+
+    只有**不传 config_path** 时才叠加 local 层：显式指定配置文件的调用方（测试用的临时
+    配置等）要的就是那一个文件，不该被本机的 local_config.yaml 悄悄改写。需要叠加时
+    显式传 local_path。
+    """
     if config_path is None:
         config_path = os.path.join(PROJECT_ROOT, "global_config.yaml")
+        if local_path is None:
+            local_path = os.path.join(PROJECT_ROOT, LOCAL_CONFIG_NAME)
     else:
         config_path = resolve_path(config_path)
-    if not os.path.exists(config_path):
-        return {}
-    with open(config_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+    config = read_yaml_dict(config_path)
+    if local_path is not None:
+        config = _deep_merge(config, read_yaml_dict(resolve_path(local_path)))
+    return config
 
 
 def normalize_chapter_id(chapter_input: str) -> str:

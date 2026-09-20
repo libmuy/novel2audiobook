@@ -28,3 +28,6 @@ def set_queue(q: TaskQueue):
 def set_config(c: dict):
     global _config
     _config = c
+    # 配置变了（PATCH /api/config），library_root 的读取缓存随之作废
+    from src import library
+    library.invalidate_library_root()

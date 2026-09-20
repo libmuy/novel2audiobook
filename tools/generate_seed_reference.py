@@ -27,9 +27,11 @@ import sys
 from pydub import AudioSegment
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ESPEAK_BIN = "/srv/unsafe/dev-env/other/espeak_ng/bin/espeak-ng"
-ESPEAK_DATA = "/srv/unsafe/dev-env/other/espeak_ng/lib/x86_64-linux-gnu/espeak-ng-data"
-ESPEAK_LIB_DIR = "/srv/unsafe/dev-env/other/espeak_ng/lib/x86_64-linux-gnu"
+# 直接 `python tools/generate_seed_reference.py` 运行时 sys.path[0] 是 tools/，需手动补项目根才能 import src
+sys.path.insert(0, PROJECT_ROOT)
+from src.utils import load_global_config, resolve_path  # noqa: E402
+
+ESPEAK_CONFIG_KEYS = ("espeak_bin", "espeak_data", "espeak_lib_dir")
 
 TARGET_SAMPLE_RATE = 24000
 
@@ -73,17 +75,34 @@ def is_placeholder(wav_path: str, min_duration_ms: int = 2000) -> bool:
     return len(seg) < min_duration_ms or seg.dBFS == float("-inf")
 
 
-def synthesize_with_espeak(text: str, pitch: int, speed_wpm: int, out_wav: str):
-    env = dict(os.environ, LD_LIBRARY_PATH=ESPEAK_LIB_DIR)
+def load_espeak_paths(config: dict = None) -> tuple:
+    """从配置 tools.espeak_bin / espeak_data / espeak_lib_dir（local_config.yaml）读 espeak-ng
+    的三条路径，返回 (bin, data, lib_dir)。缺任何一项就抛 RuntimeError 指明补哪个键——
+    这些是本机专属路径（含 CPU 架构名），不在代码里留默认值。"""
+    if config is None:
+        config = load_global_config()
+    tools_cfg = config.get("tools") or {}
+    missing = [k for k in ESPEAK_CONFIG_KEYS if not tools_cfg.get(k)]
+    if missing:
+        raise RuntimeError(
+            "配置缺少 " + "、".join(f"tools.{k}" for k in missing)
+            + "：请在 local_config.yaml 里补上（模板见 local_config.example.yaml）"
+        )
+    return tuple(resolve_path(tools_cfg[k]) for k in ESPEAK_CONFIG_KEYS)
+
+
+def synthesize_with_espeak(text: str, pitch: int, speed_wpm: int, out_wav: str, espeak_paths: tuple = None):
+    espeak_bin, espeak_data, espeak_lib_dir = espeak_paths or load_espeak_paths()
+    env = dict(os.environ, LD_LIBRARY_PATH=espeak_lib_dir)
     cmd = [
-        ESPEAK_BIN, "--path", ESPEAK_DATA,
+        espeak_bin, "--path", espeak_data,
         "-v", "zh", "-p", str(pitch), "-s", str(speed_wpm),
         text, "-w", out_wav,
     ]
     subprocess.run(cmd, env=env, check=True, capture_output=True)
 
 
-def generate_for_role(role_id: str, force: bool = False) -> bool:
+def generate_for_role(role_id: str, force: bool = False, espeak_paths: tuple = None) -> bool:
     role_dir = os.path.join(PROJECT_ROOT, "roles", role_id)
     ref_path = os.path.join(role_dir, "reference.wav")
     if not force and not is_placeholder(ref_path):
@@ -93,7 +112,7 @@ def generate_for_role(role_id: str, force: bool = False) -> bool:
     text, pitch, speed = ROLE_SEED_TEXT.get(role_id, DEFAULT_SEED)
     os.makedirs(role_dir, exist_ok=True)
     raw_wav = ref_path + ".espeak_raw.wav"
-    synthesize_with_espeak(text, pitch, speed, raw_wav)
+    synthesize_with_espeak(text, pitch, speed, raw_wav, espeak_paths)
 
     seg = AudioSegment.from_file(raw_wav)
     seg = seg.set_frame_rate(TARGET_SAMPLE_RATE).set_channels(1)
@@ -110,8 +129,13 @@ def main():
     parser.add_argument("--roles", nargs="*", default=None, help="只处理指定角色 ID；默认处理 roles/ 下所有已注册角色")
     args = parser.parse_args()
 
-    if not os.path.exists(ESPEAK_BIN):
-        print(f"错误：未找到 espeak-ng 可执行文件 {ESPEAK_BIN}，请先按 docs/indextts_setup.md 搭建", file=sys.stderr)
+    try:
+        espeak_paths = load_espeak_paths()
+    except RuntimeError as e:
+        print(f"错误：{e}", file=sys.stderr)
+        sys.exit(1)
+    if not os.path.exists(espeak_paths[0]):
+        print(f"错误：未找到 espeak-ng 可执行文件 {espeak_paths[0]}，请先按 docs/indextts_setup.md 搭建", file=sys.stderr)
         sys.exit(1)
 
     roles_dir = os.path.join(PROJECT_ROOT, "roles")
@@ -121,7 +145,7 @@ def main():
 
     any_generated = False
     for role_id in sorted(role_ids):
-        if generate_for_role(role_id, force=args.force):
+        if generate_for_role(role_id, force=args.force, espeak_paths=espeak_paths):
             any_generated = True
 
     if not any_generated:

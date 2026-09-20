@@ -24,7 +24,8 @@ def preflight(task_type: str, novel_id: str, chapter_ids: list = None,
      "invalidated_cache_count": 0,
      "estimated_gpu_minutes": None}"""
     if library_dir is None:
-        library_dir = os.path.join(PROJECT_ROOT, "library")
+        from src.library import library_root  # 延迟导入，避免循环
+        library_dir = library_root()
 
     chapters_dir = os.path.join(library_dir, novel_id, "chapters")
     if not os.path.isdir(chapters_dir):

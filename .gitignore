@@ -3,6 +3,10 @@ __pycache__/
 *.pyc
 *.pyo
 
+# 本机专属配置：venv/模型权重的绝对路径、外部命令、espeak 路径，各机器不同，
+# 不随代码分发（模板见 local_config.example.yaml）
+local_config.yaml
+
 # Audio build caches and outputs（计划 004 起章节目录搬到了 library/<novel_id>/chapters/
 # 下面，这几条路径如果不跟着改，生成的音频会变成完全没被忽略）
 library/*/chapters/*/audio_cache/*.wav

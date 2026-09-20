@@ -8,7 +8,7 @@ import argparse
 import shutil
 import tempfile
 
-from src.utils import get_chapter_dir, normalize_chapter_id, get_project_root
+from src.utils import get_chapter_dir, normalize_chapter_id, get_project_root, load_global_config
 from src.status_tracker import print_status_table, get_novel_status_summary
 from src.llm_parser import process_chapter_parse, HeuristicBackend
 from src.tts_engine import process_chapter_tts, generate_tts_incremental, MockTTSBackend
@@ -198,6 +198,16 @@ def _confirm_batch_llm_swap(auto_yes: bool) -> bool:
     return _prompt_yes_no("确认继续？")
 
 
+def resolve_webui_bind(host, port, config: dict):
+    """webui 监听地址：命令行参数 > 配置 server.host/server.port > 硬编码缺省。
+    （此前 server.host/port 写在配置里、设置页也能看到，却没有任何代码读取。）"""
+    server_cfg = (config or {}).get("server", {}) or {}
+    return (
+        host or server_cfg.get("host") or "127.0.0.1",
+        port or server_cfg.get("port") or 7860,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description="千万字全本地离线有声书生成流水线")
     subparsers = parser.add_subparsers(dest="command", help="子命令列表")
@@ -250,8 +260,8 @@ def main():
 
     # 8. webui
     parser_webui = subparsers.add_parser("webui", help="启动 FastAPI 管理界面")
-    parser_webui.add_argument("--host", default="0.0.0.0", help="监听地址（默认 0.0.0.0）")
-    parser_webui.add_argument("--port", type=int, default=7860, help="监听端口（默认 7860）")
+    parser_webui.add_argument("--host", default=None, help="监听地址（默认取配置 server.host，缺省 127.0.0.1）")
+    parser_webui.add_argument("--port", type=int, default=None, help="监听端口（默认取配置 server.port，缺省 7860）")
 
     # 9. novel
     parser_novel = subparsers.add_parser("novel", help="管理小说库")
@@ -434,8 +444,9 @@ def main():
     elif args.command == "webui":
         import uvicorn
         from src.api.app import create_app
-        print(f"--> 启动管理界面: http://{args.host}:{args.port}/ (Ctrl+C 停止)")
-        uvicorn.run(create_app(), host=args.host, port=args.port)
+        host, port = resolve_webui_bind(args.host, args.port, load_global_config())
+        print(f"--> 启动管理界面: http://{host}:{port}/ (Ctrl+C 停止)")
+        uvicorn.run(create_app(), host=host, port=port)
 
     elif args.command == "novel":
         if args.novel_action == "list":

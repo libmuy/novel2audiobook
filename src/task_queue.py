@@ -242,7 +242,10 @@ class TaskQueue:
     def __init__(self, config=None, tasks_dir=None, library_dir=None):
         self.config = config or load_global_config()
         self.tasks_dir = tasks_dir or os.path.join(PROJECT_ROOT, ".cache", "tasks")
-        self.library_dir = library_dir or os.path.join(PROJECT_ROOT, "library")
+        if not library_dir:
+            from src.library import library_root  # 延迟导入，避免循环
+            library_dir = library_root()
+        self.library_dir = library_dir
 
         server_cfg = self.config.get("server", {})
         self.cpu_workers = server_cfg.get("cpu_workers", 2)

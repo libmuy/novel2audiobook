@@ -24,7 +24,7 @@ import subprocess
 import time
 from datetime import datetime, timezone
 
-from src.utils import resolve_path, load_global_config
+from src.utils import resolve_path, resolve_optional_path, load_global_config
 from tools import gpu_arbiter
 
 # 取消：**常驻守护进程有意保持不可取消**。它没有 cancel 消息、请求循环是单线程 socket，
@@ -55,16 +55,18 @@ class IndexTTSDaemon:
     def __init__(self, config: dict = None):
         self.config = config if config is not None else load_global_config()
         tts_cfg = self.config.get("tts", {}).get("index_tts", {})
-        self.python_bin = resolve_path(tts_cfg.get("python_bin", "/srv/unsafe/dev-env/venvs/indextts/bin/python"))
+        self.python_bin = resolve_optional_path(tts_cfg.get("python_bin"))
         self.infer_script = resolve_path(tts_cfg.get("infer_script", "tools/indextts_infer.py"))
         self.repo_dir = resolve_path(tts_cfg.get("repo_dir", "tools/indextts_repo"))
-        self.checkpoints_dir = tts_cfg.get("checkpoints_dir", "/srv/unsafe/dev-env/models/tts/IndexTTS-2.5")
+        self.checkpoints_dir = resolve_optional_path(tts_cfg.get("checkpoints_dir"))
         self.startup_timeout = tts_cfg.get("daemon_startup_timeout_sec", 180)
         self._llm_cfg = self.config.get("llm", {})
 
     def is_available(self) -> bool:
-        return (
-            os.path.exists(self.python_bin)
+        # python_bin / checkpoints_dir 是本机专属路径，没配（local_config.yaml）就视为环境未就绪
+        return bool(
+            self.python_bin and self.checkpoints_dir
+            and os.path.exists(self.python_bin)
             and os.path.exists(self.infer_script)
             and os.path.isdir(self.repo_dir)
             and os.path.isdir(self.checkpoints_dir)
@@ -160,6 +162,7 @@ class IndexTTSDaemon:
             self._llm_cfg.get("serve_port", 8080),
             self._llm_cfg.get("api_base", "http://localhost:8080/v1"),
             self._llm_cfg.get("server_start_timeout_sec", 180),
+            serve_command=gpu_arbiter.serve_command_from_config(self.config),
         )
 
     # ----------------------------------------------------------------
