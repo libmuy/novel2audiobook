@@ -2,7 +2,7 @@
 """
 ACE-Step 1.5 批量推理脚本（BGM / 环境音 ambience）。
 
-运行环境：独立的 tools/acestep_env venv（Python 3.11 + ROCm torch），不与项目主
+运行环境：独立的 /srv/unsafe/dev-env/venvs/acestep venv（Python 3.11 + ROCm torch），不与项目主
 venv 混用。由 src/asset_gen.py 的 AceStepBackend 通过子进程调用。
 
 设计为"单次加载、批量合成"，理由与 tools/indextts_infer.py 相同：DiT + LM 模型

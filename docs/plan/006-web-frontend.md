@@ -432,8 +432,8 @@ Sortable 用 1.x 的 UMD 构建。
 
 1. **单元测试和自检仍然全绿**
    ```
-   .venv/bin/python -m pytest -q
-   .venv/bin/python cli.py test --all
+   ../dev-env/venvs/novel2audiobook/bin/python -m pytest -q
+   ../dev-env/venvs/novel2audiobook/bin/python cli.py test --all
    ```
 
 2. **离线可用**：断开外网后刷新页面，界面完全正常

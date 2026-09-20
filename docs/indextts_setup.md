@@ -11,10 +11,11 @@
 tools/
 ├── indextts_repo/      # 官方仓库克隆（git clone index-tts/index-tts），含 checkpoints 软链接
 │   └── checkpoints -> /srv/unsafe/dev-env/models/tts/IndexTTS-2.5   # 见下方"硬编码路径"说明
-├── indextts_env/       # 独立 venv（Python 3.11 + ROCm torch），uv 创建
 ├── indextts_infer.py   # 批量推理脚本，被 src/tts_engine.IndexTTSBackend 子进程调用
 └── gpu_arbiter.py       # llama-server ⇄ IndexTTS 显存互斥调度
 ```
+
+独立 venv（Python 3.11 + ROCm torch）：`/srv/unsafe/dev-env/venvs/indextts`
 
 权重目录：`/srv/unsafe/dev-env/models/tts/IndexTTS-2.5`（在项目 git 仓库之外，因为体积大且
 是本机专属产物，不随代码分发）。
@@ -29,28 +30,28 @@ git clone --depth 1 https://github.com/index-tts/index-tts.git tools/indextts_re
 
 # 2. 下载权重主体（约 5GB，国内网络建议用镜像）
 mkdir -p /srv/unsafe/dev-env/models/tts/IndexTTS-2.5
-uv pip install --python .venv/bin/python huggingface_hub
-HF_ENDPOINT="https://hf-mirror.com" .venv/bin/hf download IndexTeam/IndexTTS-2.5 \
+uv pip install --python ../dev-env/venvs/novel2audiobook/bin/python huggingface_hub
+HF_ENDPOINT="https://hf-mirror.com" ../dev-env/venvs/novel2audiobook/bin/hf download IndexTeam/IndexTTS-2.5 \
     --local-dir /srv/unsafe/dev-env/models/tts/IndexTTS-2.5
 
 # 3. 建独立 venv（官方要求 Python 3.10/3.11，且 torch 锁定 2.8.*）
-uv venv tools/indextts_env --python 3.11
+uv venv /srv/unsafe/dev-env/venvs/indextts --python 3.11
 
 # 4. 装 ROCm 版 torch/torchaudio（关键：必须先装，且版本要与 pyproject.toml 的
 #    torch==2.8.* 约束匹配，否则下一步会被 CPU/CUDA 版覆盖）
-uv pip install --python tools/indextts_env/bin/python \
+uv pip install --python /srv/unsafe/dev-env/venvs/indextts/bin/python \
     torch==2.8.0+rocm6.4 torchaudio==2.8.0+rocm6.4 \
     --extra-index-url https://download.pytorch.org/whl/rocm6.4
 
 # 5. 装其余依赖（不装 webui/deepspeed/accel 这些 NVIDIA-only 或非必需 extras）
-uv pip install --python tools/indextts_env/bin/python -e tools/indextts_repo
+uv pip install --python /srv/unsafe/dev-env/venvs/indextts/bin/python -e tools/indextts_repo
 
 # 6. 验证 ROCm torch 没被上一步悄悄换回 CPU/CUDA 版
-tools/indextts_env/bin/python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+/srv/unsafe/dev-env/venvs/indextts/bin/python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 # 期望输出: 2.8.0+rocm6.4 True
 
 # 7. 官方 GPU 检测脚本
-cd tools/indextts_repo && /home/bjn/novel2audiobook/tools/indextts_env/bin/python tools/gpu_check.py
+cd tools/indextts_repo && /srv/unsafe/dev-env/venvs/indextts/bin/python tools/gpu_check.py
 
 # 8. 关键：建 checkpoints 软链接（见下方说明），否则辅助模型缓存路径会错乱
 ln -sfn /srv/unsafe/dev-env/models/tts/IndexTTS-2.5 tools/indextts_repo/checkpoints
@@ -104,7 +105,7 @@ RuntimeError('Ninja is required to load C++ extensions (pip install ninja to get
 这是可接受的降级（自动回退纯 PyTorch 实现，功能不受影响，仅推理速度稍慢）。
 如需启用融合内核加速，装 `ninja`：
 ```bash
-uv pip install --python tools/indextts_env/bin/python ninja
+uv pip install --python /srv/unsafe/dev-env/venvs/indextts/bin/python ninja
 ```
 
 ## GPU 显存互斥（llama-server ⇄ IndexTTS）
@@ -151,7 +152,7 @@ espeak-ng 本身通过 `apt-get download` 提取 .deb（`espeak-ng` +
 
 ```bash
 cd tools/indextts_repo
-/home/bjn/novel2audiobook/tools/indextts_env/bin/python -c "
+/srv/unsafe/dev-env/venvs/indextts/bin/python -c "
 from indextts.infer_v2_5 import IndexTTS2
 tts = IndexTTS2(cfg_path='checkpoints/config.yaml', model_dir='checkpoints', use_bf16=True)
 tts.infer(spk_audio_prompt='../../roles/narrator/reference.wav', text='测试文本。',

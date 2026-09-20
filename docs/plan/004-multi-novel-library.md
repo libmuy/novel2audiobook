@@ -117,7 +117,7 @@ tree:                  # 数组顺序即权威排序，不要额外存 order 字
 
 ## 执行顺序
 
-按顺序做，每完成一项跑一次 `.venv/bin/python -m pytest` 确认没把已有测试搞红。
+按顺序做，每完成一项跑一次 `../dev-env/venvs/novel2audiobook/bin/python -m pytest` 确认没把已有测试搞红。
 
 - [ ] 任务 1：样例文本外置 + 修 `cli.py` 自检（**必须最先做**）
 - [ ] 任务 2：新增 `src/library.py` 与 `tests/test_library.py`
@@ -497,7 +497,7 @@ chapters/            （整个目录）
 
 ⚠️ **fastapi / uvicorn / pydantic / python-multipart / aiofiles 目前是 gradio 的传递依赖，
 卸掉 gradio 会把它们一起带走。必须显式写进 requirements.txt。**
-版本号用 `.venv/bin/pip show <pkg>` 查到的实际版本钉住：
+版本号用 `../dev-env/venvs/novel2audiobook/bin/pip show <pkg>` 查到的实际版本钉住：
 
 ```
 fastapi==0.141.1
@@ -522,37 +522,37 @@ server:
 
 ## 验收清单
 
-全部命令用项目 venv 执行（`.venv/bin/python`）。
+全部命令用项目 venv 执行（`../dev-env/venvs/novel2audiobook/bin/python`）。
 
 1. **单元测试全绿**
    ```
-   .venv/bin/python -m pytest -q
+   ../dev-env/venvs/novel2audiobook/bin/python -m pytest -q
    ```
 
 2. **自检全绿，且不污染仓库**
    ```
-   .venv/bin/python cli.py test --all
+   ../dev-env/venvs/novel2audiobook/bin/python cli.py test --all
    git status --short          # 必须是空的
    ```
    自检输出里应该能看到「将 N 个未绑定分块指派为 narrator」这一行。
 
 3. **两本小说端到端跑通**
    ```
-   .venv/bin/python cli.py novel create --title 测试书甲 --volume
-   .venv/bin/python cli.py novel create --title 测试书乙
-   .venv/bin/python cli.py node add --novel nv_ceshishujia --type volume --title 第一卷
-   .venv/bin/python cli.py chapter add --novel nv_ceshishujia --title 第一章 \
+   ../dev-env/venvs/novel2audiobook/bin/python cli.py novel create --title 测试书甲 --volume
+   ../dev-env/venvs/novel2audiobook/bin/python cli.py novel create --title 测试书乙
+   ../dev-env/venvs/novel2audiobook/bin/python cli.py node add --novel nv_ceshishujia --type volume --title 第一卷
+   ../dev-env/venvs/novel2audiobook/bin/python cli.py chapter add --novel nv_ceshishujia --title 第一章 \
        --raw tests/fixtures/sample_raw.txt --parent vol_001
-   .venv/bin/python cli.py chapter add --novel nv_ceshishuyi --title 第一章 \
+   ../dev-env/venvs/novel2audiobook/bin/python cli.py chapter add --novel nv_ceshishuyi --title 第一章 \
        --raw tests/fixtures/sample_raw.txt
-   .venv/bin/python cli.py chapter list --novel nv_ceshishujia
-   .venv/bin/python cli.py status
+   ../dev-env/venvs/novel2audiobook/bin/python cli.py chapter list --novel nv_ceshishujia
+   ../dev-env/venvs/novel2audiobook/bin/python cli.py status
    ```
    两本小说的 `ch_0001` 目录互不干扰。
 
 4. **parse 新语义生效**（需要 llama-server 在跑；不在跑就是走 HeuristicBackend，同样要验）
    ```
-   .venv/bin/python cli.py parse --novel nv_ceshishujia --chapter 0001
+   ../dev-env/venvs/novel2audiobook/bin/python cli.py parse --novel nv_ceshishujia --chapter 0001
    ```
    - `library/nv_ceshishujia/chapters/ch_0001/script_draft.json` 里存在
      `"speaker": null` 的分块
@@ -563,21 +563,21 @@ server:
    直接把 draft 拷成 final 然后跑 tts，应该收到明确的错误信息列出 seg_id：
    ```
    cp library/nv_ceshishujia/chapters/ch_0001/script_{draft,final}.json
-   .venv/bin/python cli.py tts --novel nv_ceshishujia --chapter 0001 --yes
+   ../dev-env/venvs/novel2audiobook/bin/python cli.py tts --novel nv_ceshishujia --chapter 0001 --yes
    ```
 
 6. **补齐角色后能跑通全链路**
    手工把 final 里的 null 都改成 `narrator`，然后：
    ```
-   .venv/bin/python cli.py tts --novel nv_ceshishujia --chapter 0001 --yes
-   .venv/bin/python cli.py mix --novel nv_ceshishujia --chapter 0001
+   ../dev-env/venvs/novel2audiobook/bin/python cli.py tts --novel nv_ceshishujia --chapter 0001 --yes
+   ../dev-env/venvs/novel2audiobook/bin/python cli.py mix --novel nv_ceshishujia --chapter 0001
    ```
 
 7. **依赖干净**
    ```
-   .venv/bin/pip uninstall -y gradio flask
-   .venv/bin/python -m pytest -q          # 仍然全绿
-   .venv/bin/python cli.py test --all     # 仍然全绿
+   ../dev-env/venvs/novel2audiobook/bin/pip uninstall -y gradio flask
+   ../dev-env/venvs/novel2audiobook/bin/python -m pytest -q          # 仍然全绿
+   ../dev-env/venvs/novel2audiobook/bin/python cli.py test --all     # 仍然全绿
    ```
    如果这一步报 `ModuleNotFoundError: fastapi`（或 pydantic / multipart / aiofiles），
    说明任务 9 的显式声明漏了。

@@ -16,9 +16,10 @@
 
 ```
 tools/
-├── audioldm_env/         # 独立 venv（Python 3.11 + CPU torch + diffusers），uv 创建
-└── audioldm_infer.py     # 批量推理脚本，被 src/asset_gen.AudioLDMBackend 子进程调用
+├── audioldm_infer.py     # 批量推理脚本，被 src/asset_gen.AudioLDMBackend 子进程调用
 ```
+
+独立 venv（Python 3.11 + CPU torch + diffusers）：`/srv/unsafe/dev-env/venvs/audioldm`
 
 权重目录：`/srv/unsafe/dev-env/models/audiogen/audioldm`（作为 `HF_HOME`，沿用
 `/srv/unsafe/dev-env/models/{llm,tts,audiogen}` 的既有惯例，体积大、是本机专属产物，
@@ -30,22 +31,22 @@ tools/
 cd /srv/unsafe/novel2audiobook
 
 # 1. 建独立 venv
-uv venv tools/audioldm_env --python 3.11
+uv venv /srv/unsafe/dev-env/venvs/audioldm --python 3.11
 
 # 2. 装 CPU 版 torch
-uv pip install --python tools/audioldm_env/bin/python \
+uv pip install --python /srv/unsafe/dev-env/venvs/audioldm/bin/python \
     torch --index-url https://download.pytorch.org/whl/cpu
 
 # 3. 装 diffusers 及推理所需依赖
-uv pip install --python tools/audioldm_env/bin/python \
+uv pip install --python /srv/unsafe/dev-env/venvs/audioldm/bin/python \
     diffusers transformers accelerate soundfile scipy
 
 # 4. 准备权重缓存目录（首次调用会自动从 HuggingFace 下载模型到这里，约 1.6GB）
 mkdir -p /srv/unsafe/dev-env/models/audiogen/audioldm
 
 # 5. 冒烟测试（会触发模型下载，网络慢的话预计几分钟到十几分钟）
-.venv/bin/python cli.py assets gen --kind ambience --only rain_heavy --force
-.venv/bin/python cli.py assets list   # 期望 rain_heavy 一行 engine=audioldm，used_fallback=false
+../dev-env/venvs/novel2audiobook/bin/python cli.py assets gen --kind ambience --only rain_heavy --force
+../dev-env/venvs/novel2audiobook/bin/python cli.py assets list   # 期望 rain_heavy 一行 engine=audioldm，used_fallback=false
 ```
 
 ## 关键点
@@ -89,7 +90,7 @@ bug fixes...`——这是 diffusers 后续推荐迁移到 `AudioLDM2Pipeline`（
 ## 冒烟测试（全量）
 
 ```bash
-.venv/bin/python cli.py assets gen --kind ambience --force
-.venv/bin/python cli.py assets list   # 期望全部 6 条 engine=audioldm，used_fallback=false
+../dev-env/venvs/novel2audiobook/bin/python cli.py assets gen --kind ambience --force
+../dev-env/venvs/novel2audiobook/bin/python cli.py assets list   # 期望全部 6 条 engine=audioldm，used_fallback=false
 ```
 成功后可用 `python cli.py serve` 启动的 HTTP 浏览服务逐条试听确认。

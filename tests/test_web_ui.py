@@ -6,10 +6,10 @@ Requires: pip install playwright && playwright install chromium
 
 Usage:
     # Headless (CI)
-    .venv/bin/python -m pytest tests/test_web_ui.py -v
+    ../dev-env/venvs/novel2audiobook/bin/python -m pytest tests/test_web_ui.py -v
 
     # Headed (manual inspection)
-    .venv/bin/python -m pytest tests/test_web_ui.py -v --headed
+    ../dev-env/venvs/novel2audiobook/bin/python -m pytest tests/test_web_ui.py -v --headed
 """
 
 import re

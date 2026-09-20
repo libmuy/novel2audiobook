@@ -661,14 +661,14 @@ server:
 
 1. **单元测试与自检全绿**
    ```
-   .venv/bin/python -m pytest -q
-   .venv/bin/python cli.py test --all
+   ../dev-env/venvs/novel2audiobook/bin/python -m pytest -q
+   ../dev-env/venvs/novel2audiobook/bin/python cli.py test --all
    git status --short          # 空
    ```
 
 2. **服务能起来，四个启动动作都执行了**
    ```
-   .venv/bin/python cli.py webui
+   ../dev-env/venvs/novel2audiobook/bin/python cli.py webui
    ```
    日志里能看到孤儿恢复检查、残留任务清理、worker 启动。
 

@@ -22,8 +22,8 @@ raw.txt → script_draft.json → script_final.json → 增量 TTS → timeline.
 
 ```bash
 # 主项目依赖（pydub/pyyaml/numpy/requests/pypinyin/pytest...）
-uv venv .venv --python 3.12
-uv pip install --python .venv/bin/python -r requirements.txt
+uv venv ../dev-env/venvs/novel2audiobook --python 3.12
+uv pip install --python ../dev-env/venvs/novel2audiobook/bin/python -r requirements.txt
 ```
 
 真实 LLM 解析依赖本机 `llama-server`（OpenAI 兼容接口，见 `global_config.yaml`

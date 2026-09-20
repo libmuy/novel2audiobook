@@ -283,7 +283,7 @@ def _embedding_env(config: dict) -> dict:
     tts_cfg = config.get("tts", {}).get("index_tts", {})
     return {
         "tts_cfg": tts_cfg,
-        "python_bin": resolve_path(tts_cfg.get("python_bin", "tools/indextts_env/bin/python")),
+        "python_bin": resolve_path(tts_cfg.get("python_bin", "/srv/unsafe/dev-env/venvs/indextts/bin/python")),
         "script": resolve_path("tools/precompute_embeddings.py"),
         "repo_dir": resolve_path(tts_cfg.get("repo_dir", "tools/indextts_repo")),
         "checkpoints_dir": tts_cfg.get("checkpoints_dir", "/srv/unsafe/dev-env/models/tts/IndexTTS-2.5"),

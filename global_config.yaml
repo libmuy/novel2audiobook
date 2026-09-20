@@ -16,7 +16,7 @@ tts:
   channels: 1
   format: "wav"
   index_tts:
-    python_bin: "tools/indextts_env/bin/python"       # 独立 venv（ROCm torch），见 docs/indextts_setup.md
+    python_bin: "/srv/unsafe/dev-env/venvs/indextts/bin/python"       # 独立 venv（ROCm torch），见 docs/indextts_setup.md
     infer_script: "tools/indextts_infer.py"
     repo_dir: "tools/indextts_repo"                   # index-tts 官方源码仓库
     checkpoints_dir: "/srv/unsafe/dev-env/models/tts/IndexTTS-2.5"
@@ -43,18 +43,18 @@ asset_gen:
                                    # （原计划用 Stable Audio 3 Small SFX，但它是 HuggingFace
                                    # gated repo 且审批不顺畅，改用公开、无需申请的 TangoFlux）
   ace_step:
-    python_bin: "tools/acestep_env/bin/python"       # 独立 venv（ROCm torch），见 docs/audiogen_setup.md
+    python_bin: "/srv/unsafe/dev-env/venvs/acestep/bin/python"       # 独立 venv（ROCm torch），见 docs/audiogen_setup.md
     infer_script: "tools/acestep_infer.py"
     repo_dir: "tools/acestep_repo"                   # ACE-Step 官方源码仓库
     checkpoints_dir: "/srv/unsafe/dev-env/models/audiogen/ACE-Step-1.5"
     timeout_sec: 3600
   audioldm:
-    python_bin: "tools/audioldm_env/bin/python"      # 独立 venv（CPU torch + diffusers），见 docs/audioldm_setup.md
+    python_bin: "/srv/unsafe/dev-env/venvs/audioldm/bin/python"      # 独立 venv（CPU torch + diffusers），见 docs/audioldm_setup.md
     infer_script: "tools/audioldm_infer.py"
     checkpoints_dir: "/srv/unsafe/dev-env/models/audiogen/audioldm"  # HF_HOME 缓存根目录，非直接模型路径
     timeout_sec: 1800
   tangoflux:
-    python_bin: "tools/tangoflux_env/bin/python"     # 独立 venv（CPU torch），见 docs/audiogen_setup.md
+    python_bin: "/srv/unsafe/dev-env/venvs/tangoflux/bin/python"     # 独立 venv（CPU torch），见 docs/audiogen_setup.md
     infer_script: "tools/tangoflux_infer.py"
     checkpoints_dir: "/srv/unsafe/dev-env/models/audiogen/tangoflux"  # HF_HOME 缓存根目录，非直接模型路径
     timeout_sec: 1800

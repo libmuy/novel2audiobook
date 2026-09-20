@@ -36,7 +36,6 @@ PyTorch（同样是 CPU 友好档位），许可是 non-commercial research，�
 ```
 tools/
 ├── acestep_repo/        # ACE-Step 官方仓库克隆
-├── acestep_env/         # 独立 venv（Python 3.11 + ROCm torch），uv 创建
 ├── acestep_infer.py     # 批量推理脚本，被 src/asset_gen.AceStepBackend 子进程调用
 ├── tangoflux_env/       # 独立 venv（Python 3.11 + CPU torch），uv 创建
 │                        # （TangoFlux 直接 `pip install git+...` 装包，不需要单独 clone 仓库）
@@ -44,6 +43,10 @@ tools/
 └── gpu_arbiter.py       # llama-server ⇄ ACE-Step 显存互斥调度（LlmSuspendedForGpu）
                          # TangoFlux 跑 CPU，不参与这套换卡机制
 ```
+
+独立 venv：
+- ACE-Step（Python 3.11 + ROCm torch）：`/srv/unsafe/dev-env/venvs/acestep`
+- TangoFlux（Python 3.11 + CPU torch）：`/srv/unsafe/dev-env/venvs/tangoflux`
 
 权重目录：`/srv/unsafe/dev-env/models/audiogen/{ACE-Step-1.5,tangoflux}`（在项目 git
 仓库之外，沿用 `/srv/unsafe/dev-env/models/{llm,tts}` 的既有惯例——体积大、是本机专属
@@ -61,30 +64,30 @@ cd /home/bjn/novel2audiobook
 git clone --depth 1 https://github.com/ace-step/ACE-Step-1.5.git tools/acestep_repo
 
 # 2. 建独立 venv（官方要求 Python 3.11-3.12；实测本机 uv 自带 3.11.15 可直接用）
-uv venv tools/acestep_env --python 3.11
+uv venv /srv/unsafe/dev-env/venvs/acestep --python 3.11
 
 # 3. 装 ROCm 版 torch（官方文档给的是 rocm6.0 索引；本机 IndexTTS 那边已验证
 #    rocm6.4 wheel 在本机 RX 7900XTX 上可正常跑，直接用 rocm6.4）
-uv pip install --python tools/acestep_env/bin/python \
+uv pip install --python /srv/unsafe/dev-env/venvs/acestep/bin/python \
     torch --index-url https://download.pytorch.org/whl/rocm6.4
 
 # 4. 装 ACE-Step 本体依赖（会把上一步装的 ROCm torch 覆盖成它 pyproject.toml
 #    里硬编码的 CUDA 版，见下方已知坑 §0，必须紧跟着做第 5 步修复）
-uv pip install --python tools/acestep_env/bin/python -e tools/acestep_repo
+uv pip install --python /srv/unsafe/dev-env/venvs/acestep/bin/python -e tools/acestep_repo
 
 # 5. 【必做】把 torch/torchaudio 强制换回 ROCm 版——不加 --reinstall-package
 #    uv 会因为"同名包已安装"直接跳过，不会真的切换 index/build variant
-uv pip install --python tools/acestep_env/bin/python \
+uv pip install --python /srv/unsafe/dev-env/venvs/acestep/bin/python \
     --reinstall-package torch --reinstall-package torchaudio \
     torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.4
 
 # 6. 验证
-tools/acestep_env/bin/python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+/srv/unsafe/dev-env/venvs/acestep/bin/python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 # 期望输出: 2.9.1+rocm6.4 True
 
 # 7. RX 7900 XTX 是 RDNA3（gfx1100），若第 6 步 cuda.is_available() 为 False，
 #    先跑官方诊断脚本，多半需要设置 HSA_OVERRIDE_GFX_VERSION
-tools/acestep_env/bin/python tools/acestep_repo/scripts/check_gpu.py
+/srv/unsafe/dev-env/venvs/acestep/bin/python tools/acestep_repo/scripts/check_gpu.py
 export HSA_OVERRIDE_GFX_VERSION=11.0.0   # RX 7900 XT/XTX、RX 9070 XT 专用值
 
 # 8. 下载权重到项目外的共享目录，并用官方支持的环境变量指向它
@@ -92,7 +95,7 @@ export HSA_OVERRIDE_GFX_VERSION=11.0.0   # RX 7900 XT/XTX、RX 9070 XT 专用值
 #    实际目录由 ACESTEP_CHECKPOINTS_DIR 决定——见 tools/acestep_infer.py 顶部注释）
 mkdir -p /srv/unsafe/dev-env/models/audiogen/ACE-Step-1.5
 ACESTEP_CHECKPOINTS_DIR=/srv/unsafe/dev-env/models/audiogen/ACE-Step-1.5 \
-    tools/acestep_env/bin/python -m acestep.model_downloader --all
+    /srv/unsafe/dev-env/venvs/acestep/bin/python -m acestep.model_downloader --all
     # 国内网络可加 --download-source modelscope
 ```
 
@@ -147,7 +150,7 @@ ROCm 版 PyTorch 复用 CUDA 的设备命名空间（`torch.cuda.*` API 在 ROCm
 `--all` 只下主模型（vae/embedding/turbo-2B/lm-1.7B），**XL 系列要单独下**：
 ```bash
 ACESTEP_CHECKPOINTS_DIR=/srv/unsafe/dev-env/models/audiogen/ACE-Step-1.5 \
-    tools/acestep_env/bin/python -m acestep.model_downloader --model acestep-v15-xl-sft
+    /srv/unsafe/dev-env/venvs/acestep/bin/python -m acestep.model_downloader --model acestep-v15-xl-sft
 ```
 
 ### 6. ROCm 下默认 fp32，务必设 `ACESTEP_ROCM_DTYPE=bfloat16`（实测踩到）
@@ -196,12 +199,12 @@ llama-server，多余但无害，不值得为此分叉逻辑）。
 
 ```bash
 # 1. 先用 mock 后端确认脚手架本身没问题（不需要真实环境）
-.venv/bin/python cli.py assets gen --kind ambience --only rain_heavy --backend mock
+../dev-env/venvs/novel2audiobook/bin/python cli.py assets gen --kind ambience --only rain_heavy --backend mock
 
 # 2. 真实环境搭好后，去掉 --backend mock，验证会调用 ACE-Step 并自动换卡
-.venv/bin/python cli.py assets gen --kind ambience --only rain_heavy --force
-.venv/bin/python cli.py assets list   # 期望 rain_heavy 一行 engine=ace_step，used_fallback=false
-.venv/bin/python tools/gpu_arbiter.py status   # 确认 llama-server 已自动恢复
+../dev-env/venvs/novel2audiobook/bin/python cli.py assets gen --kind ambience --only rain_heavy --force
+../dev-env/venvs/novel2audiobook/bin/python cli.py assets list   # 期望 rain_heavy 一行 engine=ace_step，used_fallback=false
+../dev-env/venvs/novel2audiobook/bin/python tools/gpu_arbiter.py status   # 确认 llama-server 已自动恢复
 ```
 成功会在 `assets/ambience/rain_heavy.wav` 生成一段真实的雨声环境音（而非 Mock
 的滤波噪声占位），试听确认循环接缝（首尾交叉淡化后）没有明显咔哒声。
@@ -213,22 +216,22 @@ llama-server，多余但无害，不值得为此分叉逻辑）。
 
 ```bash
 # 1. 建独立 venv
-uv venv tools/tangoflux_env --python 3.11
+uv venv /srv/unsafe/dev-env/venvs/tangoflux --python 3.11
 
 # 2. 装 CPU 版 torch/torchaudio/torchvision，版本严格对齐 TangoFlux 的
 #    install_requires（均为裸版本号 "==2.4.0" 这类，不含 local 版本段，
 #    所以只要主版本号对上，pip 后续不会像 ACE-Step 那样把它们换掉）
-uv pip install --python tools/tangoflux_env/bin/python \
+uv pip install --python /srv/unsafe/dev-env/venvs/tangoflux/bin/python \
     torch==2.4.0 torchaudio==2.4.0 torchvision==0.19.0 \
     --index-url https://download.pytorch.org/whl/cpu
 
 # 3. 装 TangoFlux 本体（直接从 GitHub 装，无需先 git clone）
-uv pip install --python tools/tangoflux_env/bin/python \
+uv pip install --python /srv/unsafe/dev-env/venvs/tangoflux/bin/python \
     "tangoflux @ git+https://github.com/declare-lab/TangoFlux"
 
 # 4. 验证（首次调用会自动下载权重到 HF_HOME 指向的目录，约几 GB）
 mkdir -p /srv/unsafe/dev-env/models/audiogen/tangoflux
-HF_HOME=/srv/unsafe/dev-env/models/audiogen/tangoflux tools/tangoflux_env/bin/python -c "
+HF_HOME=/srv/unsafe/dev-env/models/audiogen/tangoflux /srv/unsafe/dev-env/venvs/tangoflux/bin/python -c "
 from tangoflux import TangoFluxInference
 model = TangoFluxInference(name='declare-lab/TangoFlux', device='cpu')
 print('OK')
@@ -254,6 +257,6 @@ print('OK')
 ## 冒烟测试（sfx / TangoFlux）
 
 ```bash
-.venv/bin/python cli.py assets gen --kind sfx --only sword_clash --force
-.venv/bin/python cli.py assets list   # 期望 sword_clash 一行 engine=tangoflux，used_fallback=false
+../dev-env/venvs/novel2audiobook/bin/python cli.py assets gen --kind sfx --only sword_clash --force
+../dev-env/venvs/novel2audiobook/bin/python cli.py assets list   # 期望 sword_clash 一行 engine=tangoflux，used_fallback=false
 ```

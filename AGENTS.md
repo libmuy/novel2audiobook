@@ -14,7 +14,7 @@
 - 执行全流程或单模块自检：`python cli.py test --module {llm,tts,audio,all,dry-run}`
 - 小说/章节管理：`python cli.py novel|node|chapter ...`（见 `python cli.py --help`）
 
-以上 `python` 需为项目 venv（`.venv/bin/python`，或先 `source .venv/bin/activate`）；
+以上 `python` 需为项目 venv（`../dev-env/venvs/novel2audiobook/bin/python`，或先 `source ../dev-env/venvs/novel2audiobook/bin/activate`）；
 依赖清单见 `requirements.txt`。
 
 ## 补充说明

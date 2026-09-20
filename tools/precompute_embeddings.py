@@ -2,7 +2,7 @@
 """
 IndexTTS-2.5 speaker embedding 批量预计算脚本（计划 001）。
 
-运行环境同 tools/indextts_infer.py：独立的 tools/indextts_env venv
+运行环境同 tools/indextts_infer.py：独立的 /srv/unsafe/dev-env/venvs/indextts venv
 （Python 3.11 + ROCm torch），不与项目主 venv 混用。
 
 对 roles/roles_manifest.json 中登记的角色逐个提取参考音频（reference.wav）的
@@ -11,7 +11,7 @@ speaker embedding，落盘为 roles/<role_id>/speaker_embeddings.pt。
 这份缓存，跳过 Wav2Vec2Bert + CAMPPlus + length_regulator 的在线提取步骤。
 
 用法：
-    tools/indextts_env/bin/python tools/precompute_embeddings.py \
+    /srv/unsafe/dev-env/venvs/indextts/bin/python tools/precompute_embeddings.py \
         --repo-dir tools/indextts_repo \
         --checkpoints-dir /srv/unsafe/dev-env/models/tts/IndexTTS-2.5 \
         --roles-dir roles \

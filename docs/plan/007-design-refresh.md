@@ -87,7 +87,7 @@ Archivo 字体、深色模式 token 全套、外加一个全新的「背景音/�
 ## 验证
 
 ```bash
-source .venv/bin/activate
+source ../dev-env/venvs/novel2audiobook/bin/activate
 node --check web/static/js/app.js && node --check web/static/js/api.js
 python -m pytest tests/ -q --ignore=tests/test_web_ui.py   # 401 passed
 python -m pytest tests/test_web_ui.py -v                    # 19 passed, 1 skipped（跟本次改动无关的既有 skip）

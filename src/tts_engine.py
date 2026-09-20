@@ -143,7 +143,7 @@ class IndexTTSBackend:
     def __init__(self, config: dict):
         self.config = config
         tts_cfg = config.get("tts", {}).get("index_tts", {})
-        self.python_bin = resolve_path(tts_cfg.get("python_bin", "tools/indextts_env/bin/python"))
+        self.python_bin = resolve_path(tts_cfg.get("python_bin", "/srv/unsafe/dev-env/venvs/indextts/bin/python"))
         self.infer_script = resolve_path(tts_cfg.get("infer_script", "tools/indextts_infer.py"))
         self.repo_dir = resolve_path(tts_cfg.get("repo_dir", "tools/indextts_repo"))
         self.checkpoints_dir = resolve_path(tts_cfg.get("checkpoints_dir", "/srv/unsafe/dev-env/models/tts/IndexTTS-2.5"))

@@ -2,7 +2,7 @@
 """
 TangoFlux 批量推理脚本（音效 sfx）。
 
-运行环境：独立的 tools/tangoflux_env venv，不与项目主 venv/tools/acestep_env
+运行环境：独立的 /srv/unsafe/dev-env/venvs/tangoflux venv，不与项目主 venv/tools/acestep_env
 混用（理由同 docs/indextts_setup.md）。由 src/asset_gen.py 的 TangoFluxBackend
 通过子进程调用，协议与 tools/acestep_infer.py 一致（单次加载、批量循环、
 jobs.json -> result.json）。
