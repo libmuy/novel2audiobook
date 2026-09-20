@@ -10,13 +10,13 @@
 ```
 tools/
 ├── indextts_repo/      # 官方仓库克隆（git clone index-tts/index-tts），含 checkpoints 软链接
-│   └── checkpoints -> /srv/unsafe/models/tts/IndexTTS-2.5   # 见下方"硬编码路径"说明
+│   └── checkpoints -> /srv/unsafe/dev-env/models/tts/IndexTTS-2.5   # 见下方"硬编码路径"说明
 ├── indextts_env/       # 独立 venv（Python 3.11 + ROCm torch），uv 创建
 ├── indextts_infer.py   # 批量推理脚本，被 src/tts_engine.IndexTTSBackend 子进程调用
 └── gpu_arbiter.py       # llama-server ⇄ IndexTTS 显存互斥调度
 ```
 
-权重目录：`/srv/unsafe/models/tts/IndexTTS-2.5`（在项目 git 仓库之外，因为体积大且
+权重目录：`/srv/unsafe/dev-env/models/tts/IndexTTS-2.5`（在项目 git 仓库之外，因为体积大且
 是本机专属产物，不随代码分发）。
 
 ## 从零搭建步骤
@@ -28,10 +28,10 @@ cd /home/bjn/novel2audiobook
 git clone --depth 1 https://github.com/index-tts/index-tts.git tools/indextts_repo
 
 # 2. 下载权重主体（约 5GB，国内网络建议用镜像）
-mkdir -p /srv/unsafe/models/tts/IndexTTS-2.5
+mkdir -p /srv/unsafe/dev-env/models/tts/IndexTTS-2.5
 uv pip install --python .venv/bin/python huggingface_hub
 HF_ENDPOINT="https://hf-mirror.com" .venv/bin/hf download IndexTeam/IndexTTS-2.5 \
-    --local-dir /srv/unsafe/models/tts/IndexTTS-2.5
+    --local-dir /srv/unsafe/dev-env/models/tts/IndexTTS-2.5
 
 # 3. 建独立 venv（官方要求 Python 3.10/3.11，且 torch 锁定 2.8.*）
 uv venv tools/indextts_env --python 3.11
@@ -53,7 +53,7 @@ tools/indextts_env/bin/python -c "import torch; print(torch.__version__, torch.c
 cd tools/indextts_repo && /home/bjn/novel2audiobook/tools/indextts_env/bin/python tools/gpu_check.py
 
 # 8. 关键：建 checkpoints 软链接（见下方说明），否则辅助模型缓存路径会错乱
-ln -sfn /srv/unsafe/models/tts/IndexTTS-2.5 tools/indextts_repo/checkpoints
+ln -sfn /srv/unsafe/dev-env/models/tts/IndexTTS-2.5 tools/indextts_repo/checkpoints
 ```
 
 ## 已知坑与应对
@@ -67,7 +67,7 @@ os.environ['HF_HUB_CACHE'] = './checkpoints/hf_cache'
 - 辅助模型缓存永远落在“当前工作目录下的 `checkpoints/hf_cache`”；
 - 因此我们的批量推理脚本（`tools/indextts_infer.py`）**必须 `os.chdir()` 到
   `indextts_repo` 目录**再 import，且该目录下要有 `checkpoints` 软链接指向真正的
-  权重目录，这样辅助模型缓存才会落在 `/srv/unsafe/models/tts/IndexTTS-2.5/hf_cache/`
+  权重目录，这样辅助模型缓存才会落在 `/srv/unsafe/dev-env/models/tts/IndexTTS-2.5/hf_cache/`
   而不是散落在每次调用时的临时 CWD 里（导致重复下载）。
 
 ### 2. 辅助模型不在主仓库里，首次运行自动下载
@@ -81,7 +81,7 @@ os.environ['HF_HUB_CACHE'] = './checkpoints/hf_cache'
 **排障**：如果报 `OSError: Error no file named ... found in directory .../hf_cache/xxx`，
 说明该目录是不完整的半成品，直接删除重跑：
 ```bash
-rm -rf /srv/unsafe/models/tts/IndexTTS-2.5/hf_cache/<有问题的子目录>
+rm -rf /srv/unsafe/dev-env/models/tts/IndexTTS-2.5/hf_cache/<有问题的子目录>
 ```
 
 ### 3. 直连 HuggingFace 有时握手成功但下载中途失败
@@ -143,7 +143,7 @@ python tools/generate_seed_reference.py --force   # 强制重新生成全部角�
 
 espeak-ng 本身通过 `apt-get download` 提取 .deb（`espeak-ng` +
 `libespeak-ng1` + `espeak-ng-data` + `libpcaudio0` + `libsonic0`）后用
-`dpkg-deb -x` 解包到 `/srv/unsafe/tools/espeak_ng/`，未做系统级安装（无 root）。
+`dpkg-deb -x` 解包到 `/srv/unsafe/dev-env/other/espeak_ng/`，未做系统级安装（无 root）。
 后续若有真人配音/已授权样本，直接替换对应 `roles/<role_id>/reference.wav`
 即可，IndexTTS 合成质量会显著提升；种子音频只是让管线能先跑通真实克隆流程。
 

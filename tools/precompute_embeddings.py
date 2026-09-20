@@ -13,7 +13,7 @@ speaker embedding，落盘为 roles/<role_id>/speaker_embeddings.pt。
 用法：
     tools/indextts_env/bin/python tools/precompute_embeddings.py \
         --repo-dir tools/indextts_repo \
-        --checkpoints-dir /srv/unsafe/models/tts/IndexTTS-2.5 \
+        --checkpoints-dir /srv/unsafe/dev-env/models/tts/IndexTTS-2.5 \
         --roles-dir roles \
         [--role lin_dong] [--force]
 

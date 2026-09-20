@@ -27,9 +27,9 @@ import sys
 from pydub import AudioSegment
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ESPEAK_BIN = "/srv/unsafe/tools/espeak_ng/bin/espeak-ng"
-ESPEAK_DATA = "/srv/unsafe/tools/espeak_ng/lib/x86_64-linux-gnu/espeak-ng-data"
-ESPEAK_LIB_DIR = "/srv/unsafe/tools/espeak_ng/lib/x86_64-linux-gnu"
+ESPEAK_BIN = "/srv/unsafe/dev-env/other/espeak_ng/bin/espeak-ng"
+ESPEAK_DATA = "/srv/unsafe/dev-env/other/espeak_ng/lib/x86_64-linux-gnu/espeak-ng-data"
+ESPEAK_LIB_DIR = "/srv/unsafe/dev-env/other/espeak_ng/lib/x86_64-linux-gnu"
 
 TARGET_SAMPLE_RATE = 24000
 

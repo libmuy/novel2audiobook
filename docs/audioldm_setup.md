@@ -20,8 +20,8 @@ tools/
 └── audioldm_infer.py     # 批量推理脚本，被 src/asset_gen.AudioLDMBackend 子进程调用
 ```
 
-权重目录：`/srv/unsafe/models/audiogen/audioldm`（作为 `HF_HOME`，沿用
-`/srv/unsafe/models/{llm,tts,audiogen}` 的既有惯例，体积大、是本机专属产物，
+权重目录：`/srv/unsafe/dev-env/models/audiogen/audioldm`（作为 `HF_HOME`，沿用
+`/srv/unsafe/dev-env/models/{llm,tts,audiogen}` 的既有惯例，体积大、是本机专属产物，
 不随代码分发）。
 
 ## 从零搭建步骤
@@ -41,7 +41,7 @@ uv pip install --python tools/audioldm_env/bin/python \
     diffusers transformers accelerate soundfile scipy
 
 # 4. 准备权重缓存目录（首次调用会自动从 HuggingFace 下载模型到这里，约 1.6GB）
-mkdir -p /srv/unsafe/models/audiogen/audioldm
+mkdir -p /srv/unsafe/dev-env/models/audiogen/audioldm
 
 # 5. 冒烟测试（会触发模型下载，网络慢的话预计几分钟到十几分钟）
 .venv/bin/python cli.py assets gen --kind ambience --only rain_heavy --force

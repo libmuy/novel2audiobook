@@ -58,7 +58,7 @@ class IndexTTSDaemon:
         self.python_bin = resolve_path(tts_cfg.get("python_bin", "tools/indextts_env/bin/python"))
         self.infer_script = resolve_path(tts_cfg.get("infer_script", "tools/indextts_infer.py"))
         self.repo_dir = resolve_path(tts_cfg.get("repo_dir", "tools/indextts_repo"))
-        self.checkpoints_dir = tts_cfg.get("checkpoints_dir", "/srv/unsafe/models/tts/IndexTTS-2.5")
+        self.checkpoints_dir = tts_cfg.get("checkpoints_dir", "/srv/unsafe/dev-env/models/tts/IndexTTS-2.5")
         self.startup_timeout = tts_cfg.get("daemon_startup_timeout_sec", 180)
         self._llm_cfg = self.config.get("llm", {})
 

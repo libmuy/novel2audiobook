@@ -1,5 +1,5 @@
 llm:
-  model_name: "/srv/unsafe/models/llm/unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_M.gguf"
+  model_name: "/srv/unsafe/dev-env/models/llm/unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_M.gguf"
   api_base: "http://localhost:8080/v1"  # 本机 llama-server（ai llm serve qwen3.8-27b-unsloth）实际监听端口
   serve_port: 8080
   serve_model_registry_name: "qwen3.8-27b-unsloth"  # `ai llm serve <name>` 使用的注册表名（与 api_base 端口对应）
@@ -19,7 +19,7 @@ tts:
     python_bin: "tools/indextts_env/bin/python"       # 独立 venv（ROCm torch），见 docs/indextts_setup.md
     infer_script: "tools/indextts_infer.py"
     repo_dir: "tools/indextts_repo"                   # index-tts 官方源码仓库
-    checkpoints_dir: "/srv/unsafe/models/tts/IndexTTS-2.5"
+    checkpoints_dir: "/srv/unsafe/dev-env/models/tts/IndexTTS-2.5"
     timeout_sec: 10800  # 批量合成一整章（含模型加载）；实测本机 RTF ~6-9x，
                          # 121 句/3757 字约需 65-70 分钟，此处留足余量
     precompute_timeout_sec: 900  # 单个角色的 embedding 预计算超时。不设则回落到上面的 timeout_sec——
@@ -46,17 +46,17 @@ asset_gen:
     python_bin: "tools/acestep_env/bin/python"       # 独立 venv（ROCm torch），见 docs/audiogen_setup.md
     infer_script: "tools/acestep_infer.py"
     repo_dir: "tools/acestep_repo"                   # ACE-Step 官方源码仓库
-    checkpoints_dir: "/srv/unsafe/models/audiogen/ACE-Step-1.5"
+    checkpoints_dir: "/srv/unsafe/dev-env/models/audiogen/ACE-Step-1.5"
     timeout_sec: 3600
   audioldm:
     python_bin: "tools/audioldm_env/bin/python"      # 独立 venv（CPU torch + diffusers），见 docs/audioldm_setup.md
     infer_script: "tools/audioldm_infer.py"
-    checkpoints_dir: "/srv/unsafe/models/audiogen/audioldm"  # HF_HOME 缓存根目录，非直接模型路径
+    checkpoints_dir: "/srv/unsafe/dev-env/models/audiogen/audioldm"  # HF_HOME 缓存根目录，非直接模型路径
     timeout_sec: 1800
   tangoflux:
     python_bin: "tools/tangoflux_env/bin/python"     # 独立 venv（CPU torch），见 docs/audiogen_setup.md
     infer_script: "tools/tangoflux_infer.py"
-    checkpoints_dir: "/srv/unsafe/models/audiogen/tangoflux"  # HF_HOME 缓存根目录，非直接模型路径
+    checkpoints_dir: "/srv/unsafe/dev-env/models/audiogen/tangoflux"  # HF_HOME 缓存根目录，非直接模型路径
     timeout_sec: 1800
 
 server:

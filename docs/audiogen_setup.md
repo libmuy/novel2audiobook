@@ -45,8 +45,8 @@ tools/
                          # TangoFlux 跑 CPU，不参与这套换卡机制
 ```
 
-权重目录：`/srv/unsafe/models/audiogen/{ACE-Step-1.5,tangoflux}`（在项目 git
-仓库之外，沿用 `/srv/unsafe/models/{llm,tts}` 的既有惯例——体积大、是本机专属
+权重目录：`/srv/unsafe/dev-env/models/audiogen/{ACE-Step-1.5,tangoflux}`（在项目 git
+仓库之外，沿用 `/srv/unsafe/dev-env/models/{llm,tts}` 的既有惯例——体积大、是本机专属
 产物，不随代码分发）。
 
 ## 从零搭建步骤
@@ -90,8 +90,8 @@ export HSA_OVERRIDE_GFX_VERSION=11.0.0   # RX 7900 XT/XTX、RX 9070 XT 专用值
 # 8. 下载权重到项目外的共享目录，并用官方支持的环境变量指向它
 #    （ACE-Step 用 config_path 这个"模型名"定位权重，不接受直接路径参数，
 #    实际目录由 ACESTEP_CHECKPOINTS_DIR 决定——见 tools/acestep_infer.py 顶部注释）
-mkdir -p /srv/unsafe/models/audiogen/ACE-Step-1.5
-ACESTEP_CHECKPOINTS_DIR=/srv/unsafe/models/audiogen/ACE-Step-1.5 \
+mkdir -p /srv/unsafe/dev-env/models/audiogen/ACE-Step-1.5
+ACESTEP_CHECKPOINTS_DIR=/srv/unsafe/dev-env/models/audiogen/ACE-Step-1.5 \
     tools/acestep_env/bin/python -m acestep.model_downloader --all
     # 国内网络可加 --download-source modelscope
 ```
@@ -146,7 +146,7 @@ ROCm 版 PyTorch 复用 CUDA 的设备命名空间（`torch.cuda.*` API 在 ROCm
 
 `--all` 只下主模型（vae/embedding/turbo-2B/lm-1.7B），**XL 系列要单独下**：
 ```bash
-ACESTEP_CHECKPOINTS_DIR=/srv/unsafe/models/audiogen/ACE-Step-1.5 \
+ACESTEP_CHECKPOINTS_DIR=/srv/unsafe/dev-env/models/audiogen/ACE-Step-1.5 \
     tools/acestep_env/bin/python -m acestep.model_downloader --model acestep-v15-xl-sft
 ```
 
@@ -227,8 +227,8 @@ uv pip install --python tools/tangoflux_env/bin/python \
     "tangoflux @ git+https://github.com/declare-lab/TangoFlux"
 
 # 4. 验证（首次调用会自动下载权重到 HF_HOME 指向的目录，约几 GB）
-mkdir -p /srv/unsafe/models/audiogen/tangoflux
-HF_HOME=/srv/unsafe/models/audiogen/tangoflux tools/tangoflux_env/bin/python -c "
+mkdir -p /srv/unsafe/dev-env/models/audiogen/tangoflux
+HF_HOME=/srv/unsafe/dev-env/models/audiogen/tangoflux tools/tangoflux_env/bin/python -c "
 from tangoflux import TangoFluxInference
 model = TangoFluxInference(name='declare-lab/TangoFlux', device='cpu')
 print('OK')
