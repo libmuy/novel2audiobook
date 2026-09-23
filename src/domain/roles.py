@@ -26,10 +26,10 @@ except ImportError:  # 极端情况下离线环境缺少该库，退化为不做
 
 MANIFEST_REL_PATH = os.path.join("data", "roles", "roles_manifest.json")
 
-# 与 src/tools/indextts_infer.py 的 EMBEDDING_CACHE_FILENAME / EMBEDDING_META_FILENAME
+# 与 src/tools/inference/indextts_infer.py 的 EMBEDDING_CACHE_FILENAME / EMBEDDING_META_FILENAME
 # 保持一致的文件名约定。本模块跑在项目主 venv（不装 torch），不能 torch.load(.pt)，
 # 只通过同名 .meta.json 做只读状态查询；两边各自维护一份常量，避免主 venv
-# 反向 import src.tools.indextts_infer（它顶层 `import torch`，主 venv 没装会直接炸）。
+# 反向 import src.tools.inference.indextts_infer（它顶层 `import torch`，主 venv 没装会直接炸）。
 EMBEDDING_FILENAME = "speaker_embeddings.pt"
 EMBEDDING_META_FILENAME = "speaker_embeddings.meta.json"
 
@@ -284,7 +284,7 @@ def _embedding_env(config: dict) -> dict:
     return {
         "tts_cfg": tts_cfg,
         "python_bin": resolve_optional_path(tts_cfg.get("python_bin")),
-        "script": resolve_path("src/tools/precompute_embeddings.py"),
+        "script": resolve_path("src/tools/inference/precompute_embeddings.py"),
         "repo_dir": resolve_optional_path(tts_cfg.get("repo_dir")),
         "checkpoints_dir": resolve_optional_path(tts_cfg.get("checkpoints_dir")),
     }
@@ -310,7 +310,7 @@ def precompute_embedding(role_id: str, manifest: dict, roles_dir: str = None,
                          config: dict = None, force: bool = True) -> dict:
     """
     为单个角色触发 speaker embedding 预计算：以子进程方式调用
-    src/tools/precompute_embeddings.py（复用与 IndexTTSBackend 相同的独立 venv/
+    src/tools/inference/precompute_embeddings.py（复用与 IndexTTSBackend 相同的独立 venv/
     权重路径配置，见 config/global_config.yaml 的 tts.index_tts 段）。
 
     这是一次真实的 GPU 推理操作，会与运行中的 llama-server 竞争显存——

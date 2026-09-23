@@ -15,7 +15,7 @@
 > **ambience 模型变更说明**：下方 ACE-Step 1.5 相关内容（环境搭建、已知坑）**保留
 > 作参考，但已不是默认引擎**——它本质是音乐生成模型，生成写实环境音会带出音乐化
 > 调性，换引擎的诊断数据与理由见 `docs/audioldm_setup.md`。`AceStepBackend`、
-> `src/tools/acestep_infer.py` 代码/环境未删除，`config/global_config.yaml` 的 `ace_step:` 配置段
+> `src/tools/inference/acestep_infer.py` 代码/环境未删除，`config/global_config.yaml` 的 `ace_step:` 配置段
 > 也原样保留，如需切回可以直接改 `src/asset_gen.build_asset_gen_backend()` 里
 > ambience 对应的 backend 类。
 
@@ -38,9 +38,10 @@ ACE-Step 的官方源码仓库**不随项目分发**，由 `./run.sh repos setup
 装包，本来就不需要单独 clone 仓库。项目内只有：
 
 ```
-src/tools/
-├── acestep_infer.py     # 批量推理脚本，被 src/asset_gen.AceStepBackend 子进程调用
-├── tangoflux_infer.py   # 批量推理脚本，被 src/asset_gen.TangoFluxBackend 子进程调用
+src/tools/inference/
+├── acestep_infer.py     # 批量推理脚本，被 src/pipeline/asset_gen.AceStepBackend 子进程调用
+└── tangoflux_infer.py   # 批量推理脚本，被 src/pipeline/asset_gen.TangoFluxBackend 子进程调用
+src/runtime/
 └── gpu_arbiter.py       # llama-server ⇄ ACE-Step 显存互斥调度（LlmSuspendedForGpu）
                          # TangoFlux 跑 CPU，不参与这套换卡机制
 ```
@@ -93,7 +94,7 @@ export HSA_OVERRIDE_GFX_VERSION=11.0.0   # RX 7900 XT/XTX、RX 9070 XT 专用值
 
 # 7. 下载权重到项目外的共享目录，并用官方支持的环境变量指向它
 #    （ACE-Step 用 config_path 这个"模型名"定位权重，不接受直接路径参数，
-#    实际目录由 ACESTEP_CHECKPOINTS_DIR 决定——见 src/tools/acestep_infer.py 顶部注释）
+#    实际目录由 ACESTEP_CHECKPOINTS_DIR 决定——见 src/tools/inference/acestep_infer.py 顶部注释）
 mkdir -p /srv/unsafe/dev-env/models/audiogen/ACE-Step-1.5
 ACESTEP_CHECKPOINTS_DIR=/srv/unsafe/dev-env/models/audiogen/ACE-Step-1.5 \
     /srv/unsafe/dev-env/venvs/acestep/bin/python -m acestep.model_downloader --all
@@ -124,7 +125,7 @@ uv 判断"已有同名包满足未锁版本的依赖"就直接跳过，根本不
 ### 2. LM 后端优先用 `pt`，不用 `vllm`
 官方 Linux 说明：某些发行版（含 Ubuntu）自带的 Python 是 `3.11.0rc1` 预发布版，
 会导致 `vllm` 后端段错误；`nanovllm` 加速在非 NVIDIA 平台上支持也不完整。
-`src/tools/acestep_infer.py` 已把 `LM_BACKEND` 硬编码为 `"pt"`（对应
+`src/tools/inference/acestep_infer.py` 已把 `LM_BACKEND` 硬编码为 `"pt"`（对应
 `LLMHandler.initialize(backend="pt")`），牺牲一点速度换稳定性，这在离线批量
 生成场景（不追求实时）里是合理取舍。如果后续验证 `vllm` 在本机 ROCm 环境下能跑，
 可以把该常量改成 `"vllm"` 提速。
@@ -133,17 +134,17 @@ uv 判断"已有同名包满足未锁版本的依赖"就直接跳过，根本不
 ROCm 版 PyTorch 复用 CUDA 的设备命名空间（`torch.cuda.*` API 在 ROCm 构建下就是
 指向 HIP 后端），`AceStepHandler.initialize_service(device="cuda")` /
 `LLMHandler.initialize(device="cuda")` 不需要改成别的字符串，这与
-`src/tools/indextts_infer.py`、`src/pipeline/tts_engine.py` 里的既有做法一致。
+`src/tools/inference/indextts_infer.py`、`src/pipeline/tts_engine.py` 里的既有做法一致。
 
 ### 4. 首次运行会下载模型，超时要给够
-`src/tools/acestep_infer.py` 只负责推理，不负责下载——权重必须在步骤 7 里**预先**
+`src/tools/inference/acestep_infer.py` 只负责推理，不负责下载——权重必须在步骤 7 里**预先**
 下载完整，否则子进程内 `initialize_service()` 触发的按需下载会撞上
 `config/global_config.yaml:asset_gen.ace_step.timeout_sec`（默认 3600 秒）而被杀掉，
 留下不完整目录。若怀疑目录不完整，删掉对应子目录重新跑步骤 7（同
 `docs/indextts_setup.md` 已知坑 §2 的排障思路）。
 
 ### 5. 模型选型对齐显存档位
-`src/tools/acestep_infer.py` 里 `DIT_CONFIG_PATH = "acestep-v15-xl-sft"`、
+`src/tools/inference/acestep_infer.py` 里 `DIT_CONFIG_PATH = "acestep-v15-xl-sft"`、
 `LM_MODEL_PATH = "acestep-5Hz-lm-1.7B"` 是按官方选型表里 "20-24GB 显存" 档位选的
 （停掉 llama-server 后独占 24GB）。如果生成结果质量不理想，可以换
 `acestep-v15-xl-turbo`（更快、质量略低）试一版对比。
@@ -165,7 +166,7 @@ override)"），这是保守的默认值，不是显存不够。本机 RX 7900XT
 被系统当成"内存不足"杀掉的疑似诱因之一 |
 | bfloat16 | ~17.5GB（含 LM） | max 18.5GB，VAE 解码前留 9GB 余量 | 结果正常（`success: True`），生成 8 步扩散仅 ~5 秒 |
 
-`src/tools/acestep_infer.py` 已经在 import 前 `os.environ.setdefault("ACESTEP_ROCM_DTYPE", "bfloat16")`，无需手动设置；如果要临时对比 fp32 效果，运行前 `unset ACESTEP_ROCM_DTYPE` 或改成 `float16`。
+`src/tools/inference/acestep_infer.py` 已经在 import 前 `os.environ.setdefault("ACESTEP_ROCM_DTYPE", "bfloat16")`，无需手动设置；如果要临时对比 fp32 效果，运行前 `unset ACESTEP_ROCM_DTYPE` 或改成 `float16`。
 
 ### 7. `flash_attn` 装了但是 CUDA 版，会报错后自动降级（可忽略）
 日志会出现 `flash_attn is installed but failed to import: libcudart.so.12:
@@ -177,7 +178,7 @@ cannot open shared object file`——`-e .` 装依赖时把 CUDA 版 flash-attn 
 ### 8. 各阶段耗时参考（RX 7900XTX 实测，10 秒测试片段）
 首次调用一次性加载：DiT 权重（XL，4 个 safetensors 分片）约 4.5 分钟、LM
 tokenizer+约束解码器+权重约 1 分钟——这部分是子进程启动后**每次调用只付一次**
-的固定成本（`src/tools/acestep_infer.py` 设计成单次加载、批量循环生成，见文件顶部
+的固定成本（`src/tools/inference/acestep_infer.py` 设计成单次加载、批量循环生成，见文件顶部
 说明），不会随素材条数线性增加。单条生成里，8 步扩散只要 ~5 秒，VAE 解码
 （tiled，本机显存档位下）约 90 秒是单条最大头的部分，60 秒长的 ambience 素材
 解码时间预计等比更长——`config/global_config.yaml:asset_gen.ace_step.timeout_sec`
@@ -206,7 +207,7 @@ tokenizer+约束解码器+权重约 1 分钟——这部分是子进程启动后
 # 2. 真实环境搭好后，去掉 --backend mock，验证会调用 ACE-Step 并自动换卡
 ./run.sh assets gen --kind ambience --only rain_heavy --force
 ./run.sh assets list   # 期望 rain_heavy 一行 engine=ace_step，used_fallback=false
-/srv/unsafe/dev-env/venvs/novel2audiobook/bin/python src/tools/gpu_arbiter.py status   # 确认 llama-server 已自动恢复
+/srv/unsafe/dev-env/venvs/novel2audiobook/bin/python src/runtime/gpu_arbiter.py status   # 确认 llama-server 已自动恢复
 ```
 成功会在 `data/assets/ambience/rain_heavy.wav` 生成一段真实的雨声环境音（而非 Mock
 的滤波噪声占位），试听确认循环接缝（首尾交叉淡化后）没有明显咔哒声。
@@ -245,7 +246,7 @@ print('OK')
 1. **不是 gated repo，无需申请** —— 这正是弃用 Stable Audio 3 Small SFX 改用
    它的原因，`snapshot_download` 直接拉取即可，不会遇到 401/403。
 2. **`generate()` 不支持 `negative_prompt`，也不暴露 `seed` 参数** ——
-   `src/tools/tangoflux_infer.py` 对 `negative_prompt` 直接忽略（协议里保留字段
+   `src/tools/inference/tangoflux_infer.py` 对 `negative_prompt` 直接忽略（协议里保留字段
    只是为了跨后端一致），用 `torch.manual_seed()` 在调用前手动设种子来达到
    可复现效果。
 3. **`duration` 官方 CLI 限定 1-30 秒** —— 本项目 sfx 素材（`data/assets/asset_specs.yaml`
@@ -253,7 +254,7 @@ print('OK')
    如果以后往 sfx 类目里加超过 30 秒的条目会需要另外处理。
 4. **默认 CPU** —— 和 Stable Audio Small 同样的取舍：SFX 素材生成频率低、
    单条时长短，CPU 慢一点换来不占显存、不用参与 GPU 换卡调度，简单可靠。
-   如果批量条目很多嫌慢，`src/tools/tangoflux_infer.py` 的 `--device` 参数可以
+   如果批量条目很多嫌慢，`src/tools/inference/tangoflux_infer.py` 的 `--device` 参数可以
    改成 `cuda`，但需要额外验证 ROCm 下这条链路（未测试）。
 
 ## 冒烟测试（sfx / TangoFlux）

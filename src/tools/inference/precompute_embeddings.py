@@ -2,16 +2,16 @@
 """
 IndexTTS-2.5 speaker embedding 批量预计算脚本（计划 001）。
 
-运行环境同 src/tools/indextts_infer.py：独立的 indextts venv（Python 3.11 + ROCm torch，
+运行环境同 src/tools/inference/indextts_infer.py：独立的 indextts venv（Python 3.11 + ROCm torch，
 路径见 config/local_config.yaml 的 tts.index_tts.python_bin），不与项目主 venv 混用。
 
 对 data/roles/roles_manifest.json 中登记的角色逐个提取参考音频（reference.wav）的
 speaker embedding，落盘为 data/roles/<role_id>/speaker_embeddings.pt。
-后续 src/tools/indextts_infer.py 的批量合成、以及常驻 TTS 服务都会自动检测并复用
+后续 src/tools/inference/indextts_infer.py 的批量合成、以及常驻 TTS 服务都会自动检测并复用
 这份缓存，跳过 Wav2Vec2Bert + CAMPPlus + length_regulator 的在线提取步骤。
 
 用法：
-    <indextts venv 的 python> src/tools/precompute_embeddings.py \
+    <indextts venv 的 python> src/tools/inference/precompute_embeddings.py \
         --repo-dir <index-tts 源码仓库目录> \
         --checkpoints-dir <IndexTTS-2.5 权重目录> \
         --roles-dir data/roles \

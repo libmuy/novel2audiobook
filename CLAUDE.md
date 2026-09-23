@@ -32,8 +32,8 @@
   （gitignore，本机专属的 venv/权重绝对路径、外部命令、espeak 路径，模板见
   `config/local_config.example.yaml`），后者按键深合并覆盖前者。换机器只改 local。
 - 目录约定：根目录只放 `run.sh`（唯一入口）、`README.md`/`CLAUDE.md`/`AGENTS.md`、`requirements.txt`，
-  以及 `config/`（配置）、`src/`（全部代码：CLI、后端、推理脚本 `src/tools/`、
-  辅助脚本 `src/scripts/`、Web 前端 `src/web/`）、`data/`（全部数据资产：
+  以及 `config/`（配置）、`src/`（全部代码：CLI、后端、推理脚本 `src/tools/inference/`、
+  GPU 调度 `src/runtime/`、辅助脚本 `src/scripts/`、Web 前端 `src/web/`）、`data/`（全部数据资产：
   `data/library`、`data/roles`、`data/assets`）、`tests/`、`docs/`。
   index-tts / ACE-Step 的第三方源码仓库不随项目分发，见 `./run.sh repos setup`。
 - 不要往代码里写死路径/端口；路径类配置缺失时应报错或降级，不要回落到某台机器的字面量。
@@ -44,7 +44,7 @@
   环境（见 `docs/indextts_setup.md`）；任一未就绪时自动降级为规则/占位实现，
   不会中断管线，但产出质量会明显下降，正式产出前请用 `./run.sh status`
   和 `timeline.json` 里的 `tts_engine`/`used_fallback` 字段确认实际走的是哪个引擎。
-- `tts` 阶段用 IndexTTS 合成时会通过 `src/tools/gpu_arbiter.py` 自动暂停/恢复
+- `tts` 阶段用 IndexTTS 合成时会通过 `src/runtime/gpu_arbiter.py` 自动暂停/恢复
   llama-server（两者共用 GPU 显存，无法同时常驻），命令结束后会自动恢复
   llama-server，无需手动干预。
 - `./run.sh test` 全程在隔离临时目录运行，不会污染 `data/library/`、`data/roles/` 等共享目录。

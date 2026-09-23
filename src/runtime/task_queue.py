@@ -139,7 +139,7 @@ def _handle_precompute_embedding(task, ctx):
 
     # GPU 换手由调用方负责（roles.precompute_embedding 自己的 docstring 明确这么规定，
     # tests/test_roles.py 也直接调它），所以包在 handler 这一层，而不是改 roles.py
-    from src.tools.gpu_arbiter import LlmSuspendedForGpu
+    from src.runtime.gpu_arbiter import LlmSuspendedForGpu
     ctx.log(f"开始预计算角色 {role_id} 的 embedding")
     with LlmSuspendedForGpu(config):
         res = precompute_embedding(role_id, manifest, config=config)

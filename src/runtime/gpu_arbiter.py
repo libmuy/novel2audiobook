@@ -6,8 +6,8 @@ src/pipeline/asset_gen.py）——共用，这些阶段常规配置下都无法�
 因此本模块保证互斥：批量任务前暂停 llama-server 腾出显存，任务结束后（无论成功
 与否）恢复其运行，使系统回到用户预期的默认状态（llama-server 常驻服务于其他用途）。
 
-供 src/tts_engine.IndexTTSBackend、src/asset_gen.SubprocessAudioGenBackend 在各自
-批量任务前后调用；也可独立以脚本方式运行：`python tools/gpu_arbiter.py {status|stop|start}`。
+供 src/pipeline/tts_engine.IndexTTSBackend、src/pipeline/asset_gen.SubprocessAudioGenBackend
+在各自批量任务前后调用；也可独立以脚本方式运行：`python src/runtime/gpu_arbiter.py {status|stop|start}`。
 """
 import json
 import os
@@ -20,10 +20,10 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-# 与 src/utils.py 里 PROJECT_ROOT 的计算方式一致（都是本文件/模块所在目录的
-# 上一级）；这里不 `from src.utils import ...`，沿用本文件一贯的做法——避免
-# 在模块顶层引入 src 包依赖（见文件末尾 __main__ 块的说明）。
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 与 src/utils.py 里 PROJECT_ROOT 语义一致（项目根）；本文件在 src/runtime/ 下
+# 比 utils.py 深一级，所以要三级 dirname。这里不 `from src.utils import ...`，
+# 沿用本文件一贯的做法——避免在模块顶层引入 src 包依赖（见文件末尾 __main__ 块的说明）。
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # --------------------------------------------------------------------------
 # 显式 GPU owner 模型（计划 003）：
@@ -237,7 +237,7 @@ LlmSuspendedForTts = LlmSuspendedForGpu
 
 # --------------------------------------------------------------------------
 # 常驻 TTS 服务的 pidfile（由 src/pipeline/tts_daemon.py 写入/删除，本文件只负责读取
-# 探测，不负责启停——启停需要知道怎么加载 IndexTTS2 模型，那是 src/ 侧的事）
+# 探测，不负责启停——启停需要知道怎么加载 IndexTTS2 模型，那是 src/pipeline 侧的事）
 # --------------------------------------------------------------------------
 
 def read_tts_daemon_state() -> dict:
@@ -361,7 +361,7 @@ def plan_swap(target_owner: str, config: dict = None) -> dict:
 
 
 if __name__ == "__main__":
-    # 允许直接 `python src/tools/gpu_arbiter.py` 运行（而非 `python -m src.tools.gpu_arbiter`），
+    # 允许直接 `python src/runtime/gpu_arbiter.py` 运行（而非 `python -m src.runtime.gpu_arbiter`），
     # 需手动把项目根目录加入 sys.path 才能找到 src 包。
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
     from src.utils import load_global_config  # noqa: E402

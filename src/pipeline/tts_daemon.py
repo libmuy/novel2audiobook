@@ -4,12 +4,12 @@
 背景：src/tts_engine.IndexTTSBackend 每次调用都起一个全新子进程加载模型
 （GPT/语义编解码器/s2mel/BigVGAN/参考音色提取等，耗时数十秒），批量合成整章
 可以摊掉这个开销，但交互式试听（未来 webui 的 Tab 4）每次都要重付一次这个
-代价，体验上不可接受。本模块管理一个常驻的 `src/tools/indextts_infer.py --serve`
+代价，体验上不可接受。本模块管理一个常驻的 `src/tools/inference/indextts_infer.py --serve`
 子进程：加载一次模型，之后通过 Unix socket 反复收发合成请求。
 
 生命周期由调用方（CLI/未来的 webui）显式驱动：
 - 启不启动、要不要为此先停掉 llama-server，都通过
-  src.tools.gpu_arbiter.plan_swap() 描述给用户确认后才调用 ensure_started()；
+  src.runtime.gpu_arbiter.plan_swap() 描述给用户确认后才调用 ensure_started()；
 - 本模块自己**不做任何空闲超时自动退出**——卸载显存这件事必须由用户主动
   触发（见 CLAUDE.md/docs/plan/003-*.md 的"显式确认换手"设计），不能在用户
   还在调音色的时候悄悄把模型卸掉。
@@ -25,7 +25,7 @@ import time
 from datetime import datetime, timezone
 
 from src.utils import resolve_path, resolve_optional_path, load_global_config
-from src.tools import gpu_arbiter
+from src.runtime import gpu_arbiter
 
 # 取消：**常驻守护进程有意保持不可取消**。它没有 cancel 消息、请求循环是单线程 socket，
 # 而任务队列的取消（src/runtime/cancel_scope.py 的杀进程钩子）只接在「一次性子进程」后端
@@ -34,7 +34,7 @@ from src.tools import gpu_arbiter
 # 想中断它请用 `./run.sh tts-serve stop`。
 #
 # 有意不在本模块复制一份 pidfile/socket 路径常量：路径/格式由
-# src/tools/gpu_arbiter.py 统一定义（它也要读这份状态来做 owner 探测），本模块
+# src/runtime/gpu_arbiter.py 统一定义（它也要读这份状态来做 owner 探测），本模块
 # 处处直接引用 gpu_arbiter.TTS_DAEMON_*，确保读写用的是同一份路径——复制
 # 一份字符串常量看似无害，一旦测试/未来重构里只改了一处会立刻读写不一致，
 # 见测试里对这一点的专门验证。
@@ -45,7 +45,7 @@ class IndexTTSDaemon:
     对常驻 IndexTTS-2.5 推理子进程的启动/复用/关闭封装。
 
     ensure_started() 是 target_owner="tts" 这次换手的实际执行者（对应
-    src/tools/gpu_arbiter.plan_swap("tts") 描述的步骤）；shutdown() 是换回
+    src/runtime/gpu_arbiter.plan_swap("tts") 描述的步骤）；shutdown() 是换回
     target_owner="llm" 的执行者。两者都会把真实耗时记进
     gpu_arbiter.record_swap_seconds()，供下次 plan_swap() 展示。
     """
@@ -56,7 +56,7 @@ class IndexTTSDaemon:
         self.config = config if config is not None else load_global_config()
         tts_cfg = self.config.get("tts", {}).get("index_tts", {})
         self.python_bin = resolve_optional_path(tts_cfg.get("python_bin"))
-        self.infer_script = resolve_path(tts_cfg.get("infer_script", "src/tools/indextts_infer.py"))
+        self.infer_script = resolve_path(tts_cfg.get("infer_script", "src/tools/inference/indextts_infer.py"))
         self.repo_dir = resolve_optional_path(tts_cfg.get("repo_dir"))
         self.checkpoints_dir = resolve_optional_path(tts_cfg.get("checkpoints_dir"))
         self.startup_timeout = tts_cfg.get("daemon_startup_timeout_sec", 180)
@@ -84,7 +84,7 @@ class IndexTTSDaemon:
         """
         确保常驻服务已启动并加载好模型。已在运行则直接返回（幂等）。
         调用方必须已经在用户确认换手后才调用本函数——本函数本身不弹确认，
-        只管执行（对应 src.tools.gpu_arbiter.plan_swap("tts") 描述的步骤）。
+        只管执行（对应 src.runtime.gpu_arbiter.plan_swap("tts") 描述的步骤）。
         返回 {"ok": bool, "error": str|None, "already_running": bool}。
         """
         if self.is_running():

@@ -5,13 +5,13 @@
 subprocess.Popen 用一个假对象替身，IndexTTSDaemon._wait_ready/_request 按需
 monkeypatch 掉，只验证本模块自己的编排逻辑（该不该停/起 llama-server、
 状态文件写了什么、换手耗时记到了哪个 key）。真实的模型加载/socket 协议
-分别由 src/tools/precompute_embeddings.py 附带的 CPU-only 冒烟脚本与
+分别由 src/tools/inference/precompute_embeddings.py 附带的 CPU-only 冒烟脚本与
 --serve 协议冒烟脚本单独验证过。
 """
 import json
 import os
 import pytest
-from src.tools import gpu_arbiter
+from src.runtime import gpu_arbiter
 from src.pipeline import tts_daemon
 
 

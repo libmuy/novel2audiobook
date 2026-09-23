@@ -302,13 +302,13 @@ class TestNoMachineSpecificFallback:
 
 class TestExternalTools:
     def test_serve_command_default_and_configured(self):
-        from src.tools import gpu_arbiter
+        from src.runtime import gpu_arbiter
         assert gpu_arbiter.serve_command_from_config({}) == "ai"
         assert gpu_arbiter.serve_command_from_config({"tools": None}) == "ai"
         assert gpu_arbiter.serve_command_from_config({"tools": {"llm_serve_command": "myai"}}) == "myai"
 
     def test_start_llama_server_uses_given_command(self, monkeypatch):
-        from src.tools import gpu_arbiter
+        from src.runtime import gpu_arbiter
         calls = []
         monkeypatch.setattr(gpu_arbiter, "is_server_up", lambda *a, **k: bool(calls))
         monkeypatch.setattr(gpu_arbiter.subprocess, "Popen", lambda cmd, **k: calls.append(cmd))
@@ -317,7 +317,7 @@ class TestExternalTools:
         assert calls == [["myai", "llm", "serve", "m", "--port", "8080"]]
 
     def test_start_llama_server_defaults_to_ai(self, monkeypatch):
-        from src.tools import gpu_arbiter
+        from src.runtime import gpu_arbiter
         calls = []
         monkeypatch.setattr(gpu_arbiter, "is_server_up", lambda *a, **k: bool(calls))
         monkeypatch.setattr(gpu_arbiter.subprocess, "Popen", lambda cmd, **k: calls.append(cmd))
@@ -326,7 +326,7 @@ class TestExternalTools:
         assert calls[0][0] == "ai"
 
     def test_llm_suspended_passes_configured_command(self):
-        from src.tools import gpu_arbiter
+        from src.runtime import gpu_arbiter
         s = gpu_arbiter.LlmSuspendedForGpu({"llm": {}, "tools": {"llm_serve_command": "myai"}})
         assert s.serve_command == "myai"
 

@@ -14,10 +14,11 @@ index-tts 的官方源码仓库**不随项目分发**（几十 MB、且是外部
 editable 安装指到这个位置。项目内只有：
 
 ```
-src/tools/
-├── indextts_infer.py   # 批量推理脚本，被 src/tts_engine.IndexTTSBackend 子进程调用
-├── precompute_embeddings.py  # 角色 speaker embedding 批量预计算脚本
-└── gpu_arbiter.py       # llama-server ⇄ IndexTTS 显存互斥调度
+src/tools/inference/
+├── indextts_infer.py   # 批量推理脚本，被 src/pipeline/tts_engine.IndexTTSBackend 子进程调用
+└── precompute_embeddings.py  # 角色 speaker embedding 批量预计算脚本
+src/runtime/
+└── gpu_arbiter.py      # llama-server ⇄ IndexTTS 显存互斥调度
 ```
 
 独立 venv（Python 3.11 + ROCm torch）：`/srv/unsafe/dev-env/venvs/indextts`（示例路径，
@@ -69,7 +70,7 @@ os.environ['HF_HUB_CACHE'] = './checkpoints/hf_cache'
 ```
 这是**无条件覆盖**，在导入该模块前设置环境变量也没用。意味着：
 - 辅助模型缓存永远落在“当前工作目录下的 `checkpoints/hf_cache`”；
-- 因此我们的批量推理脚本（`src/tools/indextts_infer.py`）**必须 `os.chdir()` 到
+- 因此我们的批量推理脚本（`src/tools/inference/indextts_infer.py`）**必须 `os.chdir()` 到
   仓库目录**再 import，且该目录下要有 `checkpoints` 软链接指向真正的
   权重目录（`./run.sh repos setup` 会建好），这样辅助模型缓存才会落在权重目录下的
   `hf_cache/` 而不是散落在每次调用时的临时 CWD 里（导致重复下载）。
@@ -96,7 +97,7 @@ rm -rf /srv/unsafe/dev-env/models/tts/IndexTTS-2.5/hf_cache/<有问题的子目�
 USE_MODELSCOPE=true <indextts_env python> your_script.py
 ```
 `indextts/utils/model_download.py` 会自动改用 ModelScope 镜像（`AI-ModelScope/w2v-bert-2.0`
-等）下载，实测更稳定。`src/tools/indextts_infer.py` 未强制设置该变量，如遇下载问题可在
+等）下载，实测更稳定。`src/tools/inference/indextts_infer.py` 未强制设置该变量，如遇下载问题可在
 调用环境中导出 `USE_MODELSCOPE=true`。
 
 ### 4. BigVGAN 自定义 CUDA/HIP 内核加载失败
@@ -115,7 +116,7 @@ uv pip install --python /srv/unsafe/dev-env/venvs/indextts/bin/python ninja
 
 RX 7900XTX 共 24GB 显存，`llama-server`（Qwen3.8-27B-UD-Q4_K_M）常驻占用约 22GB，
 留给 IndexTTS 的空间不足其所需的 ~6GB。`src/tts_engine.IndexTTSBackend.synthesize_batch()`
-通过 `src/tools/gpu_arbiter.py` 的 `LlmSuspendedForGpu` 上下文管理器自动处理（本节是
+通过 `src/runtime/gpu_arbiter.py` 的 `LlmSuspendedForGpu` 上下文管理器自动处理（本节是
 GPU 换手机制的权威说明，`audiogen_setup.md` 的 ACE-Step 复用同一套；旧名
 `LlmSuspendedForTts` 保留为别名，`src/pipeline/tts_engine.py` 仍在用）：
 
@@ -128,9 +129,9 @@ GPU 换手机制的权威说明，`audiogen_setup.md` 的 ACE-Step 复用同一�
 即：`./run.sh tts --novel <novel_id> --chapter XXXX` 期间 Qwen 服务会短暂不可用，命令结束后自动恢复，
 无需手动干预。若要单独查看/控制：
 ```bash
-python src/tools/gpu_arbiter.py status   # 查看 llama-server 是否在跑
-python src/tools/gpu_arbiter.py stop     # 手动停止
-python src/tools/gpu_arbiter.py start    # 手动拉起
+python src/runtime/gpu_arbiter.py status   # 查看 llama-server 是否在跑
+python src/runtime/gpu_arbiter.py stop     # 手动停止
+python src/runtime/gpu_arbiter.py start    # 手动拉起
 ```
 
 ## 角色参考音频（reference.wav）

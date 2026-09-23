@@ -5,9 +5,9 @@
 - MockAudioGenBackend：程序化占位音频，无外部依赖，供 `cli.py test` 与无 GPU 环境使用。
 - AceStepBackend（ambience/BGM，GPU）、TangoFluxBackend（sfx，CPU）：通过子进程
   调用独立部署的推理环境（各自独立 venv + jobs.json -> result.json 协议，见
-  src/tools/indextts_infer.py 的先例）。ACE-Step 走 GPU，与 llama-server 显存互斥，
-  通过 tools/gpu_arbiter.LlmSuspendedForGpu 上下文管理器自动换卡；TangoFlux 跑在
-  CPU 上（模型选型见 src/tools/tangoflux_infer.py 顶部说明——原计划用 Stable Audio 3
+  src/tools/inference/indextts_infer.py 的先例）。ACE-Step 走 GPU，与 llama-server 显存互斥，
+  通过 runtime/gpu_arbiter.LlmSuspendedForGpu 上下文管理器自动换卡；TangoFlux 跑在
+  CPU 上（模型选型见 src/tools/inference/tangoflux_infer.py 顶部说明——原计划用 Stable Audio 3
   Small SFX，但它是 HuggingFace gated repo 且审批不顺畅，改用公开、无需申请的
   TangoFlux），不占显存，可以和前两者同时跑，但仍统一走同一套 subprocess 协议
   （多余的换卡暂停/恢复只是几秒钟开销，不值得为此分叉逻辑）。
@@ -306,7 +306,7 @@ class SubprocessAudioGenBackend:
             if self.repo_dir:
                 cmd += ["--repo-dir", self.repo_dir]
 
-            from src.tools.gpu_arbiter import LlmSuspendedForGpu  # 延迟导入，避免无网络场景下的循环依赖
+            from src.runtime.gpu_arbiter import LlmSuspendedForGpu  # 延迟导入，避免无网络场景下的循环依赖
 
             self._current_proc = None
             try:

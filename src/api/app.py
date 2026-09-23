@@ -13,7 +13,7 @@ from src.api.routers import novels, chapters, segments, roles, tasks, system, ev
 @asynccontextmanager
 async def lifespan(app):
     # 启动
-    from src.tools.gpu_arbiter import recover_orphaned_suspension
+    from src.runtime.gpu_arbiter import recover_orphaned_suspension
     config = get_config()
     recover_orphaned_suspension(config)
 

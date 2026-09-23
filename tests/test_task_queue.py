@@ -383,7 +383,7 @@ class TestPrecomputeEmbeddingHandler:
                 events.append("exit")
                 return False
 
-        import src.tools.gpu_arbiter as ga
+        import src.runtime.gpu_arbiter as ga
         monkeypatch.setattr(ga, "LlmSuspendedForGpu", FakeArbiter)
         return events
 

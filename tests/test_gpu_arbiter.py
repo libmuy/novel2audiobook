@@ -1,5 +1,5 @@
 """
-测试 src/tools/gpu_arbiter.py 里为常驻 TTS 服务新增的显式 owner 模型
+测试 src/runtime/gpu_arbiter.py 里为常驻 TTS 服务新增的显式 owner 模型
 （pidfile 探测 / 换手耗时历史 / plan_swap 描述，计划 003）。
 
 全部隔离在 tmp_path 下进行，不读写真实机器上的 .cache/ 状态；
@@ -10,7 +10,7 @@ monkeypatch 掉），也不 fork/kill 真实进程（is_pid_alive 只用当前�
 import json
 import os
 import pytest
-from src.tools import gpu_arbiter
+from src.runtime import gpu_arbiter
 
 
 @pytest.fixture

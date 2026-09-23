@@ -2,9 +2,9 @@
 """
 TangoFlux 批量推理脚本（音效 sfx）。
 
-运行环境：独立的 tangoflux venv，不与项目主 venv/src/tools/acestep 环境
+运行环境：独立的 tangoflux venv，不与项目主 venv/src/tools/inference 环境
 混用（理由同 docs/indextts_setup.md）。由 src/pipeline/asset_gen.py 的 TangoFluxBackend
-通过子进程调用，协议与 src/tools/acestep_infer.py 一致（单次加载、批量循环、
+通过子进程调用，协议与 src/tools/inference/acestep_infer.py 一致（单次加载、批量循环、
 jobs.json -> result.json）。
 
 选型背景：最初计划用 Stable Audio 3 Small SFX，但该模型在 HuggingFace 上是
@@ -17,7 +17,7 @@ gated repo，申请访问不是自动通过（实测卡在 403 Forbidden），�
 ACE-Step 抢显存，SFX 素材生成频率低、单条时长短，CPU 慢一点完全可接受）。
 
 用法：
-    python src/tools/tangoflux_infer.py \
+    python src/tools/inference/tangoflux_infer.py \
         --checkpoints-dir <HF 缓存根目录（HF_HOME），见下方说明> \
         --jobs-file <输入任务 JSON 路径> \
         --result-file <输出结果 JSON 路径>

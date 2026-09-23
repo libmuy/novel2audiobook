@@ -167,7 +167,7 @@ def _release_tts_daemon_if_running(auto_yes: bool) -> bool:
     正占着显存，交互式终端下先问一句是否释放，非交互式（管道/脚本/CI）或
     传了 --yes 则直接释放，不阻塞。返回 False 表示用户拒绝，调用方应中止。
     """
-    from src.tools import gpu_arbiter
+    from src.runtime import gpu_arbiter
     if not gpu_arbiter.is_tts_daemon_running():
         return True
     if sys.stdin.isatty() and not auto_yes:
@@ -184,7 +184,7 @@ def _release_tts_daemon_if_running(auto_yes: bool) -> bool:
 def _confirm_batch_llm_swap(auto_yes: bool) -> bool:
     """
     B5 换手策略之二：`tts` 命令的批量链路本身就会通过
-    src.tools.gpu_arbiter.LlmSuspendedForGpu 自动停/起 llama-server（这条路径不变，
+    src.runtime.gpu_arbiter.LlmSuspendedForGpu 自动停/起 llama-server（这条路径不变，
     见 src/tts_engine.IndexTTSBackend）；这里只是在交互式终端下、真的会发生
     换手时先告知一声，避免用户在不知情的情况下让 llama-server 被停用一整个
     批次的时长（单章可能耗时 65-70 分钟，见 config/global_config.yaml 的 timeout_sec
@@ -192,7 +192,7 @@ def _confirm_batch_llm_swap(auto_yes: bool) -> bool:
     """
     if auto_yes or not sys.stdin.isatty():
         return True
-    from src.tools import gpu_arbiter
+    from src.runtime import gpu_arbiter
     if gpu_arbiter.get_current_owner() != gpu_arbiter.OWNER_LLM:
         return True  # llama-server 本来就没在跑，不会产生换手代价
     stop_eta = gpu_arbiter.get_expected_swap_seconds("llm_stop")
@@ -416,7 +416,7 @@ def main():
                 sys.exit(1)
 
     elif args.command == "tts-serve":
-        from src.tools import gpu_arbiter
+        from src.runtime import gpu_arbiter
         from src.pipeline.tts_daemon import IndexTTSDaemon
         daemon = IndexTTSDaemon()
 

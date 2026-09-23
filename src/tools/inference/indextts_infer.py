@@ -11,7 +11,7 @@ IndexTTS-2.5 批量推理脚本。
 方便调用方（Python 主进程）逐条判定成功/失败并按需回退 Mock。
 
 批量模式用法（一次性子进程，`cli.py tts` 走这条路径，不变）：
-    python tools/indextts_infer.py \
+    python src/tools/inference/indextts_infer.py \
         --repo-dir <index-tts 源码目录，用于 sys.path> \
         --checkpoints-dir <权重目录> \
         --jobs-file <输入任务 JSON 路径> \
@@ -24,7 +24,7 @@ result-file 内容：{"<id>": {"ok": true/false, "error": "..."}, ...}
 
 常驻模式用法（计划 003；由 src/pipeline/tts_daemon.py 启动/管理，避免 Tab 4 试听/
 webui 每次调用都要付一次模型加载的开销）：
-    python tools/indextts_infer.py \
+    python src/tools/inference/indextts_infer.py \
         --repo-dir <...> --checkpoints-dir <...> \
         --serve --socket <unix domain socket 路径>
 
@@ -154,7 +154,7 @@ def extract_and_cache(tts, ref_audio_abspath: str, force: bool = False) -> bool:
     用一句极短占位文本触发一次真实的 infer()（只为复用其内部现成的提取逻辑，
     生成的占位音频写到临时目录后即丢弃），随后落盘。
     返回 True 表示本次确实重新计算了；False 表示直接复用了磁盘上的缓存。
-    供 tools/precompute_embeddings.py 调用。
+    供 tools/inference/precompute_embeddings.py 调用。
     """
     if not force and try_load_cached_embedding(tts, ref_audio_abspath):
         return False

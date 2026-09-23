@@ -4,9 +4,9 @@ TTS 推理模块 (支持基于 MD5 的哈希增量合成)
 架构：TTSBackend 抽象出两种实现——
 - MockTTSBackend：生成占位波形，无外部依赖，供离线自检 (`cli.py test`) 使用。
 - IndexTTSBackend：通过子进程调用独立部署的 IndexTTS-2.5 推理环境（见
-  src/tools/indextts_infer.py 与 docs/indextts_setup.md），按角色参考音频克隆音色、
+  src/tools/inference/indextts_infer.py 与 docs/indextts_setup.md），按角色参考音频克隆音色、
   按 emotion 映射情感向量、按角色 speed 配置换算语速。GPU 显存与 llama-server
-  的 Qwen 模型互斥占用，见 src/tools/gpu_arbiter.py 的调度逻辑。
+  的 Qwen 模型互斥占用，见 src/runtime/gpu_arbiter.py 的调度逻辑。
 
 无论使用哪种后端，MD5(speaker + text + emotion) 增量缓存逻辑保持不变；
 IndexTTS 合成失败时自动降级为 Mock 占位音，保证管线不中断（并记录警告）。
@@ -146,7 +146,7 @@ class IndexTTSBackend:
         self.config = config
         tts_cfg = config.get("tts", {}).get("index_tts", {})
         self.python_bin = resolve_optional_path(tts_cfg.get("python_bin"))
-        self.infer_script = resolve_path(tts_cfg.get("infer_script", "src/tools/indextts_infer.py"))
+        self.infer_script = resolve_path(tts_cfg.get("infer_script", "src/tools/inference/indextts_infer.py"))
         self.repo_dir = resolve_optional_path(tts_cfg.get("repo_dir"))
         self.checkpoints_dir = resolve_optional_path(tts_cfg.get("checkpoints_dir"))
         self.timeout = tts_cfg.get("timeout_sec", 1800)
@@ -208,7 +208,7 @@ class IndexTTSBackend:
                 "--jobs-file", jobs_file,
                 "--result-file", result_file,
             ]
-            from src.tools.gpu_arbiter import LlmSuspendedForTts  # 延迟导入，避免无网络场景下的循环依赖
+            from src.runtime.gpu_arbiter import LlmSuspendedForTts  # 延迟导入，避免无网络场景下的循环依赖
 
             self._current_proc = None
             try:

@@ -133,13 +133,13 @@ def patch_config(data: dict):
 
 @router.get("/gpu/owner")
 def get_gpu_owner():
-    from src.tools.gpu_arbiter import get_current_owner
+    from src.runtime.gpu_arbiter import get_current_owner
     return {"owner": get_current_owner()}
 
 
 @router.post("/gpu/swap")
 def swap_gpu(data: dict):
-    from src.tools.gpu_arbiter import plan_swap, get_current_owner
+    from src.runtime.gpu_arbiter import plan_swap, get_current_owner
     target = data.get("target")
     plan = plan_swap(target)
     return plan

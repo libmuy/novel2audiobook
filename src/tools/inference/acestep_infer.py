@@ -5,12 +5,12 @@ ACE-Step 1.5 批量推理脚本（BGM / 环境音 ambience）。
 运行环境：独立的 acestep venv（Python 3.11 + ROCm torch），不与项目主
 venv 混用。由 src/pipeline/asset_gen.py 的 AceStepBackend 通过子进程调用。
 
-设计为"单次加载、批量合成"，理由与 src/tools/indextts_infer.py 相同：DiT + LM 模型
+设计为"单次加载、批量合成"，理由与 src/tools/inference/indextts_infer.py 相同：DiT + LM 模型
 加载耗时数十秒，若每条素材起一个子进程会被加载开销拖垮，因此一次调用接收一个
 任务列表 JSON 文件，加载模型一次后循环合成，逐条写状态到输出 JSON。
 
 用法：
-    python src/tools/acestep_infer.py \
+    python src/tools/inference/acestep_infer.py \
         --repo-dir <ACE-Step-1.5 源码目录，用于 sys.path> \
         --checkpoints-dir <权重目录> \
         --jobs-file <输入任务 JSON 路径> \

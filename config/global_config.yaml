@@ -20,7 +20,7 @@ tts:
   index_tts:
     # python_bin（独立 venv）与 repo_dir/checkpoints_dir（源码仓库/权重目录，不随项目分发，
     # 见 `./run.sh repos setup`）是本机专属，见 local_config.yaml
-    infer_script: "src/tools/indextts_infer.py"
+    infer_script: "src/tools/inference/indextts_infer.py"
     repo_url: "https://github.com/index-tts/index-tts.git"   # index-tts 官方源码仓库
     repo_commit: "ee40fa7d6c6b8a2c7f06105f9f1e65775b74868c"  # `./run.sh repos setup` 固定拉取的提交
     timeout_sec: 10800  # 批量合成一整章（含模型加载）；实测本机 RTF ~6-9x，
@@ -49,19 +49,19 @@ asset_gen:
   ace_step:
     # python_bin / repo_dir / checkpoints_dir（不随项目分发，见 `./run.sh repos setup`）是本机专属，
     # 见 local_config.yaml
-    # 注：src/tools/acestep_infer.py 内部对 ACESTEP_ROCM_DTYPE 做了 setdefault("bfloat16")（ROCm 下避免 fp32），
+    # 注：src/tools/inference/acestep_infer.py 内部对 ACESTEP_ROCM_DTYPE 做了 setdefault("bfloat16")（ROCm 下避免 fp32），
     #     没有对应的配置键；要改只能在调用环境里导出该变量，见 docs/audiogen_setup.md
-    infer_script: "src/tools/acestep_infer.py"
+    infer_script: "src/tools/inference/acestep_infer.py"
     repo_url: "https://github.com/ace-step/ACE-Step-1.5.git"  # ACE-Step 官方源码仓库
     repo_commit: "ca1e85fe9430179831e6bc6be790c332190a3866"   # `./run.sh repos setup` 固定拉取的提交
     timeout_sec: 3600
   audioldm:
     # python_bin / checkpoints_dir 是本机专属，见 local_config.yaml
-    infer_script: "src/tools/audioldm_infer.py"
+    infer_script: "src/tools/inference/audioldm_infer.py"
     timeout_sec: 1800
   tangoflux:
     # python_bin / checkpoints_dir 是本机专属，见 local_config.yaml
-    infer_script: "src/tools/tangoflux_infer.py"
+    infer_script: "src/tools/inference/tangoflux_infer.py"
     timeout_sec: 1800
 
 server:
