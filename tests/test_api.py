@@ -110,6 +110,9 @@ class TestNodesAPI:
         chapter_node = tree[0]["children"][0]
         assert chapter_node["id"] == ch_id
         assert "status" in chapter_node and chapter_node["status"]
+        assert chapter_node["state"] == "unparsed"  # 只有 raw.txt
+        assert chapter_node["raw"] is True
+        assert chapter_node["missing_assets_count"] == 0
 
     def _chapter_dir(self, tmp_path, nid, cid):
         return tmp_path / "data" / "library" / nid / "chapters" / cid

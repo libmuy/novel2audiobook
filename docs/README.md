@@ -38,7 +38,8 @@
 | [007](plan/007-design-refresh.md) | Modernist 换皮重构（红白配色 + 深色模式） | 已实现 |
 | [008](plan/008-backend-gaps.md) | 补后端缺口：素材入混音 / 素材 CRUD / 角色分类树 | 已实现 |
 | [009](plan/009-frontend-wiring.md) | 前端接入 008 的新接口 | 已实现 |
-| [010](plan/010-remaining-work.md) | 12 阶段收尾清单 + 每阶段「实际改动」 | 执行中 |
+| [010](plan/010-remaining-work.md) | 12 阶段收尾清单 + 每阶段「实际改动」 | 已实现 |
+| [011](plan/011-ui-redesign.md) | 按第二版 Cloud Design 稿整体重写前端（非换皮）+ 配套后端补齐 | 已实现 |
 
 计划文档是当时的设计与决策记录，**不随后续改动回改**；与代码不一致时以代码和较新的计划为准。
 计划里出现的 `../dev-env/...` 相对路径是项目搬迁前的旧写法，现行路径为 `/srv/unsafe/dev-env/...`。

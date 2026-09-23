@@ -52,6 +52,8 @@ def _merge_status_into_tree(nodes: list, status_by_chapter: dict) -> None:
             if ch_status:
                 node["status"] = ch_status.get("status")
                 node["state"] = ch_status.get("state")
+                node["raw"] = ch_status.get("raw")
+                node["missing_assets_count"] = ch_status.get("missing_assets_count")
         children = node.get("children")
         if children:
             _merge_status_into_tree(children, status_by_chapter)

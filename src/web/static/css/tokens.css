@@ -1,0 +1,83 @@
+/* 设计 token：浅色/深色两套静态变量，主题色派生色用 CSS color-mix() 现场算，
+   不用 JS 搬一遍配色算法。js/core.js 的 applyTheme() 只需要设三样：
+   --accent（用户选的主题色）、--r/--rLg（圆角）、--font（字体栈），
+   以及 documentElement 的 data-theme 属性——其余 --accentHover 等派生变量
+   会随 --accent 和 data-theme 自动重算。 */
+
+:root {
+  --bg: #f5f5f7;
+  --surface: #fbfbfc;
+  --card: #ffffff;
+  --border: rgba(20, 20, 40, 0.10);
+  --borderSubtle: #e4e4ea;
+  --text: #17171c;
+  --textMuted: #5d5d6b;
+  --textFaint: #9a9aa8;
+  --success: #1f8a5b;
+  --successTint: #e8f6ef;
+  --warn: #b8720b;
+  --warnTint: #fdf3e3;
+  --danger: #e5342a;
+  --dangerTint: #fdeeed;
+  --neutralDot: #c2c2cc;
+  --headerBg: rgba(255, 255, 255, 0.78);
+  --shadow: 0 1px 2px rgba(20, 20, 40, 0.04), 0 2px 8px rgba(20, 20, 40, 0.04);
+  --shadowLg: 0 24px 64px rgba(20, 20, 40, 0.18), 0 2px 8px rgba(20, 20, 40, 0.06);
+
+  /* 主题色默认值（未选择自定义主题色 / JS 尚未跑前的兜底，跟设计稿默认朱红一致）。
+     派生色用 color-mix 现场算，公式跟原型的 applyAccent() 一致：
+     浅色朝黑/白混，深色朝白/卡片色混。 */
+  --accent: #ec3013;
+  --accentHover: color-mix(in oklch, var(--accent) 88%, black);
+  --accentActive: color-mix(in oklch, var(--accent) 72%, black);
+  --accentTint: color-mix(in oklch, var(--accent) 9%, white);
+  --accentTintBorder: color-mix(in oklch, var(--accent) 32%, white);
+  --accentTextOnTint: color-mix(in oklch, var(--accent) 75%, black);
+  --accentRing: color-mix(in oklch, var(--accent) 20%, transparent);
+
+  --r: 8px;
+  --rLg: 12px;
+  --font: Manrope, 'Noto Sans SC', 'PingFang SC', system-ui, sans-serif;
+}
+
+:root[data-theme="dark"] {
+  --bg: #0f0f13;
+  --surface: #15151b;
+  --card: #1b1b22;
+  --border: rgba(255, 255, 255, 0.08);
+  --borderSubtle: #2a2a33;
+  --text: #ededf2;
+  --textMuted: #a3a3b2;
+  --textFaint: #6f6f7d;
+  --success: #43b884;
+  --successTint: #15291f;
+  --warn: #e0a445;
+  --warnTint: #2e2412;
+  --danger: #ff5f55;
+  --dangerTint: #2e1716;
+  --neutralDot: #4a4a55;
+  --headerBg: rgba(21, 21, 27, 0.72);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadowLg: 0 24px 64px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.06);
+
+  /* --accent 本身不重设——深浅色用同一个用户选定的主题色，原型的默认色
+     THEME_DARK.accent (#ff6a4d) 实际从未被触发（props 一直有默认值），
+     只有派生色的混合目标（黑/白/卡片色）要按主题换。 */
+  --accentHover: color-mix(in oklch, var(--accent) 85%, white);
+  --accentActive: color-mix(in oklch, var(--accent) 70%, white);
+  --accentTint: color-mix(in oklch, var(--accent) 16%, var(--card));
+  --accentTintBorder: color-mix(in oklch, var(--accent) 40%, var(--card));
+  --accentTextOnTint: color-mix(in oklch, var(--accent) 75%, white);
+  --accentRing: color-mix(in oklch, var(--accent) 30%, transparent);
+}
+
+@font-face {
+  font-family: 'Manrope';
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url('../vendor/fonts/manrope-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}

@@ -50,4 +50,7 @@
 - `./run.sh test` 全程在隔离临时目录运行，不会污染 `data/library/`、`data/roles/` 等共享目录。
 - `parse` 不再自动注册角色：清单外说话人会被标记为 `speaker: null`，
   需人工在配音工作台指派后才能执行 TTS。
-- Web 界面 = FastAPI + Vue3 全局构建（`src/web/static/js/app.js`，模板字符串组件，无构建工具、模板内禁嵌套反引号、离线运行）；旧 Gradio/Flask 界面已于计划 005/006 移除。
+- Web 界面 = FastAPI + Vue3 全局构建（`src/web/static/js/`：`core.js` 共享状态/弹窗/路由、`api.js` 后端封装、
+  `components/` 通用组件（树节点、分类树、任务面板、弹窗、toast）、`pages/` 六个页面组件、`app.js` 根组件；
+  模板字符串组件，无构建工具、模板内禁嵌套反引号、离线运行）；计划 007 的 Cloud Design 换皮界面已于计划 011
+  整体替换为新一轮 Cloud Design 稿；旧 Gradio/Flask 界面已于计划 005/006 移除。
