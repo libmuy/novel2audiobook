@@ -1,5 +1,5 @@
 """
-测试 src/asset_gen.py 模块的各个函数
+测试 src/pipeline/asset_gen.py 模块的各个函数
 """
 import os
 import json
@@ -7,7 +7,7 @@ import wave
 import pytest
 from pydub import AudioSegment
 
-from src import asset_gen
+from src.pipeline import asset_gen
 
 
 # --------------------------------------------------------------------------

@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass, field, asdict
 from typing import Callable, Optional
 
-from src import cancel_scope
+from src.runtime import cancel_scope
 from src.utils import PROJECT_ROOT, load_global_config
 
 logger = logging.getLogger(__name__)
@@ -66,10 +66,10 @@ def is_supported_type(task_type: str) -> bool:
 def _register_handlers():
     if TASK_HANDLERS:
         return
-    from src.llm_parser import process_chapter_parse
-    from src.tts_engine import process_chapter_tts
-    from src.audio_mixer import mix_chapter
-    from src.roles import precompute_embedding
+    from src.pipeline.llm_parser import process_chapter_parse
+    from src.pipeline.tts_engine import process_chapter_tts
+    from src.pipeline.audio_mixer import mix_chapter
+    from src.domain.roles import precompute_embedding
     TASK_HANDLERS[TYPE_PARSE] = _handle_parse
     TASK_HANDLERS[TYPE_TTS] = _handle_tts
     TASK_HANDLERS[TYPE_MIX] = _handle_mix
@@ -78,15 +78,15 @@ def _register_handlers():
 
 
 def _handle_parse(task, ctx):
-    from src.llm_parser import process_chapter_parse
-    from src import library
+    from src.pipeline.llm_parser import process_chapter_parse
+    from src.domain import library
     chapter_dir = library.get_chapter_dir(task.novel_id, task.chapter_id)
     process_chapter_parse(chapter_dir, progress_cb=ctx.progress, should_cancel=ctx.should_cancel)
 
 
 def _handle_tts(task, ctx):
-    from src.tts_engine import process_chapter_tts
-    from src import library
+    from src.pipeline.tts_engine import process_chapter_tts
+    from src.domain import library
     chapter_dir = library.get_chapter_dir(task.novel_id, task.chapter_id)
     t0 = time.time()
     timeline_path = process_chapter_tts(chapter_dir, progress_cb=ctx.progress, should_cancel=ctx.should_cancel)
@@ -102,15 +102,15 @@ def _record_tts_timing(timeline_path: str, elapsed_seconds: float):
             timeline = json.load(f)
         newly_synthesized = sum(1 for item in timeline.get("items", []) if not item.get("cached"))
         if newly_synthesized > 0:
-            from src.preflight import update_tts_stats
+            from src.runtime.preflight import update_tts_stats
             update_tts_stats(elapsed_seconds / newly_synthesized)
     except (OSError, json.JSONDecodeError, KeyError):
         pass
 
 
 def _handle_mix(task, ctx):
-    from src.audio_mixer import mix_chapter
-    from src import library
+    from src.pipeline.audio_mixer import mix_chapter
+    from src.domain import library
     chapter_dir = library.get_chapter_dir(task.novel_id, task.chapter_id)
     params = task.params or {}
     # with_assets 显式为真时才关掉 voice_only；不传参数时保持 None，让
@@ -124,7 +124,7 @@ def _handle_precompute_embedding(task, ctx):
     """以前丢弃了 precompute_embedding 的返回值 {"ok","error"}：环境未就绪、超时、
     角色未注册、子进程非零退出全被记成任务「成功」，缺 role_id 还是静默空操作——用户看到
     任务变绿但 embedding 没变。现在这些都会让任务失败并带上原因。"""
-    from src.roles import precompute_embedding, embedding_precondition_error, load_manifest
+    from src.domain.roles import precompute_embedding, embedding_precondition_error, load_manifest
     role_id = (task.params or {}).get("role_id")
     if not role_id:
         raise ValueError("precompute_embedding 任务缺少 params.role_id")
@@ -152,7 +152,7 @@ def _handle_precompute_embedding(task, ctx):
 def _handle_asset_gen(task, ctx):
     """素材库增量生成：不绑定小说/章节（跟 precompute_embedding 一样是全局任务），
     参数走 task.params：kinds / only / force。"""
-    from src.asset_gen import generate_assets
+    from src.pipeline.asset_gen import generate_assets
     p = task.params or {}
     summary = generate_assets(
         kinds=p.get("kinds"),
@@ -243,7 +243,7 @@ class TaskQueue:
         self.config = config or load_global_config()
         self.tasks_dir = tasks_dir or os.path.join(PROJECT_ROOT, ".cache", "tasks")
         if not library_dir:
-            from src.library import library_root  # 延迟导入，避免循环
+            from src.domain.library import library_root  # 延迟导入，避免循环
             library_dir = library_root()
         self.library_dir = library_dir
 
@@ -571,7 +571,7 @@ class TaskQueue:
             task.finished_at = time.strftime("%Y-%m-%d %H:%M:%S")
 
         except Exception as e:
-            from src.pipeline_errors import TaskCancelled
+            from src.runtime.pipeline_errors import TaskCancelled
             if isinstance(e, TaskCancelled):
                 task.state = STATE_CANCELLED
                 task.finished_at = time.strftime("%Y-%m-%d %H:%M:%S")

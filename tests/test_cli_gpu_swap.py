@@ -3,13 +3,13 @@
 _prompt_yes_no / _release_tts_daemon_if_running / _confirm_batch_llm_swap。
 
 全程 monkeypatch 掉 sys.stdin.isatty、input()、src.tools.gpu_arbiter 与
-src.tts_daemon.IndexTTSDaemon 的方法——不读真实终端输入，不碰真实
+src.pipeline.tts_daemon.IndexTTSDaemon 的方法——不读真实终端输入，不碰真实
 llama-server/常驻 TTS 服务/GPU，也不对 chapters/ 等共享目录做任何操作。
 """
 import pytest
 from src import cli
 from src.tools import gpu_arbiter
-from src.tts_daemon import IndexTTSDaemon
+from src.pipeline.tts_daemon import IndexTTSDaemon
 
 
 @pytest.fixture(autouse=True)

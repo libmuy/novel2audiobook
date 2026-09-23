@@ -1,8 +1,8 @@
 # 音效 / 背景音本地生成环境搭建（RX 7900XTX / ROCm）
 
 本项目的 BGM（环境音）与音效由本地模型批量生成，产物落在 `data/assets/ambience/`、
-`data/assets/sfx/` 下供 `./run.sh assets gen` 增量生成、`src/audio_mixer.py`
-直接使用（见 `src/asset_gen.py` 的模块说明）。两类素材各用一个专门模型，均运行在
+`data/assets/sfx/` 下供 `./run.sh assets gen` 增量生成、`src/pipeline/audio_mixer.py`
+直接使用（见 `src/pipeline/asset_gen.py` 的模块说明）。两类素材各用一个专门模型，均运行在
 **独立于项目主 venv 的隔离环境**中，理由与 `docs/indextts_setup.md` 相同：
 依赖版本（尤其 `torch` 的 ROCm 构建）互相冲突，通过子进程 + `jobs.json` ⇄
 `result.json` 协议调用。
@@ -133,7 +133,7 @@ uv 判断"已有同名包满足未锁版本的依赖"就直接跳过，根本不
 ROCm 版 PyTorch 复用 CUDA 的设备命名空间（`torch.cuda.*` API 在 ROCm 构建下就是
 指向 HIP 后端），`AceStepHandler.initialize_service(device="cuda")` /
 `LLMHandler.initialize(device="cuda")` 不需要改成别的字符串，这与
-`src/tools/indextts_infer.py`、`src/tts_engine.py` 里的既有做法一致。
+`src/tools/indextts_infer.py`、`src/pipeline/tts_engine.py` 里的既有做法一致。
 
 ### 4. 首次运行会下载模型，超时要给够
 `src/tools/acestep_infer.py` 只负责推理，不负责下载——权重必须在步骤 7 里**预先**

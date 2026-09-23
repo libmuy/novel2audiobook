@@ -1,11 +1,11 @@
 """
-测试 src/roles.py 模块的各个函数
+测试 src/domain/roles.py 模块的各个函数
 """
 import os
 import json
 import shutil
 import pytest
-from src import roles
+from src.domain import roles
 
 
 class TestLoadManifest:

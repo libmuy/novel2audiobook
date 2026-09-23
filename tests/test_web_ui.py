@@ -37,7 +37,7 @@ sys.path.insert(0, PROJECT_ROOT)
 import uvicorn
 from src.api.app import create_app
 from src.api import deps
-from src.task_queue import TaskQueue
+from src.runtime.task_queue import TaskQueue
 
 
 # ---------------------------------------------------------------------------
@@ -80,16 +80,16 @@ def server(tmp_path_factory):
 
     # Monkeypatch PROJECT_ROOT so all routers resolve paths into tmp
     import src.utils
-    import src.derived_index
-    import src.preflight
-    import src.task_queue as tq_mod
+    import src.domain.derived_index
+    import src.runtime.preflight
+    import src.runtime.task_queue as tq_mod
 
     _orig_root = getattr(src.utils, "PROJECT_ROOT", None)
-    _orig_di_root = getattr(src.derived_index, "PROJECT_ROOT", None)
+    _orig_di_root = getattr(src.domain.derived_index, "PROJECT_ROOT", None)
     _orig_tq_root = getattr(tq_mod, "PROJECT_ROOT", None)
-    _orig_pf_root = getattr(src.preflight, "PROJECT_ROOT", None)
-    _orig_pf_stats = getattr(src.preflight, "TTS_STATS_PATH", None)
-    _orig_di_refs = getattr(src.derived_index, "ROLE_REFS_PATH", None)
+    _orig_pf_root = getattr(src.runtime.preflight, "PROJECT_ROOT", None)
+    _orig_pf_stats = getattr(src.runtime.preflight, "TTS_STATS_PATH", None)
+    _orig_di_refs = getattr(src.domain.derived_index, "ROLE_REFS_PATH", None)
 
     # Create src/web/static in tmp so static file mounting works
     web_static = tmp / "src" / "web" / "static"
@@ -100,11 +100,11 @@ def server(tmp_path_factory):
         shutil.copytree(real_static, web_static, dirs_exist_ok=True)
 
     src.utils.PROJECT_ROOT = str(tmp)
-    src.derived_index.PROJECT_ROOT = str(tmp)
-    src.derived_index.ROLE_REFS_PATH = str(tmp / "cache" / "index" / "role_refs.json")
+    src.domain.derived_index.PROJECT_ROOT = str(tmp)
+    src.domain.derived_index.ROLE_REFS_PATH = str(tmp / "cache" / "index" / "role_refs.json")
     tq_mod.PROJECT_ROOT = str(tmp)
-    src.preflight.PROJECT_ROOT = str(tmp)
-    src.preflight.TTS_STATS_PATH = str(tmp / "tts_stats.json")
+    src.runtime.preflight.PROJECT_ROOT = str(tmp)
+    src.runtime.preflight.TTS_STATS_PATH = str(tmp / "tts_stats.json")
 
     config = {
         "server": {
@@ -142,15 +142,15 @@ def server(tmp_path_factory):
     if _orig_root is not None:
         src.utils.PROJECT_ROOT = _orig_root
     if _orig_di_root is not None:
-        src.derived_index.PROJECT_ROOT = _orig_di_root
+        src.domain.derived_index.PROJECT_ROOT = _orig_di_root
     if _orig_di_refs is not None:
-        src.derived_index.ROLE_REFS_PATH = _orig_di_refs
+        src.domain.derived_index.ROLE_REFS_PATH = _orig_di_refs
     if _orig_tq_root is not None:
         tq_mod.PROJECT_ROOT = _orig_tq_root
     if _orig_pf_root is not None:
-        src.preflight.PROJECT_ROOT = _orig_pf_root
+        src.runtime.preflight.PROJECT_ROOT = _orig_pf_root
     if _orig_pf_stats is not None:
-        src.preflight.TTS_STATS_PATH = _orig_pf_stats
+        src.runtime.preflight.TTS_STATS_PATH = _orig_pf_stats
 
 
 @pytest.fixture(scope="session")
@@ -181,7 +181,7 @@ class TestMeta:
         """Sanity: all project imports resolve."""
         from src.api.app import create_app
         from src.api import deps
-        from src.task_queue import TaskQueue
+        from src.runtime.task_queue import TaskQueue
         assert create_app is not None
 
 
@@ -1215,7 +1215,7 @@ class TestAssetEngineDrift:
         with open(os.path.join(d, "e2e_drift.wav"), "wb") as f:
             f.write(b"RIFFfake")
         row = [s for s in httpx.get(f"{base}/api/asset-specs?kind=sfx").json()["specs"] if s["name"] == "e2e_drift"][0]
-        from src import asset_gen
+        from src.pipeline import asset_gen
         spec_hash = asset_gen.compute_spec_hash(row)
         with open(os.path.join(d, "e2e_drift.meta.json"), "w", encoding="utf-8") as f:
             _json.dump({"name": "e2e_drift", "kind": "sfx", "spec_hash": spec_hash,

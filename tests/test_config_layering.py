@@ -14,7 +14,8 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
-from src import library, utils
+from src.domain import library
+from src import utils
 from src.utils import load_global_config, resolve_optional_path
 
 
@@ -111,7 +112,7 @@ class TestLocalOverlay:
 def api(project_root):
     from src.api.app import create_app
     from src.api import deps
-    from src.task_queue import TaskQueue
+    from src.runtime.task_queue import TaskQueue
 
     os.makedirs(project_root / "library")
     os.makedirs(project_root / "tasks")
@@ -202,8 +203,8 @@ class TestLibraryRoot:
 
     def test_task_queue_and_preflight_follow_configured_root(self, project_root):
         """回归：这两处以前自己拼 PROJECT_ROOT/library，配了 library_root 会与 library.py 不一致"""
-        from src.task_queue import TaskQueue
-        from src import preflight
+        from src.runtime.task_queue import TaskQueue
+        from src.runtime import preflight
         _write(project_root / "config" / "global_config.yaml", "server:\n  library_root: books\n")
         q = TaskQueue(config={"server": {}}, tasks_dir=str(project_root / "tasks"))
         assert q.library_dir == str(project_root / "books")
@@ -214,7 +215,7 @@ class TestLibraryRoot:
 
     def test_role_refs_work_with_non_default_library_dir_name(self, project_root):
         """回归：build_role_refs 以前靠路径里字面的 "library" 段取 novel_id，库目录改名就失效"""
-        from src import derived_index
+        from src.domain import derived_index
         ch = project_root / "books" / "nv_a" / "chapters" / "ch_0001"
         ch.mkdir(parents=True)
         (ch / "script_final.json").write_text(json.dumps([{"speaker": "su_yan", "text": "x"}]), encoding="utf-8")
@@ -223,7 +224,7 @@ class TestLibraryRoot:
         assert refs["roles"]["su_yan"]["segment_count"] == 1
 
     def test_role_refs_not_fooled_by_library_segment_earlier_in_path(self, tmp_path):
-        from src import derived_index
+        from src.domain import derived_index
         lib = tmp_path / "library" / "sub" / "books"  # 路径里有个更靠前的 "library"
         ch = lib / "nv_a" / "chapters" / "ch_0001"
         ch.mkdir(parents=True)
@@ -261,25 +262,25 @@ class TestWebuiBind:
 
 class TestNoMachineSpecificFallback:
     def test_index_tts_backend_unavailable_without_config(self):
-        from src.tts_engine import IndexTTSBackend
+        from src.pipeline.tts_engine import IndexTTSBackend
         b = IndexTTSBackend({})
         assert b.python_bin is None and b.checkpoints_dir is None
         assert b.is_available() is False
 
     def test_index_tts_backend_reads_configured_paths(self, tmp_path):
-        from src.tts_engine import IndexTTSBackend
+        from src.pipeline.tts_engine import IndexTTSBackend
         b = IndexTTSBackend({"tts": {"index_tts": {"python_bin": "/x/python", "checkpoints_dir": "/x/ckpt"}}})
         assert b.python_bin == "/x/python" and b.checkpoints_dir == "/x/ckpt"
         assert b.is_available() is False  # 路径不存在
 
     def test_daemon_unavailable_without_config(self):
-        from src.tts_daemon import IndexTTSDaemon
+        from src.pipeline.tts_daemon import IndexTTSDaemon
         d = IndexTTSDaemon({})
         assert d.python_bin is None and d.checkpoints_dir is None
         assert d.is_available() is False
 
     def test_embedding_precondition_reports_not_ready_without_config(self):
-        from src import roles
+        from src.domain import roles
         err = roles.embedding_precondition_error("r1", {"roles": {"r1": {}}}, config={})
         assert err and "未就绪" in err
 

@@ -12,7 +12,7 @@ import threading
 
 from ruamel.yaml.comments import CommentedMap
 
-from src.asset_specs_store import round_trip_yaml
+from src.pipeline.asset_specs_store import round_trip_yaml
 
 CONFIG_LOCK = threading.Lock()
 

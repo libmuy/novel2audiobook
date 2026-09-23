@@ -1,11 +1,11 @@
 """
-测试 src/preflight.py 批量预检模块
+测试 src/runtime/preflight.py 批量预检模块
 """
 import json
 import os
 
 import pytest
-from src import preflight
+from src.runtime import preflight
 
 
 @pytest.fixture
@@ -151,7 +151,7 @@ class TestTTSStats:
 
 class TestPreflightAssets:
     def _fake_rows(self, monkeypatch, rows):
-        from src import asset_gen
+        from src.pipeline import asset_gen
         monkeypatch.setattr(asset_gen, "get_asset_status_list", lambda *a, **k: rows)
 
     ROWS = [

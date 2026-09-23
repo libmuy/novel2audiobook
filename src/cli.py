@@ -12,16 +12,16 @@ from src.utils import (
     get_chapter_dir, normalize_chapter_id, get_project_root, load_global_config,
     roles_dir as default_roles_dir,
 )
-from src.status_tracker import print_status_table, get_novel_status_summary
-from src.llm_parser import process_chapter_parse, HeuristicBackend
-from src.tts_engine import process_chapter_tts, generate_tts_incremental, MockTTSBackend
-from src.audio_mixer import mix_chapter
-from src.asset_gen import (
+from src.domain.status_tracker import print_status_table, get_novel_status_summary
+from src.pipeline.llm_parser import process_chapter_parse, HeuristicBackend
+from src.pipeline.tts_engine import process_chapter_tts, generate_tts_incremental, MockTTSBackend
+from src.pipeline.audio_mixer import mix_chapter
+from src.pipeline.asset_gen import (
     generate_assets, load_asset_specs, print_asset_status_table,
     MockAudioGenBackend, VALID_KINDS, ASSET_BACKENDS, build_asset_gen_backend,
 )
-from src.third_party import REPOS as THIRD_PARTY_REPOS, print_status_table as print_repos_status_table, setup as setup_repos
-from src import library
+from src.runtime.third_party import REPOS as THIRD_PARTY_REPOS, print_status_table as print_repos_status_table, setup as setup_repos
+from src.domain import library
 
 
 def _make_isolated_test_workspace() -> tuple:
@@ -76,7 +76,7 @@ def run_test_module(module_name: str):
             print("[Test LLM] 解析 raw.txt -> script_draft.json（启发式解析器）...")
             with open(os.path.join(chapter_dir, "raw.txt"), "r", encoding="utf-8") as f:
                 text = f.read()
-            from src.llm_parser import parse_text_to_json
+            from src.pipeline.llm_parser import parse_text_to_json
             import json
             script_draft = parse_text_to_json(text, backend=HeuristicBackend(), roles_dir=roles_dir)
             draft_path = os.path.join(chapter_dir, "script_draft.json")
@@ -173,7 +173,7 @@ def _release_tts_daemon_if_running(auto_yes: bool) -> bool:
     if sys.stdin.isatty() and not auto_yes:
         if not _prompt_yes_no("常驻 TTS 服务正占用显存，需要先释放才能运行 parse，是否释放？"):
             return False
-    from src.tts_daemon import IndexTTSDaemon
+    from src.pipeline.tts_daemon import IndexTTSDaemon
     result = IndexTTSDaemon().shutdown()
     if not result.get("ok"):
         print(f"释放常驻 TTS 服务失败: {result.get('error')}")
@@ -335,7 +335,7 @@ def main():
                 status_str = ", ".join(f"{k}: {v}" for k, v in sorted(summary["by_status"].items()))
                 print(f"状态分布: {status_str}")
             print()
-            from src.status_tracker import print_status_table
+            from src.domain.status_tracker import print_status_table
             print_status_table(library.get_chapters_dir(args.novel))
         else:
             novels = library.list_novels()
@@ -417,7 +417,7 @@ def main():
 
     elif args.command == "tts-serve":
         from src.tools import gpu_arbiter
-        from src.tts_daemon import IndexTTSDaemon
+        from src.pipeline.tts_daemon import IndexTTSDaemon
         daemon = IndexTTSDaemon()
 
         if args.action == "status":

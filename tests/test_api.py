@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from src.api.app import create_app
 from src.api import deps
-from src.task_queue import TaskQueue
+from src.runtime.task_queue import TaskQueue
 
 
 @pytest.fixture
@@ -26,15 +26,15 @@ def client(tmp_path, monkeypatch):
     import src.utils
     monkeypatch.setattr(src.utils, "PROJECT_ROOT", str(tmp_path))
 
-    import src.derived_index
-    monkeypatch.setattr(src.derived_index, "PROJECT_ROOT", str(tmp_path))
-    monkeypatch.setattr(src.derived_index, "ROLE_REFS_PATH",
+    import src.domain.derived_index
+    monkeypatch.setattr(src.domain.derived_index, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setattr(src.domain.derived_index, "ROLE_REFS_PATH",
                         str(tmp_path / "cache" / "index" / "role_refs.json"))
 
-    import src.task_queue as tq_mod
+    import src.runtime.task_queue as tq_mod
     monkeypatch.setattr(tq_mod, "PROJECT_ROOT", str(tmp_path))
 
-    import src.preflight as preflight_mod
+    import src.runtime.preflight as preflight_mod
     monkeypatch.setattr(preflight_mod, "PROJECT_ROOT", str(tmp_path))
     monkeypatch.setattr(preflight_mod, "TTS_STATS_PATH", str(tmp_path / "tts_stats.json"))
 

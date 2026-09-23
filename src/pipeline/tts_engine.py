@@ -22,9 +22,9 @@ import tempfile
 from src.utils import (
     calculate_md5, update_chapter_status, load_global_config, resolve_path, resolve_optional_path,
 )
-from src import roles as roles_mod
-from src.pipeline_errors import TaskCancelled
-from src.killable_proc import kill_on_cancel, terminate_process_group
+from src.domain import roles as roles_mod
+from src.runtime.pipeline_errors import TaskCancelled
+from src.runtime.killable_proc import kill_on_cancel, terminate_process_group
 
 logger = logging.getLogger(__name__)
 

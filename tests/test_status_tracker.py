@@ -1,11 +1,11 @@
 """
-测试 src/status_tracker.py 模块的各个函数
+测试 src/domain/status_tracker.py 模块的各个函数
 """
 import os
 import json
 import time
 import pytest
-from src import status_tracker
+from src.domain import status_tracker
 
 
 class TestGetAllChaptersStatus:
@@ -228,7 +228,7 @@ class TestGetNovelStatusSummary:
     """get_novel_status_summary 对多小说树级聚合的测试"""
 
     def test_empty_novel_has_zero_total(self, tmp_path):
-        from src import library
+        from src.domain import library
         lib = str(tmp_path / "library")
         nid = library.create_novel("空书", library_dir=lib)
 
@@ -239,7 +239,7 @@ class TestGetNovelStatusSummary:
         assert summary["chapters"] == []
 
     def test_aggregates_by_status(self, tmp_path):
-        from src import library
+        from src.domain import library
         lib = str(tmp_path / "library")
         nid = library.create_novel("聚合测试", library_dir=lib)
         library.add_chapter(nid, "第一章", "正文一", library_dir=lib)
@@ -252,7 +252,7 @@ class TestGetNovelStatusSummary:
         assert {c["chapter_id"] for c in summary["chapters"]} == {"ch_0001", "ch_0002"}
 
     def test_only_counts_this_novels_chapters(self, tmp_path):
-        from src import library
+        from src.domain import library
         lib = str(tmp_path / "library")
         nid_a = library.create_novel("小说甲", library_dir=lib)
         nid_b = library.create_novel("小说乙", library_dir=lib)

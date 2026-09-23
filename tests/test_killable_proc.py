@@ -1,11 +1,11 @@
-"""src/killable_proc.py：进程组终止（TTS 与素材生成共用）"""
+"""src/runtime/killable_proc.py：进程组终止（TTS 与素材生成共用）"""
 import os
 import signal
 import subprocess
 
 import pytest
 
-from src import killable_proc
+from src.runtime import killable_proc
 
 
 class FakeProc:

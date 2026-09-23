@@ -1,10 +1,12 @@
 """
-测试 src/llm_parser.py 模块的各个函数
+测试 src/pipeline/llm_parser.py 模块的各个函数
 """
 import os
 import json
 import pytest
-from src import llm_parser, roles as roles_mod, utils, asset_gen
+from src.pipeline import llm_parser, asset_gen
+from src.domain import roles as roles_mod
+from src import utils
 
 
 class TestSplitParagraphs:

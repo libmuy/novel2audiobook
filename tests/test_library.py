@@ -1,11 +1,11 @@
 """
-src/library.py 单元测试
+src/domain/library.py 单元测试
 """
 import os
 import pytest
 import yaml
 
-from src.library import (
+from src.domain.library import (
     create_novel, load_novel, save_novel, delete_novel, list_novels,
     slugify_novel_id, validate_tree, find_node, tree_insert, tree_move,
     tree_rename, tree_delete, iter_chapters, alloc_chapter_id,

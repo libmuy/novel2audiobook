@@ -19,7 +19,7 @@ def compute_fingerprint(library_dir: str = None) -> str:
     (相对路径, mtime, size) 三元组排序后拼起来算 md5。
     只 stat 不读内容——几千个文件也是毫秒级。"""
     if library_dir is None:
-        from src.library import library_root  # 延迟导入：library 依赖 status_tracker，避免循环
+        from src.domain.library import library_root  # 延迟导入：library 依赖 status_tracker，避免循环
         library_dir = library_root()
 
     pattern = os.path.join(library_dir, "*", "chapters", "*", "script_final.json")
@@ -45,7 +45,7 @@ def build_role_refs(library_dir: str = None) -> dict:
      "roles": {"su_yan": {"novels": ["nv_xianni"], "segment_count": 87,
                           "by_novel": {"nv_xianni": 87}}}}"""
     if library_dir is None:
-        from src.library import library_root  # 延迟导入：library 依赖 status_tracker，避免循环
+        from src.domain.library import library_root  # 延迟导入：library 依赖 status_tracker，避免循环
         library_dir = library_root()
 
     fingerprint = compute_fingerprint(library_dir)

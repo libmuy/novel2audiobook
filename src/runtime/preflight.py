@@ -8,7 +8,7 @@ import json
 import os
 
 from src.utils import PROJECT_ROOT, load_global_config
-from src import status_tracker
+from src.domain import status_tracker
 
 
 TTS_STATS_PATH = os.path.join(PROJECT_ROOT, ".cache", "tts_stats.json")
@@ -24,7 +24,7 @@ def preflight(task_type: str, novel_id: str, chapter_ids: list = None,
      "invalidated_cache_count": 0,
      "estimated_gpu_minutes": None}"""
     if library_dir is None:
-        from src.library import library_root  # 延迟导入，避免循环
+        from src.domain.library import library_root  # 延迟导入，避免循环
         library_dir = library_root()
 
     chapters_dir = os.path.join(library_dir, novel_id, "chapters")
@@ -68,7 +68,7 @@ def preflight_assets(params: dict = None) -> dict:
     （summary 三个计数不变），现有的通用预检弹窗不用改；逐条明细放在 assets 里，
     chapters 留空。状态映射复用 asset_gen.get_asset_status_list，不重写判定逻辑。
     estimated_gpu_minutes 恒为 None——不编造没有历史数据的耗时。"""
-    from src import asset_gen
+    from src.pipeline import asset_gen
     params = params or {}
     kinds = params.get("kinds")
     only = set(params["only"]) if params.get("only") else None

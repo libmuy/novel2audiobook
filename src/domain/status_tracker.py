@@ -160,7 +160,7 @@ def print_status_table(chapters_dir: str = "chapters"):
 
 def get_novel_status_summary(novel_id: str, library_dir: str = None) -> dict:
     """返回某本小说的章节状态汇总。"""
-    from src import library
+    from src.domain import library
     chapters_dir = library.get_chapters_dir(novel_id, library_dir)
     chapters = get_all_chapters_status(chapters_dir)
     by_status = {}

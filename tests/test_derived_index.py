@@ -1,11 +1,11 @@
 """
-测试 src/derived_index.py 角色引用统计索引
+测试 src/domain/derived_index.py 角色引用统计索引
 """
 import json
 import os
 
 import pytest
-from src import derived_index
+from src.domain import derived_index
 
 
 @pytest.fixture

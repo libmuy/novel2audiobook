@@ -5,7 +5,8 @@ import os
 
 import pytest
 
-from src import asset_gen, preflight
+from src.pipeline import asset_gen
+from src.runtime import preflight
 
 SPECS = {
     "ambience": {"rain": {"description": "", "prompt": "rain", "negative_prompt": "", "duration_sec": 1.0, "seed": 1}},

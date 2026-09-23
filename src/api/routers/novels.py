@@ -1,6 +1,6 @@
 """小说路由"""
 from fastapi import APIRouter, HTTPException
-from src import library
+from src.domain import library
 from src.api.schemas import NovelCreate, NovelUpdate, NodeCreate, NodeUpdate, NodeReorder
 import os
 
@@ -100,7 +100,7 @@ def get_chapter_stats(nid: str):
 
 @router.get("/{nid}/tree")
 def get_novel_tree(nid: str):
-    from src.status_tracker import get_novel_status_summary
+    from src.domain.status_tracker import get_novel_status_summary
     try:
         novel = library.load_novel(nid)
     except FileNotFoundError:

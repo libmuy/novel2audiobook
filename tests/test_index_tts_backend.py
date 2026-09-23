@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-from src import tts_engine
+from src.pipeline import tts_engine
 
 
 class FakePopen:
@@ -176,7 +176,7 @@ class TestCancel:
     """任务取消 → CancelScope 里登记的钩子杀掉子进程组，且发生在仲裁器退出之前"""
 
     def _run_in_thread(self, backend, jobs, scope):
-        from src import cancel_scope
+        from src.runtime import cancel_scope
         out = {}
 
         def target():
@@ -191,7 +191,7 @@ class TestCancel:
         return t, out
 
     def test_cancel_while_the_child_runs_kills_it_inside_the_arbiter_block(self, env, tmp_path):
-        from src.cancel_scope import CancelScope
+        from src.runtime.cancel_scope import CancelScope
         backend, events, make_jobs = env
         FakePopen.behavior, FakePopen.partial_ids = "block", ("a",)
         FakePopen.started = threading.Event()
@@ -208,7 +208,7 @@ class TestCancel:
 
     def test_scope_cancelled_before_popen_still_kills_the_child(self, env):
         """取消落在任务进入 RUNNING 与 Popen 之间：登记被拒，后端就地杀掉刚起的子进程"""
-        from src.cancel_scope import CancelScope
+        from src.runtime.cancel_scope import CancelScope
         backend, events, make_jobs = env
         FakePopen.behavior = "block"
         FakePopen.started = None
@@ -222,8 +222,8 @@ class TestCancel:
 
     def test_hook_is_gone_after_a_normal_run(self, env):
         """正常跑完后再取消不能去碰早已结束的子进程（pid 可能已被复用）"""
-        from src import cancel_scope
-        from src.cancel_scope import CancelScope
+        from src.runtime import cancel_scope
+        from src.runtime.cancel_scope import CancelScope
         backend, events, make_jobs = env
         scope = CancelScope()
         cancel_scope.activate(scope)

@@ -7,7 +7,7 @@ LLM 剧本解析模块
 - HeuristicBackend：不依赖网络的规则版回退实现，在 LLM 不可达/解析失败时兜底，
   也用于 `cli.py test` 自检（保证自检不依赖外部服务）。
 
-说话人 ID 统一在 process_chapter_parse 中经 src.roles 归一化：
+说话人 ID 统一在 process_chapter_parse 中经 src.domain.roles 归一化：
 精确/别名/拼音归一匹配已注册角色 -> 未命中则留空（speaker: null），由人工后续指派。
 """
 import os
@@ -18,8 +18,8 @@ import logging
 import requests
 
 from src.utils import update_chapter_status, load_global_config, list_available_assets
-from src import roles as roles_mod
-from src.pipeline_errors import TaskCancelled
+from src.domain import roles as roles_mod
+from src.runtime.pipeline_errors import TaskCancelled
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +194,7 @@ class QwenLLMBackend:
         role_table = _render_role_table(manifest)
 
         try:
-            from src.asset_gen import get_asset_descriptions
+            from src.pipeline.asset_gen import get_asset_descriptions
             descriptions = get_asset_descriptions()
         except Exception as e:  # noqa: BLE001 - spec 文件缺失/格式错误不应影响解析主流程
             logger.warning("加载素材中文描述失败，词表退化为裸名字: %s", e)

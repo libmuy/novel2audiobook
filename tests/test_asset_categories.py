@@ -7,8 +7,8 @@ from fastapi.testclient import TestClient
 
 from src.api.app import create_app
 from src.api import deps
-from src.task_queue import TaskQueue
-from src import asset_gen, asset_specs_store as store
+from src.runtime.task_queue import TaskQueue
+from src.pipeline import asset_gen, asset_specs_store as store
 
 REAL_SPEC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                          "data", "assets", "asset_specs.yaml")

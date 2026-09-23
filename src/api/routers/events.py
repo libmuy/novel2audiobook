@@ -5,7 +5,7 @@ import time
 from fastapi import APIRouter
 from starlette.responses import StreamingResponse
 from src.api.deps import get_queue
-from src import monitor
+from src.runtime import monitor
 
 router = APIRouter(tags=["events"])
 

@@ -152,7 +152,7 @@ def _build_scene_bgm_track(items: list, total_duration_ms: int, chapter_dir: str
         bgm_file = os.path.join(assets_dir(), "ambience", f"{bgm_name}.wav")
         if not os.path.exists(bgm_file):
             # mix 是读路径，缺素材不该在这里静默补一份占位音写进共享的 assets/
-            # 目录（那是 src/asset_gen.py 的职责）；跳过这段场景音即可，
+            # 目录（那是 src/pipeline/asset_gen.py 的职责）；跳过这段场景音即可，
             # 不影响人声。
             logger.warning("场景 [%d, %d) 引用的环境音 %r 不存在（%s），跳过该段环境音",
                             start_ms, end_ms, bgm_name, bgm_file)

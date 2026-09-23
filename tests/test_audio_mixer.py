@@ -1,5 +1,5 @@
 """
-测试 src/audio_mixer.py 模块的各个函数
+测试 src/pipeline/audio_mixer.py 模块的各个函数
 """
 import os
 import json
@@ -8,7 +8,8 @@ import struct
 import math
 import pytest
 from pydub import AudioSegment
-from src import audio_mixer, utils
+from src.pipeline import audio_mixer
+from src import utils
 from tests.conftest import create_sample_wav_file
 
 

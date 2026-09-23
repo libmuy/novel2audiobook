@@ -117,7 +117,7 @@ RX 7900XTX 共 24GB 显存，`llama-server`（Qwen3.8-27B-UD-Q4_K_M）常驻占�
 留给 IndexTTS 的空间不足其所需的 ~6GB。`src/tts_engine.IndexTTSBackend.synthesize_batch()`
 通过 `src/tools/gpu_arbiter.py` 的 `LlmSuspendedForGpu` 上下文管理器自动处理（本节是
 GPU 换手机制的权威说明，`audiogen_setup.md` 的 ACE-Step 复用同一套；旧名
-`LlmSuspendedForTts` 保留为别名，`src/tts_engine.py` 仍在用）：
+`LlmSuspendedForTts` 保留为别名，`src/pipeline/tts_engine.py` 仍在用）：
 
 1. 批量合成前：若 llama-server 正在跑，发送 SIGTERM 停止它；
 2. 合成结束（无论成功/失败/超时）：若之前是运行状态，用

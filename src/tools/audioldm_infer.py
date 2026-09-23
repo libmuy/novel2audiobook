@@ -3,7 +3,7 @@
 AudioLDM 批量推理脚本（环境音 ambience，替换 ACE-Step 1.5）。
 
 运行环境：独立的 audioldm venv，不与项目主 venv/src/tools/acestep 环境混用
-（理由同 docs/indextts_setup.md）。由 src/asset_gen.py 的 AudioLDMBackend 通过
+（理由同 docs/indextts_setup.md）。由 src/pipeline/asset_gen.py 的 AudioLDMBackend 通过
 子进程调用，协议与 src/tools/tangoflux_infer.py 一致（单次加载、批量循环、
 jobs.json -> result.json）。
 

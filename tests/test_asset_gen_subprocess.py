@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-from src import asset_gen
+from src.pipeline import asset_gen
 
 
 class FakePopen:
@@ -119,7 +119,7 @@ class TestGenerateBatch:
 
 class TestCancel:
     def _run(self, backend, tmp_path, scope):
-        from src import cancel_scope
+        from src.runtime import cancel_scope
         out = {}
 
         def target():
@@ -134,7 +134,7 @@ class TestCancel:
         return t, out
 
     def test_cancel_while_the_child_runs_kills_it_inside_the_arbiter_block(self, env, tmp_path):
-        from src.cancel_scope import CancelScope
+        from src.runtime.cancel_scope import CancelScope
         backend, events = env
         FakePopen.behavior, FakePopen.started = "block", threading.Event()
         scope = CancelScope()
@@ -147,7 +147,7 @@ class TestCancel:
         assert out["results"] == {"a": False}
 
     def test_scope_cancelled_before_popen_still_kills_the_child(self, env, tmp_path):
-        from src.cancel_scope import CancelScope
+        from src.runtime.cancel_scope import CancelScope
         backend, events = env
         FakePopen.behavior = "block"
         scope = CancelScope()
@@ -162,7 +162,7 @@ class TestGenerateAssetsCancel:
     """取消后不能给未完成的条目铺占位噪音并写入真实 spec_hash（那会把「取消」变成「成功」）"""
 
     def test_cancel_after_the_batch_writes_no_placeholder_and_no_meta(self, tmp_path):
-        from src.pipeline_errors import TaskCancelled
+        from src.runtime.pipeline_errors import TaskCancelled
         specs = {"ambience": {}, "sfx": {"a": {"description": "", "prompt": "p", "negative_prompt": "",
                                                "duration_sec": 1.0, "seed": 1}}}
 

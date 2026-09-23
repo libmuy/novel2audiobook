@@ -5,11 +5,12 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from src import asset_gen, task_queue
+from src.pipeline import asset_gen
+from src.runtime import task_queue
 from src.api import deps
 from src.api.app import create_app
-from src.pipeline_errors import TaskCancelled
-from src.task_queue import TaskQueue, Task, TaskContext
+from src.runtime.pipeline_errors import TaskCancelled
+from src.runtime.task_queue import TaskQueue, Task, TaskContext
 
 
 @pytest.fixture

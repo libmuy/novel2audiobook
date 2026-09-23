@@ -3,7 +3,8 @@ import os
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
-from src import asset_gen, asset_specs_store as store, category_tree
+from src.pipeline import asset_gen, asset_specs_store as store
+from src.domain import category_tree
 from src.utils import assets_dir
 from src.api.schemas import AssetSpecCreate, AssetSpecUpdate, CategoryTreePut
 

@@ -3,9 +3,9 @@ import os
 import tempfile
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
-from src import roles, derived_index
+from src.domain import roles, derived_index
 from src.api.schemas import RoleCreate, RoleUpdate, CategoryTreePut
-from src import category_tree
+from src.domain import category_tree
 from src.utils import roles_dir
 
 router = APIRouter(tags=["roles"])

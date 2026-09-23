@@ -1,7 +1,7 @@
 """
 音效/背景音本地模型生成模块
 
-架构：与 src/tts_engine.py 同构——
+架构：与 src/pipeline/tts_engine.py 同构——
 - MockAudioGenBackend：程序化占位音频，无外部依赖，供 `cli.py test` 与无 GPU 环境使用。
 - AceStepBackend（ambience/BGM，GPU）、TangoFluxBackend（sfx，CPU）：通过子进程
   调用独立部署的推理环境（各自独立 venv + jobs.json -> result.json 协议，见
@@ -14,7 +14,7 @@
 
 素材以 data/assets/asset_specs.yaml 为唯一真相源（prompt/负向提示/时长/种子），按影响
 生成结果的字段计算 spec_hash 做增量生成缓存；结果落到 data/assets/ambience/、data/assets/sfx/
-下的具名 24kHz 单声道 wav（src/audio_mixer.py 直接可用）及同名 .meta.json 旁挂文件
+下的具名 24kHz 单声道 wav（src/pipeline/audio_mixer.py 直接可用）及同名 .meta.json 旁挂文件
 （记录生成溯源：引擎/是否回退/生成时间等，list_available_assets() 只 glob *.wav，
 不会把 meta 文件当成素材）。
 
@@ -35,7 +35,7 @@ import yaml
 from pydub import AudioSegment
 
 from src.utils import calculate_md5, load_global_config, resolve_path, assets_dir as default_assets_dir
-from src.killable_proc import kill_on_cancel, terminate_process_group
+from src.runtime.killable_proc import kill_on_cancel, terminate_process_group
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ def load_asset_specs(spec_path: str = None) -> dict:
     if spec_path:
         path = resolve_path(spec_path)
     else:
-        from src.asset_specs_store import spec_file_path
+        from src.pipeline.asset_specs_store import spec_file_path
         path = spec_file_path()
     specs = {kind: {} for kind in VALID_KINDS}
     if not os.path.exists(path):
@@ -102,7 +102,7 @@ def compute_spec_hash(spec: dict) -> str:
 def get_asset_descriptions(specs: dict = None) -> dict:
     """
     返回 {"sfx": {name: description}, "bgm": {name: description}}，供
-    src/llm_parser.py 渲染带中文说明的词表（键名对齐 list_available_assets() 的
+    src/pipeline/llm_parser.py 渲染带中文说明的词表（键名对齐 list_available_assets() 的
     "sfx"/"bgm" 命名，调用方无需关心本模块内部用 "ambience" 表示 BGM 目录）。
     """
     if specs is None:
@@ -515,7 +515,7 @@ def generate_assets(specs: dict = None, assets_dir: str = None, kinds: list = No
 
     def _check_cancel():
         if should_cancel is not None and should_cancel():
-            from src.pipeline_errors import TaskCancelled
+            from src.runtime.pipeline_errors import TaskCancelled
             raise TaskCancelled("素材生成已被取消")
 
     for kind, (out_dir, pending) in plans.items():
@@ -589,7 +589,7 @@ def generate_assets(specs: dict = None, assets_dir: str = None, kinds: list = No
 
 
 # --------------------------------------------------------------------------
-# 状态查看（供 `cli.py assets list` 使用，风格对齐 src/status_tracker.py）
+# 状态查看（供 `cli.py assets list` 使用，风格对齐 src/domain/status_tracker.py）
 # --------------------------------------------------------------------------
 
 def get_asset_status_list(specs: dict = None, assets_dir: str = None, config: dict = None) -> list:

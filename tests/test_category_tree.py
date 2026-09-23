@@ -1,6 +1,6 @@
-"""src/category_tree.py 纯函数测试（风格对齐 tests/test_library.py 的树操作测试）"""
+"""src/domain/category_tree.py 纯函数测试（风格对齐 tests/test_library.py 的树操作测试）"""
 import pytest
-from src import category_tree as ct
+from src.domain import category_tree as ct
 
 
 def _tree():

@@ -1,5 +1,5 @@
 """
-测试 src/task_queue.py 后台任务队列
+测试 src/runtime/task_queue.py 后台任务队列
 
 全部用 Mock 后端和 tmp_path，不碰真实 GPU。
 """
@@ -9,8 +9,8 @@ import threading
 import time
 
 import pytest
-from src import task_queue
-from src.task_queue import TaskQueue, Task, _generate_task_id
+from src.runtime import task_queue
+from src.runtime.task_queue import TaskQueue, Task, _generate_task_id
 
 
 @pytest.fixture
@@ -320,13 +320,13 @@ class TestHandleMix:
                     chapter_id=chapter_id, params=params)
 
     def _patch(self, monkeypatch, tmp_path):
-        """_handle_mix 里是函数内 `from src import library`/`from src.audio_mixer
+        """_handle_mix 里是函数内 `from src.domain import library`/`from src.pipeline.audio_mixer
         import mix_chapter`，要打到真实模块对象上，monkeypatch 局部导入绑定的
         名字（比如 task_queue.library）不会生效——那只是在 task_queue 模块的
         命名空间里添了个无关属性，函数体内重新 import 时还是会拿到原始模块。"""
         calls = []
-        import src.library as library_mod
-        import src.audio_mixer as am
+        import src.domain.library as library_mod
+        import src.pipeline.audio_mixer as am
         monkeypatch.setattr(library_mod, "get_chapter_dir",
                             lambda nid, cid: str(tmp_path / nid / cid))
         monkeypatch.setattr(am, "mix_chapter",
@@ -388,7 +388,7 @@ class TestPrecomputeEmbeddingHandler:
         return events
 
     def _patch_roles(self, monkeypatch, precondition=None, result=None):
-        import src.roles as roles_mod
+        import src.domain.roles as roles_mod
         monkeypatch.setattr(roles_mod, "load_manifest", lambda *a, **k: {"roles": {"r1": {}}})
         monkeypatch.setattr(roles_mod, "embedding_precondition_error", lambda *a, **k: precondition)
         monkeypatch.setattr(roles_mod, "precompute_embedding",

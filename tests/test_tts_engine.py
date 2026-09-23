@@ -1,11 +1,13 @@
 """
-测试 src/tts_engine.py 模块的各个函数
+测试 src/pipeline/tts_engine.py 模块的各个函数
 """
 import os
 import json
 import wave
 import pytest
-from src import tts_engine, roles as roles_mod, utils
+from src.pipeline import tts_engine
+from src.domain import roles as roles_mod
+from src import utils
 from tests.conftest import create_sample_wav_file
 
 
@@ -423,7 +425,7 @@ class TestFallbackDoesNotPoisonTheCache:
         assert result["used_fallback"] is True
 
     def test_marker_files_are_not_counted_as_cached_wavs_in_status(self, tmp_chapter_dir, tmp_roles_dir, sample_script_json):
-        from src import status_tracker
+        from src.domain import status_tracker
         bad = self._texts(sample_script_json)[0]
         self._run(tmp_chapter_dir, sample_script_json, tmp_roles_dir, _ScriptedRealBackend([bad]))
         cache = os.path.join(tmp_chapter_dir, "audio_cache")
@@ -438,7 +440,7 @@ class TestCancelDoesNotTurnIntoSuccess:
 
     def test_cancel_after_the_batch_raises_and_writes_no_placeholders_or_timeline(
             self, tmp_chapter_dir, tmp_roles_dir, sample_script_json):
-        from src.pipeline_errors import TaskCancelled
+        from src.runtime.pipeline_errors import TaskCancelled
         texts = [s["text"] for s in sample_script_json]
         first = texts[0]
 

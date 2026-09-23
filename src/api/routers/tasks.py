@@ -2,7 +2,8 @@
 from fastapi import APIRouter, HTTPException
 from src.api.deps import get_queue
 from src.api.schemas import TaskCreate
-from src import library, preflight, task_queue as tq
+from src.domain import library
+from src.runtime import preflight, task_queue as tq
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -31,7 +32,7 @@ def _validate_params(task_type: str, params: dict):
     if task_type == tq.TYPE_ASSET_GEN:
         kinds = params.get("kinds")
         if kinds is not None:
-            from src.asset_gen import VALID_KINDS
+            from src.pipeline.asset_gen import VALID_KINDS
             if not isinstance(kinds, list) or any(k not in VALID_KINDS for k in kinds):
                 raise HTTPException(400, f"kinds 必须是 {list(VALID_KINDS)} 的子集")
         only = params.get("only")

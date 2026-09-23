@@ -1,5 +1,5 @@
 """
-测试 src/tts_daemon.py（计划 003：常驻 TTS 服务的进程内句柄）。
+测试 src/pipeline/tts_daemon.py（计划 003：常驻 TTS 服务的进程内句柄）。
 
 全程不启动真实子进程、不发真实 socket 连接、不碰真实 GPU/llama-server：
 subprocess.Popen 用一个假对象替身，IndexTTSDaemon._wait_ready/_request 按需
@@ -12,7 +12,7 @@ import json
 import os
 import pytest
 from src.tools import gpu_arbiter
-from src import tts_daemon
+from src.pipeline import tts_daemon
 
 
 class FakePopen:

@@ -3,9 +3,9 @@ import os
 import json
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
-from src import library, status_tracker
+from src.domain import library, status_tracker
 from src.api.deps import get_config
-from src import derived_index
+from src.domain import derived_index
 from src.utils import calculate_md5
 
 router = APIRouter(prefix="/novels/{nid}/chapters", tags=["chapters"])
@@ -107,7 +107,7 @@ def get_timeline(nid: str, cid: str):
 @router.get("/{cid}/segments/{seg_id}/audio")
 def get_segment_audio(nid: str, cid: str, seg_id: str):
     """分块本身不存 md5，音频缓存文件名是 speaker+text+emotion 的哈希，
-    这里复用 src.tts_engine 里同样的算法现算一次去查 audio_cache/。"""
+    这里复用 src.pipeline.tts_engine 里同样的算法现算一次去查 audio_cache/。"""
     ch_dir = _get_chapter_dir(nid, cid)
     final_path = os.path.join(ch_dir, "script_final.json")
     if not os.path.exists(final_path):

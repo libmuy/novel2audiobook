@@ -52,7 +52,7 @@ mkdir -p /srv/unsafe/dev-env/models/audiogen/audioldm
 ## 关键点
 
 ### 0. 时长策略：不需要生成场景实际时长那么长的素材
-`src/audio_mixer.py` 的 `_build_scene_bgm_track()` 本来就会把 ambience 素材
+`src/pipeline/audio_mixer.py` 的 `_build_scene_bgm_track()` 本来就会把 ambience 素材
 按 `loop_count = ceil(scene_duration / len(bgm_seg))` 循环拼接铺满整个场景时长
 （见该函数第 152-153 行），素材本身不需要是完整的 45-60 秒。AudioLDM 类扩散
 模型在训练时长范围（约 10 秒量级）内保真度最好，`data/assets/asset_specs.yaml`

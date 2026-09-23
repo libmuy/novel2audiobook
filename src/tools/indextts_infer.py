@@ -3,7 +3,7 @@
 IndexTTS-2.5 批量推理脚本。
 
 运行环境：独立的 indextts venv（Python 3.11 + ROCm torch，路径见 config/local_config.yaml 的 tts.index_tts.python_bin），
-不与项目主 venv 混用。由 src/tts_engine.py 的 IndexTTSBackend 通过子进程调用。
+不与项目主 venv 混用。由 src/pipeline/tts_engine.py 的 IndexTTSBackend 通过子进程调用。
 
 设计为“单次加载、批量合成”：模型加载（GPT/语义编解码器/s2mel/BigVGAN/参考音色
 提取等）耗时数十秒，若每句话起一个子进程会被加载开销拖垮，因此一次调用接收一个
@@ -22,7 +22,7 @@ jobs-file 内容：[{"id": "...", "text": "...", "ref_audio": "...", "lang": "ZH
                   "out": "输出 wav 绝对路径"}, ...]
 result-file 内容：{"<id>": {"ok": true/false, "error": "..."}, ...}
 
-常驻模式用法（计划 003；由 src/tts_daemon.py 启动/管理，避免 Tab 4 试听/
+常驻模式用法（计划 003；由 src/pipeline/tts_daemon.py 启动/管理，避免 Tab 4 试听/
 webui 每次调用都要付一次模型加载的开销）：
     python tools/indextts_infer.py \
         --repo-dir <...> --checkpoints-dir <...> \
@@ -47,7 +47,7 @@ from datetime import datetime, timezone
 import torch
 
 EMBEDDING_CACHE_FILENAME = "speaker_embeddings.pt"
-# 与 .pt 同目录的纯 JSON 元数据镜像：项目主 venv（src/roles.py 等）不装 torch，
+# 与 .pt 同目录的纯 JSON 元数据镜像：项目主 venv（src/domain/roles.py 等）不装 torch，
 # 没法 torch.load(.pt) 来判断缓存是否还有效，所以把 ref_audio_md5/model_version/
 # created_at 额外镜像一份成 JSON，供主 venv 侧只读状态查询用，不参与推理逻辑。
 EMBEDDING_META_FILENAME = "speaker_embeddings.meta.json"
@@ -237,7 +237,7 @@ def _serve_forever(tts, socket_path: str):
     常驻模式主循环：模型已经加载好（调用方保证），在 Unix socket 上逐个接受
     连接，一次处理一个请求（不并发——GPU 上的合成本来就该串行，这也避免了
     多连接同时改 tts.cache_* 造成的竞态）。收到 shutdown 命令后回复并退出，
-    由调用方（src/tts_daemon.py）负责发起 shutdown 请求 + 兜底 kill。
+    由调用方（src/pipeline/tts_daemon.py）负责发起 shutdown 请求 + 兜底 kill。
     """
     if os.path.exists(socket_path):
         os.remove(socket_path)

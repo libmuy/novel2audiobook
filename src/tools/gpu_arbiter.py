@@ -2,7 +2,7 @@
 """
 GPU 显存仲裁：RX 7900XTX 由 llama-server（Qwen3.8，本项目 parse 阶段依赖）与
 GPU 密集型批处理阶段——IndexTTS-2.5（tts）、ACE-Step（assets，见
-src/asset_gen.py）——共用，这些阶段常规配置下都无法与 llama-server 同时装入显存，
+src/pipeline/asset_gen.py）——共用，这些阶段常规配置下都无法与 llama-server 同时装入显存，
 因此本模块保证互斥：批量任务前暂停 llama-server 腾出显存，任务结束后（无论成功
 与否）恢复其运行，使系统回到用户预期的默认状态（llama-server 常驻服务于其他用途）。
 
@@ -33,7 +33,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # 一旦启动就会一直占着显存，不能再用这套"用完即还"的模型。这里改为显式模型：
 # get_current_owner() 只读探测谁在占用，plan_swap() 描述换手需要做什么、
 # 预计多久（不执行），真正的执行落在各自的 owner 里——llm 侧仍是本文件的
-# stop_llama_server/start_llama_server，tts 侧是 src/tts_daemon.py 的
+# stop_llama_server/start_llama_server，tts 侧是 src/pipeline/tts_daemon.py 的
 # ensure_started()/shutdown()（它们各自调用本文件的 record_swap_seconds()
 # 记录真实耗时）。调用方（cli.py/未来的 webui）必须先展示 plan_swap() 的结果
 # 让用户确认，再触发对应 owner 的执行函数——本文件不做任何自动仲裁。
@@ -181,7 +181,7 @@ class LlmSuspendedForGpu:
 
     这是"一次性批处理"专用的隐式自动换手（tts/assets 的一次性子进程调用），
     行为保持不变；常驻 TTS 服务的显式换手走 get_current_owner()/plan_swap()
-    + src/tts_daemon.py，两套机制并存，互不影响。这里额外把 stop/start
+    + src/pipeline/tts_daemon.py，两套机制并存，互不影响。这里额外把 stop/start
     llama-server 各自的真实耗时记进 swap_history，供 plan_swap() 展示。
     """
 
@@ -231,12 +231,12 @@ class LlmSuspendedForGpu:
         return False  # 不吞异常
 
 
-# 向后兼容别名：src/tts_engine.py 沿用旧名字导入，行为完全一致
+# 向后兼容别名：src/pipeline/tts_engine.py 沿用旧名字导入，行为完全一致
 LlmSuspendedForTts = LlmSuspendedForGpu
 
 
 # --------------------------------------------------------------------------
-# 常驻 TTS 服务的 pidfile（由 src/tts_daemon.py 写入/删除，本文件只负责读取
+# 常驻 TTS 服务的 pidfile（由 src/pipeline/tts_daemon.py 写入/删除，本文件只负责读取
 # 探测，不负责启停——启停需要知道怎么加载 IndexTTS2 模型，那是 src/ 侧的事）
 # --------------------------------------------------------------------------
 
@@ -252,7 +252,7 @@ def read_tts_daemon_state() -> dict:
 
 
 def is_pid_alive(pid: int) -> bool:
-    """PID 对应的进程是否还活着（供 src/tts_daemon.py 的 shutdown 兜底轮询复用）"""
+    """PID 对应的进程是否还活着（供 src/pipeline/tts_daemon.py 的 shutdown 兜底轮询复用）"""
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

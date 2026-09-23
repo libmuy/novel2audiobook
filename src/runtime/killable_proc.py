@@ -12,7 +12,7 @@ import os
 import signal
 import subprocess
 
-from src import cancel_scope
+from src.runtime import cancel_scope
 
 logger = logging.getLogger(__name__)
 

@@ -7,10 +7,10 @@ import time
 
 import pytest
 
-from src import cancel_scope, task_queue
-from src.cancel_scope import CancelScope
-from src.killable_proc import kill_on_cancel
-from src.task_queue import TaskQueue
+from src.runtime import cancel_scope, task_queue
+from src.runtime.cancel_scope import CancelScope
+from src.runtime.killable_proc import kill_on_cancel
+from src.runtime.task_queue import TaskQueue
 
 
 class TestCancelScope:
@@ -86,7 +86,7 @@ class _Proc:
 @pytest.fixture
 def killed(monkeypatch):
     calls = []
-    import src.killable_proc as kp
+    import src.runtime.killable_proc as kp
     monkeypatch.setattr(kp, "terminate_process_group", lambda proc, grace_sec=5.0: calls.append(proc))
     yield calls
     cancel_scope.deactivate()

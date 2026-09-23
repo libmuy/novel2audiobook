@@ -17,7 +17,7 @@ from src.utils import (
     resolve_path, get_project_root, load_global_config,
     get_chapter_dir as _utils_get_chapter_dir,
 )
-from src.status_tracker import get_all_chapters_status
+from src.domain.status_tracker import get_all_chapters_status
 
 try:
     from pypinyin import lazy_pinyin

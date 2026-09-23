@@ -28,7 +28,7 @@ from src.utils import resolve_path, resolve_optional_path, load_global_config
 from src.tools import gpu_arbiter
 
 # 取消：**常驻守护进程有意保持不可取消**。它没有 cancel 消息、请求循环是单线程 socket，
-# 而任务队列的取消（src/cancel_scope.py 的杀进程钩子）只接在「一次性子进程」后端
+# 而任务队列的取消（src/runtime/cancel_scope.py 的杀进程钩子）只接在「一次性子进程」后端
 # （IndexTTSBackend / SubprocessAudioGenBackend）上——队列路径本来也走不到守护进程
 # （build_tts_backend 只返回 IndexTTS 或 Mock）。守护进程只服务交互式试听，
 # 想中断它请用 `./run.sh tts-serve stop`。
@@ -214,9 +214,9 @@ class IndexTTSDaemon:
 
     def synthesize_batch(self, jobs: list, timeout: float = 600.0) -> dict:
         """
-        jobs: 与 src.tts_engine.IndexTTSBackend.synthesize_batch 相同的入参形状
+        jobs: 与 src.pipeline.tts_engine.IndexTTSBackend.synthesize_batch 相同的入参形状
         （[{"id", "text", "role_cfg", "emotion", "out", "sample_rate"}, ...]），
-        这里转换成常驻服务认识的字段并复用 src.tts_engine 里现成的
+        这里转换成常驻服务认识的字段并复用 src.pipeline.tts_engine 里现成的
         EMOTION_TO_VECTOR / speed_to_duration_factor，不重复维护第二份映射表。
         返回 {job_id: bool}，与 IndexTTSBackend 的返回形状一致。
         """
@@ -225,7 +225,7 @@ class IndexTTSDaemon:
         if not self.is_running():
             raise RuntimeError("常驻 TTS 服务未运行，请先调用 ensure_started()")
 
-        from src.tts_engine import EMOTION_TO_VECTOR, speed_to_duration_factor
+        from src.pipeline.tts_engine import EMOTION_TO_VECTOR, speed_to_duration_factor
 
         infer_jobs = []
         for job in jobs:

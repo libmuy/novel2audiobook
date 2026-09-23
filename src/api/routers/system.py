@@ -2,7 +2,8 @@
 import re
 from fastapi import APIRouter
 from src.api.deps import get_config, set_config
-from src import config_store, monitor
+from src.domain import config_store
+from src.runtime import monitor
 from src.utils import global_config_path, local_config_path, read_yaml_dict
 
 router = APIRouter(tags=["system"])
@@ -108,7 +109,7 @@ def patch_config(data: dict):
 
     if applied:
         # 先落盘再改内存：写盘失败时内存配置不会跟磁盘不一致。落盘走 round-trip，
-        # 只改被更新的键，文件里的注释原样保留（见 src/config_store.py）
+        # 只改被更新的键，文件里的注释原样保留（见 src/domain/config_store.py）
         by_file = {}
         for key, value in applied.items():
             by_file.setdefault(_target_config_file(key), {})[key] = value

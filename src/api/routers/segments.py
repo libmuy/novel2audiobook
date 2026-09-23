@@ -2,7 +2,7 @@
 import json
 import os
 from fastapi import APIRouter, HTTPException
-from src import library
+from src.domain import library
 from src.api.schemas import SegmentUpdate, SegmentBatch
 from src.utils import list_available_assets
 

@@ -1,12 +1,12 @@
 """
-测试 src/monitor.py 资源监控模块
+测试 src/runtime/monitor.py 资源监控模块
 
 使用 tmp_path 造假的 sysfs 目录结构注入，不依赖真实硬件。
 """
 import os
 
 import pytest
-from src import monitor
+from src.runtime import monitor
 
 
 @pytest.fixture
