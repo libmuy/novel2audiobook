@@ -132,11 +132,19 @@ class TestCategoryTree:
         assert client.put("/api/asset-category-tree", json={"tree": tree}).status_code == 400
         assert _text(tmp_path) == before
 
-    def test_deleting_a_node_does_not_scrub_the_asset_category(self, client):
+    def test_deleting_a_node_clears_the_asset_category(self, client):
+        """计划 011 改的行为：分类节点被删，引用它的素材重映射为「未分类」。"""
         client.put("/api/asset-category-tree", json={"tree": self.TREE})
         client.patch("/api/asset-specs/sfx/sword_clash", json={"category": "战斗"})
         client.put("/api/asset-category-tree", json={"tree": []})
-        assert _row(client, "sfx", "sword_clash")["category"] == "战斗"  # 悬空引用容忍
+        assert _row(client, "sfx", "sword_clash")["category"] == ""
+
+    def test_renaming_a_node_updates_the_asset_category(self, client):
+        tree = client.put("/api/asset-category-tree", json={"tree": self.TREE}).json()["tree"]
+        client.patch("/api/asset-specs/sfx/sword_clash", json={"category": "战斗"})
+        renamed = [tree[0], {"id": tree[1]["id"], "title": "战斗场景", "children": []}]
+        client.put("/api/asset-category-tree", json={"tree": renamed})
+        assert _row(client, "sfx", "sword_clash")["category"] == "战斗场景"
 
     def test_spec_writes_do_not_drop_the_tree(self, client):
         client.put("/api/asset-category-tree", json={"tree": self.TREE})

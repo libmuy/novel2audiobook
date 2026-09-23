@@ -50,6 +50,21 @@ def _derive_status(path: str, has_draft: bool, has_final: bool, has_timeline: bo
     return stored_tag
 
 
+def normalize_state(row: dict) -> str:
+    """把内部状态标签/产物存在情况归一成前端用的四态：unparsed（未解析）/
+    parsed（已解析未配音）/ voiced（已配音，不代表已混音）/ stale（陈旧需重跑）。
+    `row` 是 get_all_chapters_status 里单条结果（或含相同字段的等价 dict）。
+    """
+    tag = row.get("status", "UNKNOWN")
+    if isinstance(tag, str) and tag.startswith("STALE"):
+        return "stale"
+    if tag in ("completed", "tts_completed") or row.get("mp3") or row.get("timeline"):
+        return "voiced"
+    if tag == "parsed_draft" or row.get("draft") or row.get("final"):
+        return "parsed"
+    return "unparsed"
+
+
 def get_all_chapters_status(chapters_dir: str = "chapters") -> list:
     """获取所有章节的状态概览表"""
     if not os.path.exists(chapters_dir):
@@ -120,7 +135,7 @@ def get_all_chapters_status(chapters_dir: str = "chapters") -> list:
 
         status_tag = _derive_status(path, has_draft, has_final, has_timeline, has_mp3, mp3_mtime, status_tag)
 
-        results.append({
+        row = {
             "chapter_id": folder,
             "status": status_tag,
             "raw": has_raw,
@@ -133,7 +148,9 @@ def get_all_chapters_status(chapters_dir: str = "chapters") -> list:
             "mixed_with_assets": mixed_with_assets,
             "missing_assets_count": missing_assets_count,
             "audio_cache_count": cache_count
-        })
+        }
+        row["state"] = normalize_state(row)
+        results.append(row)
 
     return results
 

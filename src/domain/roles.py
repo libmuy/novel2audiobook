@@ -193,6 +193,27 @@ _NAME_PATTERN = re.compile(r"[一-龥]{2,4}")
 _NON_NAME_STOPWORDS = {"这几天", "这条支", "苏砚今日", "苏砚左手"}
 
 
+def set_role_speed(role_id: str, speed: float, roles_dir: str = None) -> None:
+    """更新角色的语速，写进 `config.json`（TTS 合成实际读取的地方——不是
+    manifest.json 里同名的 `speed` 字段，那份只用于界面展示）。之前 API 只改
+    manifest，导致设置页调的语速从未真正影响过合成结果。config.json 不存在
+    时（角色未经 register_role 走过标准注册流程）就地新建一份最小配置。"""
+    base = roles_dir if roles_dir is not None else default_roles_dir()
+    role_dir = os.path.join(base, role_id)
+    os.makedirs(role_dir, exist_ok=True)
+    cfg_path = os.path.join(role_dir, "config.json")
+    cfg = {"role_id": role_id, "speed": 1.0, "pitch": 0.0}
+    if os.path.exists(cfg_path):
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+    cfg["speed"] = speed
+    with open(cfg_path, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+
+
 def get_role_runtime_config(role_id: str, manifest: dict, roles_dir: str = None) -> dict:
     """
     返回某角色用于 TTS 合成的运行时配置：speed / pitch / reference_audio 绝对路径。

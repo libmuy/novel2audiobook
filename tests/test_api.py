@@ -131,14 +131,20 @@ class TestNodesAPI:
         resp = client.get(f"/api/novels/{nid}/chapter-stats")
         assert resp.status_code == 200
         stats = resp.json()["chapters"]
-        assert stats[ids[0]] == {"segment_count": 3, "voiced_count": 2, "unbound_count": 2}
+        assert stats[ids[0]] == {
+            "segment_count": 3, "voiced_count": 2, "unbound_count": 2,
+            "bgm_count": 0, "sfx_count": 0, "mixed_with_assets": False,
+        }
 
     def test_chapter_stats_missing_files_are_zero_not_404(self, client, tmp_path):
         nid = self._create_novel(client, volume=False, part=False)
         cid = client.post(f"/api/novels/{nid}/nodes", json={"type": "chapter", "title": "只有原文"}).json()["node_id"]
         client.put(f"/api/novels/{nid}/chapters/{cid}/raw", files={"file": ("raw.txt", b"x")})
         stats = client.get(f"/api/novels/{nid}/chapter-stats").json()["chapters"]
-        assert stats[cid] == {"segment_count": 0, "voiced_count": 0, "unbound_count": 0}
+        assert stats[cid] == {
+            "segment_count": 0, "voiced_count": 0, "unbound_count": 0,
+            "bgm_count": 0, "sfx_count": 0, "mixed_with_assets": False,
+        }
 
     def test_chapter_stats_tolerates_corrupt_json(self, client, tmp_path):
         nid = self._create_novel(client, volume=False, part=False)
@@ -148,7 +154,10 @@ class TestNodesAPI:
         (d / "script_final.json").write_text("{not json", encoding="utf-8")
         (d / "timeline.json").write_text("[1, 2]", encoding="utf-8")  # 顶层不是 {items: []}
         stats = client.get(f"/api/novels/{nid}/chapter-stats").json()["chapters"]
-        assert stats[cid] == {"segment_count": 0, "voiced_count": 0, "unbound_count": 0}
+        assert stats[cid] == {
+            "segment_count": 0, "voiced_count": 0, "unbound_count": 0,
+            "bgm_count": 0, "sfx_count": 0, "mixed_with_assets": False,
+        }
 
     def test_chapter_stats_unknown_novel_is_404(self, client):
         assert client.get("/api/novels/nope/chapter-stats").status_code == 404
@@ -180,6 +189,15 @@ class TestNodesAPI:
         assert resp.status_code == 200
         tree = client.get(f"/api/novels/{nid}/tree").json()["novel"]["tree"]
         assert [n["id"] for n in tree] == [v2, v1]
+
+    def test_reorder_into_own_subtree_is_400_not_500(self, client):
+        """计划 011：tree_move 的 ValueError（不能把节点挪进自己的子树）
+        之前会被 FastAPI 当成未处理异常变成 500，改成规规矩矩的 400。"""
+        nid = self._create_novel(client, volume=True)
+        vol_id = client.post(f"/api/novels/{nid}/nodes", json={"type": "volume", "title": "卷一"}).json()["node_id"]
+        resp = client.post(f"/api/novels/{nid}/nodes/reorder",
+                           json={"node_id": vol_id, "new_parent_id": vol_id, "new_index": 0})
+        assert resp.status_code == 400
 
     def test_delete_node_preview_does_not_delete(self, client):
         nid = self._create_novel(client, volume=True)
@@ -385,6 +403,23 @@ class TestChaptersAPI:
         saved = json.loads((ch_dir / "timeline.json").read_text())
         assert saved["items"][0]["sfx"] == "sword_clash"
 
+    def test_get_script_reports_source_via_header(self, client, tmp_path):
+        """计划 011：X-Script-Source 让工作台知道拿到的是 final 还是 draft，
+        不用去猜或者另发一个请求。"""
+        nid = client.post("/api/novels", json={"title": "来源头测试"}).json()["novel_id"]
+        ch_id = self._new_chapter(client, nid)
+        client.put(f"/api/novels/{nid}/chapters/{ch_id}/raw", files={"file": ("raw.txt", b"x")})
+        ch_dir = tmp_path / "data" / "library" / nid / "chapters" / ch_id
+        (ch_dir / "script_draft.json").write_text("[]")
+
+        draft_resp = client.get(f"/api/novels/{nid}/chapters/{ch_id}/script")
+        assert draft_resp.status_code == 200
+        assert draft_resp.headers["X-Script-Source"] == "draft"
+
+        (ch_dir / "script_final.json").write_text("[]")
+        final_resp = client.get(f"/api/novels/{nid}/chapters/{ch_id}/script")
+        assert final_resp.headers["X-Script-Source"] == "final"
+
 
 class TestSegmentsAPI:
     def _chapter_with_script(self, client, tmp_path, script):
@@ -463,6 +498,58 @@ class TestSegmentsAPI:
                            json={"seg_ids": [1], "set": {"bgm": "nope"}})
         assert resp.status_code == 400
 
+    def test_update_segment_rejects_invalid_emotion(self, client, tmp_path):
+        script = [{"seg_id": 1, "speaker": "narrator", "text": "a", "emotion": "neutral"}]
+        nid, ch_id = self._chapter_with_script(client, tmp_path, script)
+        resp = client.patch(f"/api/novels/{nid}/chapters/{ch_id}/segments/1", json={"emotion": "furious"})
+        assert resp.status_code == 400
+        saved = json.loads((tmp_path / "data" / "library" / nid / "chapters" / ch_id / "script_final.json").read_text())
+        assert saved[0]["emotion"] == "neutral"  # 拒绝时文件不受影响
+
+    def test_batch_update_rejects_invalid_emotion(self, client, tmp_path):
+        script = [{"seg_id": 1, "speaker": "narrator", "text": "a", "emotion": "neutral"}]
+        nid, ch_id = self._chapter_with_script(client, tmp_path, script)
+        resp = client.post(f"/api/novels/{nid}/chapters/{ch_id}/segments/batch",
+                           json={"seg_ids": [1], "set": {"emotion": "furious"}})
+        assert resp.status_code == 400
+
+    def test_editing_a_draft_only_chapter_promotes_it_to_final(self, client, tmp_path):
+        """计划 011：只有 script_draft.json 的章节不再对分块编辑一律 404——
+        第一次编辑会原子地把草稿转正成正稿。"""
+        nid = client.post("/api/novels", json={"title": "转正测试"}).json()["novel_id"]
+        ch_id = client.post(f"/api/novels/{nid}/nodes",
+                            json={"type": "chapter", "title": "章一"}).json()["node_id"]
+        client.put(f"/api/novels/{nid}/chapters/{ch_id}/raw", files={"file": ("raw.txt", b"x")})
+        ch_dir = tmp_path / "data" / "library" / nid / "chapters" / ch_id
+        (ch_dir / "script_draft.json").write_text(json.dumps(
+            [{"seg_id": 1, "speaker": None, "text": "草稿句子", "emotion": "neutral"}]
+        ))
+
+        resp = client.patch(f"/api/novels/{nid}/chapters/{ch_id}/segments/1", json={"speaker": "narrator"})
+        assert resp.status_code == 200
+        assert (ch_dir / "script_final.json").exists()
+        saved = json.loads((ch_dir / "script_final.json").read_text())
+        assert saved[0]["speaker"] == "narrator"
+        # 草稿本身不受影响，只是不再是唯一来源
+        draft = json.loads((ch_dir / "script_draft.json").read_text())
+        assert draft[0]["speaker"] is None
+
+    def test_promotion_does_not_overwrite_an_existing_final(self, client, tmp_path):
+        nid = client.post("/api/novels", json={"title": "已定稿测试"}).json()["novel_id"]
+        ch_id = client.post(f"/api/novels/{nid}/nodes",
+                            json={"type": "chapter", "title": "章一"}).json()["node_id"]
+        client.put(f"/api/novels/{nid}/chapters/{ch_id}/raw", files={"file": ("raw.txt", b"x")})
+        ch_dir = tmp_path / "data" / "library" / nid / "chapters" / ch_id
+        (ch_dir / "script_draft.json").write_text(json.dumps(
+            [{"seg_id": 1, "speaker": None, "text": "草稿", "emotion": "neutral"}]
+        ))
+        (ch_dir / "script_final.json").write_text(json.dumps(
+            [{"seg_id": 1, "speaker": "narrator", "text": "已定稿", "emotion": "neutral"}]
+        ))
+        client.patch(f"/api/novels/{nid}/chapters/{ch_id}/segments/1", json={"emotion": "happy"})
+        saved = json.loads((ch_dir / "script_final.json").read_text())
+        assert saved[0]["text"] == "已定稿"  # 没有被草稿覆盖
+
 
 class TestRolesAPI:
     def test_list_roles(self, client):
@@ -495,6 +582,25 @@ class TestRolesAPI:
 
         role = next(r for r in client.get("/api/roles").json() if r["id"] == role_id)
         assert role["has_reference"] is True
+
+    def test_update_speed_writes_config_json_not_just_manifest(self, client, tmp_path):
+        """计划 011 修的 bug：TTS 合成实际读 data/roles/<id>/config.json 里的
+        speed，之前 PATCH /roles 只改了 manifest，界面调语速从未真正生效过。"""
+        role_id = client.post("/api/roles", json={"name": "语速测试"}).json()["role_id"]
+        resp = client.patch(f"/api/roles/{role_id}", json={"speed": 1.3})
+        assert resp.status_code == 200
+
+        role = next(r for r in client.get("/api/roles").json() if r["id"] == role_id)
+        assert role["speed"] == 1.3
+
+        cfg_path = tmp_path / "data" / "roles" / role_id / "config.json"
+        assert json.loads(cfg_path.read_text())["speed"] == 1.3
+
+    def test_update_gender(self, client):
+        role_id = client.post("/api/roles", json={"name": "性别测试", "gender": "male"}).json()["role_id"]
+        client.patch(f"/api/roles/{role_id}", json={"gender": "female"})
+        role = next(r for r in client.get("/api/roles").json() if r["id"] == role_id)
+        assert role["gender"] == "female"
 
 
 class TestRoleCategoriesAPI:
@@ -572,13 +678,29 @@ class TestRoleCategoryTreeAPI:
     def test_invalid_trees_400(self, client, tree):
         assert client.put("/api/role-category-tree", json={"tree": tree}).status_code == 400
 
-    def test_deleting_tree_node_does_not_touch_roles_category(self, client):
-        """tests/test_api.py::TestRoleCategoriesAPI 那条容忍策略在树上的孪生用例"""
+    def test_deleting_tree_node_clears_roles_category(self, client):
+        """计划 011 改的行为：删除分类节点后，引用该分类的角色重映射为
+        「未分类」（空字符串），不再悬空指向一个已经不存在的路径。"""
         client.put("/api/role-category-tree", json={"tree": self.TREE})
         rid = client.post("/api/roles", json={"name": "甲", "category": "主角/男主"}).json()["role_id"]
         client.put("/api/role-category-tree", json={"tree": [{"title": "配角", "children": []}]})
         role = [r for r in client.get("/api/roles").json() if r["id"] == rid][0]
-        assert role["category"] == "主角/男主"
+        assert role["category"] == ""
+
+    def test_renaming_tree_node_updates_roles_category(self, client):
+        """id 不变、标题变了：角色的 category 字符串跟着换成新路径。"""
+        tree = client.put("/api/role-category-tree", json={"tree": self.TREE}).json()["tree"]
+        rid = client.post("/api/roles", json={"name": "乙", "category": "主角/男主"}).json()["role_id"]
+        male_lead = tree[0]["children"][0]
+        renamed = [
+            {"id": tree[0]["id"], "title": "主角", "children": [
+                {"id": male_lead["id"], "title": "男一号", "children": []},
+            ]},
+            {"id": tree[1]["id"], "title": "配角", "children": []},
+        ]
+        client.put("/api/role-category-tree", json={"tree": renamed})
+        role = [r for r in client.get("/api/roles").json() if r["id"] == rid][0]
+        assert role["category"] == "主角/男一号"
 
 
 class TestRoleTagsAPI:

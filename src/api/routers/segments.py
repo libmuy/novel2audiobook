@@ -3,6 +3,7 @@ import json
 import os
 from fastapi import APIRouter, HTTPException
 from src.domain import library
+from src.pipeline.llm_parser import VALID_EMOTIONS
 from src.api.schemas import SegmentUpdate, SegmentBatch
 from src.utils import list_available_assets
 
@@ -20,12 +21,22 @@ def _validate_asset_name(kind: str, name):
         raise HTTPException(400, f"素材 {name} 不存在（{kind}）")
 
 
+def _validate_emotion(value):
+    if value is None:
+        return
+    if value not in VALID_EMOTIONS:
+        raise HTTPException(400, f"语气 {value!r} 不是合法取值（{sorted(VALID_EMOTIONS)}）")
+
+
 def _get_script_path(nid: str, cid: str) -> str:
     # 见 chapters.py 里同样的注释：委托给 library.get_chapter_dir 做动态路径解析
     return os.path.join(library.get_chapter_dir(nid, cid), "script_final.json")
 
 
 def _load_script(nid: str, cid: str) -> list:
+    # 只有草稿、还没定过稿的章节：第一次编辑时原子地把草稿转正成正稿，
+    # 不再对这类章节一律 404（见 library.promote_draft_to_final 的注释）。
+    library.promote_draft_to_final(nid, cid)
     path = _get_script_path(nid, cid)
     if not os.path.exists(path):
         raise HTTPException(404, "无剧本文件")
@@ -35,8 +46,10 @@ def _load_script(nid: str, cid: str) -> list:
 
 def _save_script(nid: str, cid: str, script: list):
     path = _get_script_path(nid, cid)
-    with open(path, "w", encoding="utf-8") as f:
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(script, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, path)
 
 
 @router.patch("/{seg_id}")
@@ -48,6 +61,8 @@ def update_segment(nid: str, cid: str, seg_id: str, data: SegmentUpdate):
         _validate_asset_name("sfx", updates["sfx"])
     if "bgm" in updates:
         _validate_asset_name("bgm", updates["bgm"])
+    if "emotion" in updates:
+        _validate_emotion(updates["emotion"])
     script = _load_script(nid, cid)
     for seg in script:
         if str(seg.get("seg_id")) == str(seg_id):
@@ -74,6 +89,8 @@ def batch_update_segments(nid: str, cid: str, data: SegmentBatch):
         _validate_asset_name("sfx", updates["sfx"])
     if "bgm" in updates:
         _validate_asset_name("bgm", updates["bgm"])
+    if "emotion" in updates:
+        _validate_emotion(updates["emotion"])
     script = _load_script(nid, cid)
     updated = 0
     for seg in script:

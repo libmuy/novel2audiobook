@@ -51,6 +51,7 @@ def _merge_status_into_tree(nodes: list, status_by_chapter: dict) -> None:
             ch_status = status_by_chapter.get(node.get("id"))
             if ch_status:
                 node["status"] = ch_status.get("status")
+                node["state"] = ch_status.get("state")
         children = node.get("children")
         if children:
             _merge_status_into_tree(children, status_by_chapter)
@@ -90,10 +91,24 @@ def get_chapter_stats(nid: str):
             segments = script if isinstance(script, list) else []
             timeline = _read_json_or_none(os.path.join(ch_dir, "timeline.json"))
             items = timeline.get("items") if isinstance(timeline, dict) else None
+            items = items if isinstance(items, list) else []
+            # bgm/sfx 计数：对比表「背景音生成」列用。优先看 timeline（真实合成
+            # 时烘焙进去的），没有 timeline 就退到 script_final（还没跑过 TTS）。
+            fx_source = items if items else segments
+            bgm_count = sum(1 for it in fx_source if isinstance(it, dict) and it.get("bgm"))
+            sfx_count = sum(1 for it in fx_source if isinstance(it, dict) and it.get("sfx"))
+            mixed = False
+            mix_meta_path = os.path.join(ch_dir, "output", "mix_meta.json")
+            mix_meta = _read_json_or_none(mix_meta_path)
+            if isinstance(mix_meta, dict):
+                mixed = not mix_meta.get("voice_only", True)
             stats[cid] = {
                 "segment_count": len(segments),
-                "voiced_count": len(items) if isinstance(items, list) else 0,
+                "voiced_count": len(items),
                 "unbound_count": sum(1 for s in segments if isinstance(s, dict) and not s.get("speaker")),
+                "bgm_count": bgm_count,
+                "sfx_count": sfx_count,
+                "mixed_with_assets": mixed,
             }
     return {"chapters": stats}
 
@@ -122,7 +137,6 @@ def create_node(nid: str, data: NodeCreate):
 
 @router.patch("/{nid}/nodes/{node_id}")
 def update_node(nid: str, node_id: str, data: NodeUpdate):
-    novel = library.load_novel(nid)
     # Find and update node title
     def _find_and_update(nodes, target_id, new_title):
         for n in nodes:
@@ -135,16 +149,24 @@ def update_node(nid: str, node_id: str, data: NodeUpdate):
         return False
 
     if data.title is not None:
-        _find_and_update(novel.get("tree", []), node_id, data.title)
-        library.save_novel(novel)
+        # 加小说锁：load→改内存树→save 中间若有并发请求改同一棵树，后写的会
+        # 覆盖先写的改动（reorder 同理）。锁把这三步串成一个临界区。
+        with library.novel_lock(nid):
+            novel = library.load_novel(nid)
+            _find_and_update(novel.get("tree", []), node_id, data.title)
+            library.save_novel(novel)
     return {"ok": True}
 
 
 @router.post("/{nid}/nodes/reorder")
 def reorder_node(nid: str, data: NodeReorder):
-    novel = library.load_novel(nid)
-    library.tree_move(novel, data.node_id, data.new_parent_id, data.new_index)
-    library.save_novel(novel)
+    with library.novel_lock(nid):
+        novel = library.load_novel(nid)
+        try:
+            library.tree_move(novel, data.node_id, data.new_parent_id, data.new_index)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        library.save_novel(novel)
     return {"ok": True}
 
 

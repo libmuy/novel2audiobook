@@ -265,3 +265,35 @@ class TestGetNovelStatusSummary:
 
         assert summary_a["total"] == 1
         assert summary_b["total"] == 2
+
+
+class TestNormalizeState:
+    """计划 011：四态归一（unparsed/parsed/voiced/stale），供前端树状态点/
+    小说列表进度条使用，不需要理解内部状态标签的全部取值。"""
+
+    def test_unknown_with_nothing_is_unparsed(self):
+        assert status_tracker.normalize_state({"status": "UNKNOWN"}) == "unparsed"
+
+    def test_parsed_draft_is_parsed(self):
+        assert status_tracker.normalize_state({"status": "parsed_draft", "draft": True}) == "parsed"
+
+    def test_has_draft_without_recognized_tag_is_parsed(self):
+        assert status_tracker.normalize_state({"status": "UNKNOWN", "draft": True}) == "parsed"
+
+    def test_tts_completed_is_voiced(self):
+        assert status_tracker.normalize_state({"status": "tts_completed", "timeline": True}) == "voiced"
+
+    def test_completed_is_voiced(self):
+        assert status_tracker.normalize_state({"status": "completed", "mp3": True}) == "voiced"
+
+    def test_any_stale_tag_is_stale_regardless_of_files(self):
+        assert status_tracker.normalize_state({"status": "STALE(需要重新 mix)", "mp3": True}) == "stale"
+        assert status_tracker.normalize_state({"status": "STALE(no mp3)"}) == "stale"
+
+    def test_get_all_chapters_status_includes_state_field(self, tmp_chapters_dir):
+        ch_dir = os.path.join(tmp_chapters_dir, "ch_0001")
+        os.makedirs(ch_dir, exist_ok=True)
+        with open(os.path.join(ch_dir, "raw.txt"), "w", encoding="utf-8") as f:
+            f.write("x")
+        result = status_tracker.get_all_chapters_status(tmp_chapters_dir)
+        assert result[0]["state"] == "unparsed"

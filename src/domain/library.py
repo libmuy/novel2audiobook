@@ -42,6 +42,11 @@ def _get_novel_lock(novel_id: str) -> threading.RLock:
         return _locks[novel_id]
 
 
+# 公开别名：调用方（如 API 路由）需要把"读树、改内存、写回"串成一个临界区时用
+# 这个，不用伸手拿模块内部的 _get_novel_lock。
+novel_lock = _get_novel_lock
+
+
 # --------------------------------------------------------------------------
 # 路径
 # --------------------------------------------------------------------------
@@ -150,6 +155,12 @@ def list_novels(library_dir: str = None) -> list:
                 d for d in os.listdir(chapters_dir)
                 if os.path.isdir(os.path.join(chapters_dir, d))
             ])
+        # 四态计数：给小说列表页的双色进度条用，避免前端逐本再拉一次 /tree
+        # （那样是 N+1，卡片一多列表页就明显变慢）。
+        counts = {"total": 0, "unparsed": 0, "parsed": 0, "voiced": 0, "stale": 0}
+        for row in get_all_chapters_status(chapters_dir):
+            counts["total"] += 1
+            counts[row["state"]] = counts.get(row["state"], 0) + 1
         results.append({
             "novel_id": data.get("novel_id", entry),
             "title": data.get("title", ""),
@@ -157,6 +168,7 @@ def list_novels(library_dir: str = None) -> list:
             "levels": data.get("levels", {}),
             "chapter_count": chapter_count,
             "updated_at": data.get("updated_at", ""),
+            "counts": counts,
         })
     results.sort(key=lambda x: x["title"])
     return results
@@ -451,6 +463,30 @@ def add_chapter(novel_id: str, title: str, raw_text: str,
         tree_insert(novel_data, parent_id, node)
         save_novel(novel_data, library_dir)
     return ch_id
+
+
+def promote_draft_to_final(novel_id: str, chapter_id: str, library_dir: str = None) -> bool:
+    """只有 script_draft.json、还没有 script_final.json 的章节（解析过但没跑过
+    TTS/没被工作台保存过）第一次被编辑时，把草稿原子地"转正"成正稿——工作台
+    分块编辑接口只认 script_final.json，之前会对这类章节一律 404，用户必须先
+    走一次容量很小的"整章覆盖" PUT /script 才能开始编辑，体验上像是隐藏步骤。
+    final 已存在则不动（不覆盖已经人工定过稿的内容），返回是否发生了转正。"""
+    chapter_dir = get_chapter_dir(novel_id, chapter_id, library_dir)
+    final_path = os.path.join(chapter_dir, "script_final.json")
+    draft_path = os.path.join(chapter_dir, "script_draft.json")
+    if os.path.exists(final_path) or not os.path.exists(draft_path):
+        return False
+    lock = _get_novel_lock(novel_id)
+    with lock:
+        if os.path.exists(final_path):  # 双重检查：拿锁期间可能已被并发请求转正
+            return False
+        with open(draft_path, "r", encoding="utf-8") as f:
+            data = f.read()
+        tmp_path = final_path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(data)
+        os.replace(tmp_path, final_path)
+    return True
 
 
 def import_chapter_raw(novel_id: str, chapter_id: str, raw_text: str,

@@ -1,7 +1,7 @@
 """章节路由"""
 import os
 import json
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, Response
 from fastapi.responses import FileResponse
 from src.domain import library, status_tracker
 from src.api.deps import get_config
@@ -69,15 +69,19 @@ def upload_raw(nid: str, cid: str, file: UploadFile = File(...), confirm: bool =
 
 
 @router.get("/{cid}/script")
-def get_script(nid: str, cid: str):
+def get_script(nid: str, cid: str, response: Response):
+    """`X-Script-Source` 头告诉前端这份剧本到底来自 final 还是 draft——工作台
+    据此提示"这一章还没有定稿，编辑会先把草稿转正"，不用靠猜。"""
     ch_dir = _get_chapter_dir(nid, cid)
     final_path = os.path.join(ch_dir, "script_final.json")
     draft_path = os.path.join(ch_dir, "script_draft.json")
 
     if os.path.exists(final_path):
+        response.headers["X-Script-Source"] = "final"
         with open(final_path, "r", encoding="utf-8") as f:
             return json.load(f)
     if os.path.exists(draft_path):
+        response.headers["X-Script-Source"] = "draft"
         with open(draft_path, "r", encoding="utf-8") as f:
             return json.load(f)
     raise HTTPException(404, "无剧本文件")
@@ -88,8 +92,10 @@ def upload_script(nid: str, cid: str, script: list):
     ch_dir = _get_chapter_dir(nid, cid)
     final_path = os.path.join(ch_dir, "script_final.json")
     os.makedirs(ch_dir, exist_ok=True)
-    with open(final_path, "w", encoding="utf-8") as f:
+    tmp_path = final_path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(script, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, final_path)
     derived_index.invalidate()
     return {"ok": True}
 

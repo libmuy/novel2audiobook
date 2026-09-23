@@ -53,6 +53,7 @@ class RoleCreate(BaseModel):
 
 class RoleUpdate(BaseModel):
     name: Optional[str] = None
+    gender: Optional[str] = None
     category: Optional[str] = None
     description: Optional[str] = None
     speed: Optional[float] = None

@@ -113,14 +113,24 @@ def get_asset_category_tree():
 
 @meta_router.put("/asset-category-tree")
 def put_asset_category_tree(data: CategoryTreePut):
-    """整树替换，语义与 PUT /role-category-tree 相同（校验 → 补 id → 落盘）。
-    删除/改名树节点**不会**改动素材自己的 category——同一条悬空引用容忍策略。"""
+    """整树替换，语义与 PUT /role-category-tree 相同（校验 → 补 id → 落盘），
+    并按节点 id 对应旧树同步重映射素材的 category（改名跟着换新路径，删除的
+    分类清空为"未分类"）。"""
     tree = category_tree.normalize_tree([n.model_dump() for n in data.tree])
     try:
         category_tree.validate_tree(tree)
     except category_tree.TreeError as e:
         raise HTTPException(400, str(e))
     category_tree.assign_missing_ids(tree)
+    old_tree = store.load_category_tree()
+    renamed, deleted = category_tree.diff_paths(old_tree, tree)
+    if renamed or deleted:
+        specs = asset_gen.load_asset_specs()
+        for kind, bucket in specs.items():
+            for name, spec in bucket.items():
+                new_cat = category_tree.remap_category(spec.get("category", ""), renamed, deleted)
+                if new_cat != spec.get("category", ""):
+                    store.update_spec(kind, name, {"category": new_cat})
     store.save_category_tree(tree)
     return {"ok": True, "tree": tree, "categories": category_tree.flatten_paths(tree)}
 

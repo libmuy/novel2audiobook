@@ -69,6 +69,8 @@ def update_role(rid: str, data: RoleUpdate):
     info = manifest["roles"][rid]
     if data.name is not None:
         info["name"] = data.name
+    if data.gender is not None:
+        info["gender"] = data.gender
     if data.category is not None:
         info["category"] = data.category
     if data.description is not None:
@@ -78,6 +80,10 @@ def update_role(rid: str, data: RoleUpdate):
     if data.tags is not None:
         info["tags"] = _normalize_str_list(data.tags)
     roles.save_manifest(manifest, _get_roles_dir())
+    if data.speed is not None:
+        # manifest 里的 speed 只用于展示；真正影响合成的是 config.json，
+        # 两处必须一起写，见 set_role_speed 的注释。
+        roles.set_role_speed(rid, data.speed, _get_roles_dir())
     return {"ok": True}
 
 
@@ -176,9 +182,9 @@ def put_role_category_tree(data: CategoryTreePut):
     """整树替换（不做逐节点增删改接口：分类树是几十个节点的量级，没有并发编辑
     的真实场景，整树 PUT 跟既有 PUT /role-categories 的语义一致）。
 
-    树是真相源，扁平 categories 每次都重新生成。删除/改名树节点**不会**改动
-    角色自己的 category 字符串——跟扁平分类同一条容忍策略，角色只是变成引用了
-    一个不在树里的名字，筛选仍然靠角色自身字段兜底。"""
+    树是真相源，扁平 categories 每次都重新生成。删除/改名树节点会按节点 id
+    对应旧树，同步重映射角色的 category 字符串（改名跟着换成新路径，删除的
+    分类清空为"未分类"），角色不会变成引用一个不存在的名字。"""
     tree = category_tree.normalize_tree([n.model_dump() for n in data.tree])
     try:
         category_tree.validate_tree(tree)
@@ -186,6 +192,11 @@ def put_role_category_tree(data: CategoryTreePut):
         raise HTTPException(400, str(e))
     category_tree.assign_missing_ids(tree)
     manifest = roles.load_manifest(_get_roles_dir())
+    old_tree = manifest.get("category_tree") or category_tree.tree_from_flat(manifest.get("categories", []))
+    renamed, deleted = category_tree.diff_paths(old_tree, tree)
+    if renamed or deleted:
+        for info in manifest.get("roles", {}).values():
+            info["category"] = category_tree.remap_category(info.get("category", ""), renamed, deleted)
     manifest["category_tree"] = tree
     manifest["categories"] = category_tree.flatten_paths(tree)
     roles.save_manifest(manifest, _get_roles_dir())

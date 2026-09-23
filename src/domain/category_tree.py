@@ -161,6 +161,53 @@ def flatten_paths(tree: list, prefix: str = "") -> list:
     return out
 
 
+def _id_path_map(tree: list, prefix: str = "") -> dict:
+    out = {}
+    for n in tree:
+        path = f"{prefix}{PATH_SEP}{n['title']}" if prefix else n["title"]
+        nid = n.get("id")
+        if nid:
+            out[nid] = path
+        out.update(_id_path_map(n.get("children") or [], path))
+    return out
+
+
+def diff_paths(old_tree: list, new_tree: list) -> tuple:
+    """比较保存前后的两棵树（按 id 对应），返回 (renamed, deleted)：
+
+    - renamed：{旧路径: 新路径}，id 还在新树里但路径变了（改名，或换了父级/
+      层级导致路径前缀变了）。父节点改名时，它每个子孙节点也会各自出现一条
+      （子孙自己的 id 没变，但路径含父节点标题，一并算出新路径），调用方不
+      需要再做前缀匹配。
+    - deleted：旧树里存在、新树里 id 已经不存在的节点路径集合（父节点被删时
+      整棵子树的 id 都消失了，子孙也会各自出现在这里）。
+
+    调用方用这两个映射去同步"引用了某个分类路径字符串"的记录（角色/素材），
+    使删除或重命名分类节点后，引用不会变成指向一个不存在的名字。
+    """
+    old_map = _id_path_map(old_tree)
+    new_map = _id_path_map(new_tree)
+    renamed = {}
+    deleted = set()
+    for nid, old_path in old_map.items():
+        new_path = new_map.get(nid)
+        if new_path is None:
+            deleted.add(old_path)
+        elif new_path != old_path:
+            renamed[old_path] = new_path
+    return renamed, deleted
+
+
+def remap_category(category: str, renamed: dict, deleted: set) -> str:
+    """按 diff_paths 的结果重映射单个引用字符串：删除的分类变回"未分类"
+    （空字符串），改名的分类换成新路径，其余原样返回。"""
+    if not category:
+        return category
+    if category in deleted:
+        return ""
+    return renamed.get(category, category)
+
+
 def tree_from_flat(names: list) -> list:
     """把旧的扁平 categories 合成成一层根节点（只读时合成，不写盘——用户
     真正保存过树之前不迁移任何数据）。id 按顺序确定性生成，多次 GET 稳定。"""

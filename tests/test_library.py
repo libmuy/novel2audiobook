@@ -71,6 +71,25 @@ class TestNovelCRUD:
         novels = list_novels(library_dir=lib)
         assert all("no_yaml_dir" not in n["novel_id"] for n in novels)
 
+    def test_list_novels_includes_per_state_counts(self, tmp_path):
+        """计划 011：列表页要按四态渲染双色进度条，不用逐本再拉一次 /tree。"""
+        lib = str(tmp_path / "library")
+        nid = create_novel("带章节的书", library_dir=lib)
+        from src.domain.library import add_chapter
+        add_chapter(nid, "第一章", "正文", library_dir=lib)
+        add_chapter(nid, "第二章", "正文", library_dir=lib)
+        novels = list_novels(library_dir=lib)
+        counts = novels[0]["counts"]
+        assert counts["total"] == 2
+        assert counts["unparsed"] == 2  # 只有 raw.txt，还没解析
+        assert counts["parsed"] == 0 and counts["voiced"] == 0 and counts["stale"] == 0
+
+    def test_list_novels_empty_novel_has_zeroed_counts(self, tmp_path):
+        lib = str(tmp_path / "library")
+        create_novel("空书", library_dir=lib)
+        counts = list_novels(library_dir=lib)[0]["counts"]
+        assert counts == {"total": 0, "unparsed": 0, "parsed": 0, "voiced": 0, "stale": 0}
+
     def test_delete_novel_moves_to_trash(self, tmp_path):
         lib = str(tmp_path / "library")
         nid = create_novel("待删", library_dir=lib)
