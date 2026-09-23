@@ -13,11 +13,13 @@ llm:
 tts:
   index_tts:
     python_bin: "/path/to/venvs/indextts/bin/python"        # IndexTTS 独立 venv，搭建见 docs/indextts_setup.md
+    repo_dir: "/path/to/repos/index-tts"                    # `./run.sh repos setup` 拉取的源码仓库
     checkpoints_dir: "/path/to/models/tts/IndexTTS-2.5"     # 权重目录
 
 asset_gen:
   ace_step:                                                 # 已不是默认引擎，仅在切回 ACE-Step 时需要
     python_bin: "/path/to/venvs/acestep/bin/python"         # 见 docs/audiogen_setup.md
+    repo_dir: "/path/to/repos/ACE-Step-1.5"                 # `./run.sh repos setup` 拉取的源码仓库
     checkpoints_dir: "/path/to/models/audiogen/ACE-Step-1.5"
   audioldm:                                                 # 环境音（当前默认）
     python_bin: "/path/to/venvs/audioldm/bin/python"        # 见 docs/audioldm_setup.md
@@ -27,12 +29,12 @@ asset_gen:
     checkpoints_dir: "/path/to/models/audiogen/tangoflux"   # HF_HOME 缓存根目录，非直接模型路径
 
 server:
-  library_root: "library"   # 小说库根目录，相对项目根或绝对路径
+  library_root: "data/library"   # 小说库根目录，相对项目根或绝对路径
 
 tools:
-  project_python: "/path/to/venvs/novel2audiobook/bin/python"   # 主项目 venv 的 python，run.sh / scripts/activate.sh 据此找环境
+  project_python: "/path/to/venvs/novel2audiobook/bin/python"   # 主项目 venv 的 python，run.sh / src/scripts/activate.sh 据此找环境
   llm_serve_command: "ai"   # 拉起 llama-server 的外部命令，实际调用 `<cmd> llm serve <serve_model_registry_name> --port <serve_port>`
-  # 以下三项仅 tools/generate_seed_reference.py（生成种子参考音频）需要；不用可省略
+  # 以下三项仅 src/tools/generate_seed_reference.py（生成种子参考音频）需要；不用可省略
   espeak_bin: "/path/to/espeak_ng/bin/espeak-ng"
   espeak_data: "/path/to/espeak_ng/lib/<arch>/espeak-ng-data"
   espeak_lib_dir: "/path/to/espeak_ng/lib/<arch>"           # 作为 LD_LIBRARY_PATH 传给 espeak-ng 子进程

@@ -71,12 +71,12 @@ def _start_server(app, port):
 def server(tmp_path_factory):
     """Start a real FastAPI server with isolated temp directories."""
     tmp = tmp_path_factory.mktemp("e2e")
-    library_dir = tmp / "library"
-    roles_dir = tmp / "roles"
+    library_dir = tmp / "data" / "library"
+    roles_dir = tmp / "data" / "roles"
     tasks_dir = tmp / "tasks"
     cache_dir = tmp / ".cache"
     for d in [library_dir, roles_dir, tasks_dir, cache_dir]:
-        d.mkdir()
+        d.mkdir(parents=True)
 
     # Monkeypatch PROJECT_ROOT so all routers resolve paths into tmp
     import src.utils
@@ -91,11 +91,11 @@ def server(tmp_path_factory):
     _orig_pf_stats = getattr(src.preflight, "TTS_STATS_PATH", None)
     _orig_di_refs = getattr(src.derived_index, "ROLE_REFS_PATH", None)
 
-    # Create web/static in tmp so static file mounting works
-    web_static = tmp / "web" / "static"
+    # Create src/web/static in tmp so static file mounting works
+    web_static = tmp / "src" / "web" / "static"
     web_static.mkdir(parents=True, exist_ok=True)
     # Copy actual static files into temp dir
-    real_static = os.path.join(PROJECT_ROOT, "web", "static")
+    real_static = os.path.join(PROJECT_ROOT, "src", "web", "static")
     if os.path.isdir(real_static):
         shutil.copytree(real_static, web_static, dirs_exist_ok=True)
 
@@ -725,7 +725,7 @@ class TestAssetsPageCrud:
         card.get_by_role("button", name="生成", exact=True).click()
         _confirm(page, "开始生成")
         expect(card).to_contain_text("占位音", timeout=20000)
-        assert os.path.exists(os.path.join(server["tmp"], "assets", "sfx", "e2e_hit.wav"))
+        assert os.path.exists(os.path.join(server["tmp"], "data", "assets", "sfx", "e2e_hit.wav"))
 
         # 试听：生成完成后出现播放器，src 指向的接口真能拿到 wav
         player = card.locator("audio")
@@ -749,7 +749,7 @@ class TestAssetsPageCrud:
         page.locator(".modal .form-checkbox input").check()
         page.locator(".confirm-footer button", has_text="删除").click()
         expect(page.locator(".asset-card", has_text="e2e_hit")).to_have_count(0)
-        assert not os.path.exists(os.path.join(server["tmp"], "assets", "sfx", "e2e_hit.wav"))
+        assert not os.path.exists(os.path.join(server["tmp"], "data", "assets", "sfx", "e2e_hit.wav"))
 
     def test_duplicate_name_shows_error_toast(self, page, server):
         import httpx
@@ -853,7 +853,7 @@ def _make_chapter_with_script(server, script, timeline=None, title="素材测试
 
 
 def _fake_asset(server, kind_dir, name):
-    d = os.path.join(server["tmp"], "assets", kind_dir)
+    d = os.path.join(server["tmp"], "data", "assets", kind_dir)
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, f"{name}.wav"), "wb") as f:
         f.write(b"RIFFfake")
@@ -1156,7 +1156,7 @@ class TestPrecomputeEmbeddingUi:
         import httpx
         base = _api(server)
         rid = httpx.post(f"{base}/api/roles", json={"name": name}).json()["role_id"]
-        ref = os.path.join(server["tmp"], "roles", rid, "reference.wav")
+        ref = os.path.join(server["tmp"], "data", "roles", rid, "reference.wav")
         os.makedirs(os.path.dirname(ref), exist_ok=True)
         if with_reference:
             with open(ref, "wb") as f:
@@ -1210,7 +1210,7 @@ class TestAssetEngineDrift:
         spec = {"kind": "sfx", "name": "e2e_drift", "prompt": "drift", "duration_sec": 1, "seed": 3}
         httpx.post(f"{base}/api/asset-specs", json=spec)
         # 模拟「别的引擎生成过、之后配置换了引擎」：meta 里是 ace_step，当前配置期望 tangoflux
-        d = os.path.join(server["tmp"], "assets", "sfx")
+        d = os.path.join(server["tmp"], "data", "assets", "sfx")
         os.makedirs(d, exist_ok=True)
         with open(os.path.join(d, "e2e_drift.wav"), "wb") as f:
             f.write(b"RIFFfake")

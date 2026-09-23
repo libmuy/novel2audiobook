@@ -17,8 +17,8 @@ def client(tmp_path, monkeypatch):
     import src.utils
     monkeypatch.setattr(src.utils, "PROJECT_ROOT", str(tmp_path))
     monkeypatch.setattr(task_queue, "PROJECT_ROOT", str(tmp_path))
-    (tmp_path / "assets").mkdir()
-    (tmp_path / "assets" / "asset_specs.yaml").write_text(
+    (tmp_path / "data" / "assets").mkdir(parents=True)
+    (tmp_path / "data" / "assets" / "asset_specs.yaml").write_text(
         "sfx:\n  hit:\n    prompt: a hit\n    duration_sec: 1\n    seed: 1\n"
         "ambience:\n  wind:\n    prompt: wind\n    duration_sec: 3\n    seed: 2\n", encoding="utf-8")
     config = {"server": {"cpu_workers": 1}, "llm": {}, "tts": {}, "mixing": {}}

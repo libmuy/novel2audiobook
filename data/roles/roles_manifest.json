@@ -3,43 +3,43 @@
     "narrator": {
       "name": "旁白",
       "gender": "male",
-      "config_path": "roles/narrator/config.json",
-      "reference_audio": "roles/narrator/reference.wav",
+      "config_path": "data/roles/narrator/config.json",
+      "reference_audio": "data/roles/narrator/reference.wav",
       "description": "稳重、沉着的小说旁白音"
     },
     "lin_dong": {
       "name": "林动",
       "gender": "male",
-      "config_path": "roles/lin_dong/config.json",
-      "reference_audio": "roles/lin_dong/reference.wav",
+      "config_path": "data/roles/lin_dong/config.json",
+      "reference_audio": "data/roles/lin_dong/reference.wav",
       "description": "热血少年主角音色"
     },
     "shu_ban": {
       "name": "书办",
       "gender": "unknown",
-      "config_path": "roles/shu_ban/config.json",
-      "reference_audio": "roles/shu_ban/reference.wav",
+      "config_path": "data/roles/shu_ban/config.json",
+      "reference_audio": "data/roles/shu_ban/reference.wav",
       "description": "自动注册角色（占位音色，来自 narrator）"
     },
     "ma_tie_cheng": {
       "name": "马铁秤",
       "gender": "male",
-      "config_path": "roles/ma_tie_cheng/config.json",
-      "reference_audio": "roles/ma_tie_cheng/reference.wav",
+      "config_path": "data/roles/ma_tie_cheng/config.json",
+      "reference_audio": "data/roles/ma_tie_cheng/reference.wav",
       "description": "自动注册角色：矿区征收点管事，冷漠克扣、市侩权术的中年男声"
     },
     "liu_he": {
       "name": "柳禾",
       "gender": "female",
-      "config_path": "roles/liu_he/config.json",
-      "reference_audio": "roles/liu_he/reference.wav",
+      "config_path": "data/roles/liu_he/config.json",
+      "reference_audio": "data/roles/liu_he/reference.wav",
       "description": "自动注册角色：苏砚之母，久病沉疴、温和虚弱的女声"
     },
     "su_yan": {
       "name": "苏砚",
       "gender": "male",
-      "config_path": "roles/su_yan/config.json",
-      "reference_audio": "roles/su_yan/reference.wav",
+      "config_path": "data/roles/su_yan/config.json",
+      "reference_audio": "data/roles/su_yan/reference.wav",
       "description": "自动注册角色：十六岁矿工少年主角，隐忍沉稳的少年男声"
     }
   }

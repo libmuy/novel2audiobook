@@ -1,5 +1,5 @@
 """
-多小说数据层：管理 library/ 下 novel.yaml 树结构与章节目录。
+多小说数据层：管理 data/library/ 下 novel.yaml 树结构与章节目录。
 
 核心设计决策：树结构只活在 novel.yaml 里，磁盘上章节目录永远是扁平的。
 部/卷的增删和排序只重写 YAML，不移动任何目录，audio_cache 零风险。
@@ -24,7 +24,7 @@ try:
 except ImportError:
     lazy_pinyin = None
 
-LIBRARY_DIR_NAME = "library"
+LIBRARY_DIR_NAME = os.path.join("data", "library")
 NOVEL_FILE_NAME = "novel.yaml"
 TRASH_DIR_NAME = ".trash"
 SCHEMA_VERSION = 1
@@ -487,7 +487,7 @@ def import_chapter_raw(novel_id: str, chapter_id: str, raw_text: str,
 
 
 def _move_chapter_dir_to_trash(novel_id: str, chapter_id: str, library_dir: str = None) -> bool:
-    """把单个章节目录移到 library/<nid>/.trash/ 下；目录不存在时什么也不做。
+    """把单个章节目录移到 data/library/<nid>/.trash/ 下；目录不存在时什么也不做。
     返回是否真的移动了（供调用方统计）。"""
     chapter_dir = get_chapter_dir(novel_id, chapter_id, library_dir)
     if not os.path.isdir(chapter_dir):

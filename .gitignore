@@ -7,24 +7,21 @@ __pycache__/
 # 不随代码分发（模板见 config/local_config.example.yaml）
 config/local_config.yaml
 
-# Audio build caches and outputs（计划 004 起章节目录搬到了 library/<novel_id>/chapters/
+# Audio build caches and outputs（计划 004 起章节目录搬到了 data/library/<novel_id>/chapters/
 # 下面，这几条路径如果不跟着改，生成的音频会变成完全没被忽略）
-library/*/chapters/*/audio_cache/*.wav
-library/*/chapters/*/output/*.mp3
-library/*/chapters/*/output/*.wav
-library/*/chapters/*/output/*.srt
-library/*/.trash/
+data/library/*/chapters/*/audio_cache/*.wav
+data/library/*/chapters/*/output/*.mp3
+data/library/*/chapters/*/output/*.wav
+data/library/*/chapters/*/output/*.srt
+data/library/*/.trash/
 
 # 后台任务队列状态/日志、角色引用派生索引：都是运行时可重建的缓存，不随代码分发
 .cache/index/
 .cache/tasks/
 
-# IndexTTS-2.5 独立推理环境：官方源码仓库（自行 git clone，见 docs/indextts_setup.md）
-# 与 ROCm venv，均为本机专属大体积产物，不随代码分发
-tools/indextts_repo/
-
-# ACE-Step 1.5 独立推理环境：同上，见 docs/audiogen_setup.md
-tools/acestep_repo/
+# IndexTTS-2.5 / ACE-Step 1.5 的官方源码仓库不再克隆到项目内：由 `./run.sh repos setup`
+# 拉到 config/local_config.yaml 配置的 repo_dir（本机专属，通常和 venv/权重放一起），
+# 见 docs/indextts_setup.md、docs/audiogen_setup.md、src/third_party.py
 
 # ACE-Step 运行时自校准缓存（扩散步数耗时估算），机器相关，不随代码分发
 .cache/acestep/

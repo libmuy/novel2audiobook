@@ -6,14 +6,14 @@ from fastapi.responses import FileResponse
 from src import roles, derived_index
 from src.api.schemas import RoleCreate, RoleUpdate, CategoryTreePut
 from src import category_tree
-from src.utils import resolve_path
+from src.utils import roles_dir
 
 router = APIRouter(tags=["roles"])
 
 
 def _get_roles_dir() -> str:
-    # resolve_path 在调用时动态读取 PROJECT_ROOT，见 chapters.py 里的详细注释
-    return resolve_path("roles")
+    # roles_dir() 在调用时动态读取 PROJECT_ROOT，见 chapters.py 里的详细注释
+    return roles_dir()
 
 
 @router.get("/roles")

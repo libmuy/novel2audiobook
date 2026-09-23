@@ -13,7 +13,7 @@ from src.api.routers import novels, chapters, segments, roles, tasks, system, ev
 @asynccontextmanager
 async def lifespan(app):
     # 启动
-    from tools.gpu_arbiter import recover_orphaned_suspension
+    from src.tools.gpu_arbiter import recover_orphaned_suspension
     config = get_config()
     recover_orphaned_suspension(config)
 
@@ -45,7 +45,7 @@ def create_app():
 
     # 静态文件（所有 /api 路由之后）；resolve_path 动态读取 PROJECT_ROOT，
     # 见 src/api/routers/chapters.py 里的详细注释
-    static_dir = resolve_path(os.path.join("web", "static"))
+    static_dir = resolve_path(os.path.join("src", "web", "static"))
     os.makedirs(static_dir, exist_ok=True)
     app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
 

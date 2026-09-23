@@ -15,7 +15,7 @@ ROLE_REFS_PATH = os.path.join(PROJECT_ROOT, ".cache", "index", "role_refs.json")
 
 
 def compute_fingerprint(library_dir: str = None) -> str:
-    """把所有 library/*/chapters/*/script_final.json 的
+    """把所有 data/library/*/chapters/*/script_final.json 的
     (相对路径, mtime, size) 三元组排序后拼起来算 md5。
     只 stat 不读内容——几千个文件也是毫秒级。"""
     if library_dir is None:

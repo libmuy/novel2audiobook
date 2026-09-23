@@ -178,7 +178,7 @@ class TestPatchRouting:
 
 class TestLibraryRoot:
     def test_default_when_unconfigured(self, project_root):
-        assert library.library_root() == str(project_root / "library")
+        assert library.library_root() == str(project_root / "data" / "library")
 
     def test_reads_relative_config(self, project_root):
         _write(project_root / "config" / "global_config.yaml", "server:\n  library_root: books\n")
@@ -301,13 +301,13 @@ class TestNoMachineSpecificFallback:
 
 class TestExternalTools:
     def test_serve_command_default_and_configured(self):
-        from tools import gpu_arbiter
+        from src.tools import gpu_arbiter
         assert gpu_arbiter.serve_command_from_config({}) == "ai"
         assert gpu_arbiter.serve_command_from_config({"tools": None}) == "ai"
         assert gpu_arbiter.serve_command_from_config({"tools": {"llm_serve_command": "myai"}}) == "myai"
 
     def test_start_llama_server_uses_given_command(self, monkeypatch):
-        from tools import gpu_arbiter
+        from src.tools import gpu_arbiter
         calls = []
         monkeypatch.setattr(gpu_arbiter, "is_server_up", lambda *a, **k: bool(calls))
         monkeypatch.setattr(gpu_arbiter.subprocess, "Popen", lambda cmd, **k: calls.append(cmd))
@@ -316,7 +316,7 @@ class TestExternalTools:
         assert calls == [["myai", "llm", "serve", "m", "--port", "8080"]]
 
     def test_start_llama_server_defaults_to_ai(self, monkeypatch):
-        from tools import gpu_arbiter
+        from src.tools import gpu_arbiter
         calls = []
         monkeypatch.setattr(gpu_arbiter, "is_server_up", lambda *a, **k: bool(calls))
         monkeypatch.setattr(gpu_arbiter.subprocess, "Popen", lambda cmd, **k: calls.append(cmd))
@@ -325,13 +325,13 @@ class TestExternalTools:
         assert calls[0][0] == "ai"
 
     def test_llm_suspended_passes_configured_command(self):
-        from tools import gpu_arbiter
+        from src.tools import gpu_arbiter
         s = gpu_arbiter.LlmSuspendedForGpu({"llm": {}, "tools": {"llm_serve_command": "myai"}})
         assert s.serve_command == "myai"
 
     @pytest.fixture
     def seed_script(self):
-        path = os.path.join(utils.get_project_root(), "tools", "generate_seed_reference.py")
+        path = os.path.join(utils.get_project_root(), "src", "tools", "generate_seed_reference.py")
         spec = importlib.util.spec_from_file_location("generate_seed_reference_under_test", path)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)

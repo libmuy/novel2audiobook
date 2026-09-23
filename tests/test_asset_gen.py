@@ -41,7 +41,7 @@ def sample_specs():
 
 @pytest.fixture
 def tmp_assets_dir(tmp_project_dir):
-    """隔离的素材输出目录（不落在真实 assets/ 下）"""
+    """隔离的素材输出目录（不落在真实 data/assets/ 下）"""
     return os.path.join(tmp_project_dir, "assets")
 
 

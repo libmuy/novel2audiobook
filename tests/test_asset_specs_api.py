@@ -11,7 +11,7 @@ from src.task_queue import TaskQueue
 from src import asset_gen, asset_specs_store as store
 
 REAL_SPEC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                         "assets", "asset_specs.yaml")
+                         "data", "assets", "asset_specs.yaml")
 
 
 @pytest.fixture
@@ -19,8 +19,8 @@ def client(tmp_path, monkeypatch):
     """隔离环境：PROJECT_ROOT 指到 tmp，assets/asset_specs.yaml 是真实文件的副本"""
     import src.utils
     monkeypatch.setattr(src.utils, "PROJECT_ROOT", str(tmp_path))
-    (tmp_path / "assets").mkdir()
-    shutil.copy(REAL_SPEC, tmp_path / "assets" / "asset_specs.yaml")
+    (tmp_path / "data" / "assets").mkdir(parents=True)
+    shutil.copy(REAL_SPEC, tmp_path / "data" / "assets" / "asset_specs.yaml")
 
     config = {"server": {"cpu_workers": 1}, "llm": {}, "tts": {}, "mixing": {}}
     deps.set_config(config)
@@ -30,12 +30,12 @@ def client(tmp_path, monkeypatch):
 
 
 def _spec_text(tmp_path):
-    return (tmp_path / "assets" / "asset_specs.yaml").read_text(encoding="utf-8")
+    return (tmp_path / "data" / "assets" / "asset_specs.yaml").read_text(encoding="utf-8")
 
 
 def _gen_mock(tmp_path):
     mock = asset_gen.MockAudioGenBackend()
-    asset_gen.generate_assets(assets_dir=str(tmp_path / "assets"),
+    asset_gen.generate_assets(assets_dir=str(tmp_path / "data" / "assets"),
                               backend_map={"ambience": mock, "sfx": mock})
 
 
@@ -108,7 +108,7 @@ class TestUpdate:
 class TestDelete:
     def test_delete_keeps_files_by_default(self, client, tmp_path):
         _gen_mock(tmp_path)
-        wav = tmp_path / "assets" / "sfx" / "sword_clash.wav"
+        wav = tmp_path / "data" / "assets" / "sfx" / "sword_clash.wav"
         assert wav.exists()
         resp = client.delete("/api/asset-specs/sfx/sword_clash")
         assert resp.status_code == 200 and resp.json()["files_deleted"] is False
@@ -120,8 +120,8 @@ class TestDelete:
         _gen_mock(tmp_path)
         resp = client.delete("/api/asset-specs/sfx/sword_clash?delete_files=true")
         assert resp.json()["files_deleted"] is True
-        assert not (tmp_path / "assets" / "sfx" / "sword_clash.wav").exists()
-        assert not (tmp_path / "assets" / "sfx" / "sword_clash.meta.json").exists()
+        assert not (tmp_path / "data" / "assets" / "sfx" / "sword_clash.wav").exists()
+        assert not (tmp_path / "data" / "assets" / "sfx" / "sword_clash.meta.json").exists()
 
     def test_delete_missing_404(self, client):
         assert client.delete("/api/asset-specs/sfx/nope").status_code == 404
@@ -139,7 +139,7 @@ class TestAudio:
         assert resp.content[:4] == b"RIFF"
         # 同名重新生成后 URL 不变，必须让浏览器每次重新验证，不能一直播缓存里的旧音频
         assert resp.headers["cache-control"] == "no-cache"
-        assert resp.content == (tmp_path / "assets" / "sfx" / "sword_clash.wav").read_bytes()
+        assert resp.content == (tmp_path / "data" / "assets" / "sfx" / "sword_clash.wav").read_bytes()
 
     def test_still_playable_when_stale(self, client, tmp_path):
         """规格改了（STALE）但旧音频还在：仍然可以试听旧版本"""

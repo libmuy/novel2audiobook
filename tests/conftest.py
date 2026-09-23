@@ -37,7 +37,7 @@ def tmp_roles_dir(tmp_project_dir):
     from src.utils import get_project_root
 
     tmp_roles = os.path.join(tmp_project_dir, "roles")
-    real_roles = os.path.join(get_project_root(), "roles")
+    real_roles = os.path.join(get_project_root(), "data", "roles")
 
     # 如果真实 roles 存在，复制其内容
     if os.path.exists(real_roles):

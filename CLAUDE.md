@@ -21,6 +21,7 @@
   `./run.sh tts-serve {start,stop,status}`；启动会与 llama-server
   争抢显存，交互式终端下默认会先询问换手确认（`--yes` 跳过）
 - 小说/章节管理：`./run.sh novel|node|chapter ...`（见 `./run.sh --help`）
+- 管理 index-tts / ACE-Step 第三方源码仓库（不随项目分发）：`./run.sh repos {status,setup}`
 
 `./run.sh` 是项目根目录唯一的入口脚本，会自己定位项目 venv 的 python（顺序：`N2A_PYTHON` 环境变量 >
 已激活的 venv > `config/local_config.yaml` 的 `tools.project_python` > `./.venv`），任意 CWD 均可调用，
@@ -30,8 +31,11 @@
 - 配置分两层：`config/global_config.yaml`（入库，与机器无关的参数）+ `config/local_config.yaml`
   （gitignore，本机专属的 venv/权重绝对路径、外部命令、espeak 路径，模板见
   `config/local_config.example.yaml`），后者按键深合并覆盖前者。换机器只改 local。
-- 目录约定：根目录只放 `run.sh`（唯一入口）、`README.md`/`CLAUDE.md`/`AGENTS.md`、`requirements.txt`；
-  配置在 `config/`，辅助脚本在 `scripts/`（如 `scripts/activate.sh`），CLI 代码在 `src/`。
+- 目录约定：根目录只放 `run.sh`（唯一入口）、`README.md`/`CLAUDE.md`/`AGENTS.md`、`requirements.txt`，
+  以及 `config/`（配置）、`src/`（全部代码：CLI、后端、推理脚本 `src/tools/`、
+  辅助脚本 `src/scripts/`、Web 前端 `src/web/`）、`data/`（全部数据资产：
+  `data/library`、`data/roles`、`data/assets`）、`tests/`、`docs/`。
+  index-tts / ACE-Step 的第三方源码仓库不随项目分发，见 `./run.sh repos setup`。
 - 不要往代码里写死路径/端口；路径类配置缺失时应报错或降级，不要回落到某台机器的字面量。
 - 文档索引见 `docs/README.md`（环境搭建、系统功能说明、阶段计划 001–010）。
 
@@ -40,10 +44,10 @@
   环境（见 `docs/indextts_setup.md`）；任一未就绪时自动降级为规则/占位实现，
   不会中断管线，但产出质量会明显下降，正式产出前请用 `./run.sh status`
   和 `timeline.json` 里的 `tts_engine`/`used_fallback` 字段确认实际走的是哪个引擎。
-- `tts` 阶段用 IndexTTS 合成时会通过 `tools/gpu_arbiter.py` 自动暂停/恢复
+- `tts` 阶段用 IndexTTS 合成时会通过 `src/tools/gpu_arbiter.py` 自动暂停/恢复
   llama-server（两者共用 GPU 显存，无法同时常驻），命令结束后会自动恢复
   llama-server，无需手动干预。
-- `./run.sh test` 全程在隔离临时目录运行，不会污染 `library/`、`roles/` 等共享目录。
+- `./run.sh test` 全程在隔离临时目录运行，不会污染 `data/library/`、`data/roles/` 等共享目录。
 - `parse` 不再自动注册角色：清单外说话人会被标记为 `speaker: null`，
   需人工在配音工作台指派后才能执行 TTS。
-- Web 界面 = FastAPI + Vue3 全局构建（`web/static/js/app.js`，模板字符串组件，无构建工具、模板内禁嵌套反引号、离线运行）；旧 Gradio/Flask 界面已于计划 005/006 移除。
+- Web 界面 = FastAPI + Vue3 全局构建（`src/web/static/js/app.js`，模板字符串组件，无构建工具、模板内禁嵌套反引号、离线运行）；旧 Gradio/Flask 界面已于计划 005/006 移除。

@@ -11,15 +11,15 @@ from src.task_queue import TaskQueue
 from src import asset_gen, asset_specs_store as store
 
 REAL_SPEC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                         "assets", "asset_specs.yaml")
+                         "data", "assets", "asset_specs.yaml")
 
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     import src.utils
     monkeypatch.setattr(src.utils, "PROJECT_ROOT", str(tmp_path))
-    (tmp_path / "assets").mkdir()
-    shutil.copy(REAL_SPEC, tmp_path / "assets" / "asset_specs.yaml")
+    (tmp_path / "data" / "assets").mkdir(parents=True)
+    shutil.copy(REAL_SPEC, tmp_path / "data" / "assets" / "asset_specs.yaml")
     config = {"server": {"cpu_workers": 1}, "llm": {}, "tts": {}, "mixing": {}}
     deps.set_config(config)
     deps.set_queue(TaskQueue(config=config, tasks_dir=str(tmp_path / "tasks"),
@@ -28,7 +28,7 @@ def client(tmp_path, monkeypatch):
 
 
 def _text(tmp_path):
-    return (tmp_path / "assets" / "asset_specs.yaml").read_text(encoding="utf-8")
+    return (tmp_path / "data" / "assets" / "asset_specs.yaml").read_text(encoding="utf-8")
 
 
 def _row(client, kind, name):
@@ -94,7 +94,7 @@ class TestSpecHashPinned:
 
     def test_editing_metadata_keeps_generated_asset_ok(self, client, tmp_path):
         mock = asset_gen.MockAudioGenBackend()
-        asset_gen.generate_assets(assets_dir=str(tmp_path / "assets"), backend_map={"ambience": mock, "sfx": mock})
+        asset_gen.generate_assets(assets_dir=str(tmp_path / "data" / "assets"), backend_map={"ambience": mock, "sfx": mock})
         assert _row(client, "sfx", "sword_clash")["status"].startswith("OK")
         client.patch("/api/asset-specs/sfx/sword_clash", json={"category": "战斗", "tags": ["金属"]})
         assert _row(client, "sfx", "sword_clash")["status"].startswith("OK")

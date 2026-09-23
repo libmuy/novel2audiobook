@@ -1,10 +1,10 @@
-"""素材规格路由（assets/asset_specs.yaml 的增删改查）"""
+"""素材规格路由（data/assets/asset_specs.yaml 的增删改查）"""
 import os
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from src import asset_gen, asset_specs_store as store, category_tree
-from src.utils import resolve_path
+from src.utils import assets_dir
 from src.api.schemas import AssetSpecCreate, AssetSpecUpdate, CategoryTreePut
 
 router = APIRouter(prefix="/asset-specs", tags=["assets"])
@@ -96,7 +96,7 @@ def get_asset_audio(kind: str, name: str):
         store.validate_name(name)
     except store.SpecError as e:
         raise HTTPException(400, str(e))
-    path = os.path.join(resolve_path("assets"), kind, f"{name}.wav")
+    path = os.path.join(assets_dir(), kind, f"{name}.wav")
     if not os.path.exists(path):
         raise HTTPException(404, f"素材 {kind}/{name} 还没有生成音频")
     return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "no-cache"})

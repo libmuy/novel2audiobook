@@ -15,8 +15,8 @@ from src.task_queue import TaskQueue
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     """创建隔离的测试客户端"""
-    library_dir = tmp_path / "library"
-    roles_dir = tmp_path / "roles"
+    library_dir = tmp_path / "data" / "library"
+    roles_dir = tmp_path / "data" / "roles"
     tasks_dir = tmp_path / "tasks"
     os.makedirs(library_dir)
     os.makedirs(roles_dir)
@@ -112,7 +112,7 @@ class TestNodesAPI:
         assert "status" in chapter_node and chapter_node["status"]
 
     def _chapter_dir(self, tmp_path, nid, cid):
-        return tmp_path / "library" / nid / "chapters" / cid
+        return tmp_path / "data" / "library" / nid / "chapters" / cid
 
     def test_chapter_stats_counts_segments_voiced_and_unbound(self, client, tmp_path):
         nid = self._create_novel(client, volume=False, part=False)
@@ -203,7 +203,7 @@ class TestNodesAPI:
                             json={"type": "chapter", "title": "章一", "parent_id": vol_id}).json()["node_id"]
         client.put(f"/api/novels/{nid}/chapters/{ch_id}/raw", files={"file": ("raw.txt", b"content")})
 
-        ch_dir = tmp_path / "library" / nid / "chapters" / ch_id
+        ch_dir = tmp_path / "data" / "library" / nid / "chapters" / ch_id
         assert ch_dir.is_dir()
 
         resp = client.delete(f"/api/novels/{nid}/nodes/{vol_id}?confirm=true")
@@ -213,7 +213,7 @@ class TestNodesAPI:
         tree = client.get(f"/api/novels/{nid}/tree").json()["novel"]["tree"]
         assert tree == []
         assert not ch_dir.is_dir(), "章节目录不应该原地保留（应移入 .trash/）"
-        trash_dir = tmp_path / "library" / nid / ".trash"
+        trash_dir = tmp_path / "data" / "library" / nid / ".trash"
         assert trash_dir.is_dir() and len(list(trash_dir.iterdir())) == 1
 
 
@@ -227,7 +227,7 @@ class TestChaptersAPI:
         resp = client.put(f"/api/novels/{nid}/chapters/{ch_id}/raw", files={"file": ("raw.txt", b"hello")})
         assert resp.status_code == 200
         assert resp.json() == {"ok": True, "confirmed": True}
-        raw_path = tmp_path / "library" / nid / "chapters" / ch_id / "raw.txt"
+        raw_path = tmp_path / "data" / "library" / nid / "chapters" / ch_id / "raw.txt"
         assert raw_path.read_bytes() == b"hello"
 
     def test_reimport_without_confirm_previews_and_does_not_touch_files(self, client, tmp_path):
@@ -235,7 +235,7 @@ class TestChaptersAPI:
         ch_id = self._new_chapter(client, nid)
         client.put(f"/api/novels/{nid}/chapters/{ch_id}/raw", files={"file": ("raw.txt", b"old content")})
 
-        ch_dir = tmp_path / "library" / nid / "chapters" / ch_id
+        ch_dir = tmp_path / "data" / "library" / nid / "chapters" / ch_id
         (ch_dir / "script_final.json").write_text("[]")
         (ch_dir / "audio_cache").mkdir()
         (ch_dir / "audio_cache" / "x.wav").write_bytes(b"fake")
@@ -255,7 +255,7 @@ class TestChaptersAPI:
         ch_id = self._new_chapter(client, nid)
         client.put(f"/api/novels/{nid}/chapters/{ch_id}/raw", files={"file": ("raw.txt", b"old content")})
 
-        ch_dir = tmp_path / "library" / nid / "chapters" / ch_id
+        ch_dir = tmp_path / "data" / "library" / nid / "chapters" / ch_id
         (ch_dir / "script_final.json").write_text("[]")
         (ch_dir / "audio_cache").mkdir()
         (ch_dir / "audio_cache" / "x.wav").write_bytes(b"fake")
@@ -274,7 +274,7 @@ class TestChaptersAPI:
 
         assert client.get(f"/api/novels/{nid}/chapters/{ch_id}/timeline").status_code == 404
 
-        ch_dir = tmp_path / "library" / nid / "chapters" / ch_id
+        ch_dir = tmp_path / "data" / "library" / nid / "chapters" / ch_id
         (ch_dir / "timeline.json").write_text(json.dumps({"chapter_id": ch_id, "items": [{"seg_id": 1}]}))
         resp = client.get(f"/api/novels/{nid}/chapters/{ch_id}/timeline")
         assert resp.status_code == 200
@@ -284,7 +284,7 @@ class TestChaptersAPI:
         nid = client.post("/api/novels", json={"title": "音频测试"}).json()["novel_id"]
         ch_id = self._new_chapter(client, nid)
         client.put(f"/api/novels/{nid}/chapters/{ch_id}/raw", files={"file": ("raw.txt", b"x")})
-        ch_dir = tmp_path / "library" / nid / "chapters" / ch_id
+        ch_dir = tmp_path / "data" / "library" / nid / "chapters" / ch_id
         script = [{"seg_id": 1, "speaker": "narrator", "text": "你好", "emotion": "neutral"}]
         (ch_dir / "script_final.json").write_text(json.dumps(script))
 
@@ -302,7 +302,7 @@ class TestChaptersAPI:
         nid = client.post("/api/novels", json={"title": "未绑定测试"}).json()["novel_id"]
         ch_id = self._new_chapter(client, nid)
         client.put(f"/api/novels/{nid}/chapters/{ch_id}/raw", files={"file": ("raw.txt", b"x")})
-        ch_dir = tmp_path / "library" / nid / "chapters" / ch_id
+        ch_dir = tmp_path / "data" / "library" / nid / "chapters" / ch_id
         script = [{"seg_id": 1, "speaker": None, "text": "你好", "emotion": "neutral"}]
         (ch_dir / "script_final.json").write_text(json.dumps(script))
         assert client.get(f"/api/novels/{nid}/chapters/{ch_id}/segments/1/audio").status_code == 404
@@ -314,7 +314,7 @@ class TestChaptersAPI:
 
         assert client.get(f"/api/novels/{nid}/chapters/{ch_id}/output.mp3").status_code == 404
 
-        ch_dir = tmp_path / "library" / nid / "chapters" / ch_id
+        ch_dir = tmp_path / "data" / "library" / nid / "chapters" / ch_id
         output_dir = ch_dir / "output"
         output_dir.mkdir()
         (output_dir / "chapter_0001.mp3").write_bytes(b"ID3fake")
@@ -330,7 +330,7 @@ class TestChaptersAPI:
         nid = client.post("/api/novels", json={"title": "新旧文件测试"}).json()["novel_id"]
         ch_id = self._new_chapter(client, nid)
         client.put(f"/api/novels/{nid}/chapters/{ch_id}/raw", files={"file": ("raw.txt", b"x")})
-        output_dir = tmp_path / "library" / nid / "chapters" / ch_id / "output"
+        output_dir = tmp_path / "data" / "library" / nid / "chapters" / ch_id / "output"
         output_dir.mkdir(parents=True)
         (output_dir / "chapter_0001.mp3").write_bytes(b"OLD")
         time.sleep(0.05)
@@ -344,7 +344,7 @@ class TestChaptersAPI:
         nid = client.post("/api/novels", json={"title": "素材引用测试"}).json()["novel_id"]
         ch_id = self._new_chapter(client, nid)
         client.put(f"/api/novels/{nid}/chapters/{ch_id}/raw", files={"file": ("raw.txt", b"x")})
-        ch_dir = tmp_path / "library" / nid / "chapters" / ch_id
+        ch_dir = tmp_path / "data" / "library" / nid / "chapters" / ch_id
         timeline = {
             "chapter_id": ch_id,
             "items": [
@@ -354,7 +354,7 @@ class TestChaptersAPI:
         }
         (ch_dir / "timeline.json").write_text(json.dumps(timeline))
         # 只让 sword_clash 真实存在，rain_heavy 缺失
-        sfx_dir = tmp_path / "assets" / "sfx"
+        sfx_dir = tmp_path / "data" / "assets" / "sfx"
         sfx_dir.mkdir(parents=True)
         (sfx_dir / "sword_clash.wav").write_bytes(b"fake")
 
@@ -372,7 +372,7 @@ class TestChaptersAPI:
         nid = client.post("/api/novels", json={"title": "同步测试"}).json()["novel_id"]
         ch_id = self._new_chapter(client, nid)
         client.put(f"/api/novels/{nid}/chapters/{ch_id}/raw", files={"file": ("raw.txt", b"x")})
-        ch_dir = tmp_path / "library" / nid / "chapters" / ch_id
+        ch_dir = tmp_path / "data" / "library" / nid / "chapters" / ch_id
         script = [{"seg_id": 1, "speaker": "narrator", "text": "a", "emotion": "neutral",
                    "sfx": "sword_clash", "bgm": None}]
         (ch_dir / "script_final.json").write_text(json.dumps(script))
@@ -392,7 +392,7 @@ class TestSegmentsAPI:
         ch_id = client.post(f"/api/novels/{nid}/nodes",
                             json={"type": "chapter", "title": "章一"}).json()["node_id"]
         client.put(f"/api/novels/{nid}/chapters/{ch_id}/raw", files={"file": ("raw.txt", b"x")})
-        ch_dir = tmp_path / "library" / nid / "chapters" / ch_id
+        ch_dir = tmp_path / "data" / "library" / nid / "chapters" / ch_id
         (ch_dir / "script_final.json").write_text(json.dumps(script))
         return nid, ch_id
 
@@ -401,7 +401,7 @@ class TestSegmentsAPI:
         nid, ch_id = self._chapter_with_script(client, tmp_path, script)
         resp = client.patch(f"/api/novels/{nid}/chapters/{ch_id}/segments/1", json={"speaker": "su_yan"})
         assert resp.status_code == 200
-        saved = json.loads((tmp_path / "library" / nid / "chapters" / ch_id / "script_final.json").read_text())
+        saved = json.loads((tmp_path / "data" / "library" / nid / "chapters" / ch_id / "script_final.json").read_text())
         assert saved[0]["speaker"] == "su_yan"
 
     def test_update_segment_speaker_null_clears_binding(self, client, tmp_path):
@@ -409,7 +409,7 @@ class TestSegmentsAPI:
         nid, ch_id = self._chapter_with_script(client, tmp_path, script)
         resp = client.patch(f"/api/novels/{nid}/chapters/{ch_id}/segments/1", json={"speaker": None})
         assert resp.status_code == 200
-        saved = json.loads((tmp_path / "library" / nid / "chapters" / ch_id / "script_final.json").read_text())
+        saved = json.loads((tmp_path / "data" / "library" / nid / "chapters" / ch_id / "script_final.json").read_text())
         assert saved[0]["speaker"] is None
 
     def test_batch_update_segments(self, client, tmp_path):
@@ -422,14 +422,14 @@ class TestSegmentsAPI:
                            json={"seg_ids": [1, 2], "set": {"emotion": "happy"}})
         assert resp.status_code == 200
         assert resp.json()["updated"] == 2
-        saved = json.loads((tmp_path / "library" / nid / "chapters" / ch_id / "script_final.json").read_text())
+        saved = json.loads((tmp_path / "data" / "library" / nid / "chapters" / ch_id / "script_final.json").read_text())
         assert all(seg["emotion"] == "happy" for seg in saved)
 
     def _make_available(self, tmp_path, kind, name):
         # list_available_assets() 扫描 assets/sfx、assets/ambience 目录，
         # 公开字段名是 bgm/sfx，内部目录名是 ambience/sfx——见 src/utils.py
         dirname = "ambience" if kind == "bgm" else "sfx"
-        d = tmp_path / "assets" / dirname
+        d = tmp_path / "data" / "assets" / dirname
         d.mkdir(parents=True, exist_ok=True)
         (d / f"{name}.wav").write_bytes(b"fake wav")
 
@@ -439,7 +439,7 @@ class TestSegmentsAPI:
         nid, ch_id = self._chapter_with_script(client, tmp_path, script)
         resp = client.patch(f"/api/novels/{nid}/chapters/{ch_id}/segments/1", json={"sfx": "sword_clash"})
         assert resp.status_code == 200
-        saved = json.loads((tmp_path / "library" / nid / "chapters" / ch_id / "script_final.json").read_text())
+        saved = json.loads((tmp_path / "data" / "library" / nid / "chapters" / ch_id / "script_final.json").read_text())
         assert saved[0]["sfx"] == "sword_clash"
 
     def test_update_segment_sfx_unknown_name_rejected(self, client, tmp_path):
@@ -453,7 +453,7 @@ class TestSegmentsAPI:
         nid, ch_id = self._chapter_with_script(client, tmp_path, script)
         resp = client.patch(f"/api/novels/{nid}/chapters/{ch_id}/segments/1", json={"bgm": None})
         assert resp.status_code == 200
-        saved = json.loads((tmp_path / "library" / nid / "chapters" / ch_id / "script_final.json").read_text())
+        saved = json.loads((tmp_path / "data" / "library" / nid / "chapters" / ch_id / "script_final.json").read_text())
         assert saved[0]["bgm"] is None
 
     def test_batch_update_segments_bgm_unknown_name_rejected(self, client, tmp_path):
@@ -548,7 +548,7 @@ class TestRoleCategoryTreeAPI:
         assert [n["title"] for n in body["tree"]] == ["主角", "配角"]
         assert body["categories"] == ["主角", "配角"]
         import json as _json
-        manifest = _json.loads((tmp_path / "roles" / "roles_manifest.json").read_text(encoding="utf-8"))
+        manifest = _json.loads((tmp_path / "data" / "roles" / "roles_manifest.json").read_text(encoding="utf-8"))
         assert "category_tree" not in manifest  # 用户没保存过树，不迁移数据
 
     def test_flat_put_does_not_touch_tree(self, client):

@@ -9,7 +9,7 @@ import json
 import logging
 import numpy as np
 from pydub import AudioSegment
-from src.utils import load_global_config, update_chapter_status, resolve_path
+from src.utils import load_global_config, update_chapter_status, assets_dir
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +149,7 @@ def _build_scene_bgm_track(items: list, total_duration_ms: int, chapter_dir: str
     for start_ms, end_ms, bgm_name in scenes:
         if bgm_name is None:
             continue
-        bgm_file = resolve_path(os.path.join("assets", "ambience", f"{bgm_name}.wav"))
+        bgm_file = os.path.join(assets_dir(), "ambience", f"{bgm_name}.wav")
         if not os.path.exists(bgm_file):
             # mix 是读路径，缺素材不该在这里静默补一份占位音写进共享的 assets/
             # 目录（那是 src/asset_gen.py 的职责）；跳过这段场景音即可，
@@ -202,7 +202,7 @@ def mix_chapter(chapter_dir: str, timeline_data: dict = None, config: dict = Non
     瞬时音效(SFX)在特定时间戳 Overlay。
     导出为 output/chapter_XXXX.mp3。
 
-    voice_only 未显式传入时，取 global_config.yaml 的 mixing.voice_only
+    voice_only 未显式传入时，取 config/global_config.yaml 的 mixing.voice_only
     （当前阶段默认 True——效果音/环境音流水线尚未做，先只出人声成片，
     避免任何缺素材时的占位音悄悄混进成片）。
     """
@@ -268,7 +268,7 @@ def mix_chapter(chapter_dir: str, timeline_data: dict = None, config: dict = Non
         sfx_name = item.get("sfx")
         if sfx_name:
             sfx_segment_count += 1
-            sfx_file = resolve_path(os.path.join("assets", "sfx", f"{sfx_name}.wav"))
+            sfx_file = os.path.join(assets_dir(), "sfx", f"{sfx_name}.wav")
             if not os.path.exists(sfx_file):
                 # 同上：不静默补占位音写进共享 assets/，跳过这条音效即可
                 logger.warning("句段 %s 引用的音效 %r 不存在（%s），跳过该条音效叠加",

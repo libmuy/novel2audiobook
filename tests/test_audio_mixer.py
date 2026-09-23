@@ -269,8 +269,8 @@ class TestMixChapterVoiceOnly:
         """未显式传 voice_only、且 config 里没有 mixing.voice_only 键时，默认按纯人声处理
         （效果音阶段尚未开始，默认不能悄悄把占位音混进成片）"""
         timeline = self._make_timeline_with_effects(tmp_chapter_dir)
-        sfx_path = utils.resolve_path(os.path.join("assets", "sfx", "no_such_sfx_xyz.wav"))
-        bgm_path = utils.resolve_path(os.path.join("assets", "ambience", "no_such_bgm_xyz.wav"))
+        sfx_path = os.path.join(utils.assets_dir(), "sfx", "no_such_sfx_xyz.wav")
+        bgm_path = os.path.join(utils.assets_dir(), "ambience", "no_such_bgm_xyz.wav")
 
         output_path = audio_mixer.mix_chapter(
             tmp_chapter_dir, timeline_data=timeline, config={"mixing": {}}
@@ -296,8 +296,8 @@ class TestMixChapterVoiceOnly:
         而不是像旧行为那样静默调用 generate_mock_audio_file 往共享 assets/ 目录写文件。
         """
         timeline = self._make_timeline_with_effects(tmp_chapter_dir)
-        sfx_path = utils.resolve_path(os.path.join("assets", "sfx", "no_such_sfx_xyz.wav"))
-        bgm_path = utils.resolve_path(os.path.join("assets", "ambience", "no_such_bgm_xyz.wav"))
+        sfx_path = os.path.join(utils.assets_dir(), "sfx", "no_such_sfx_xyz.wav")
+        bgm_path = os.path.join(utils.assets_dir(), "ambience", "no_such_bgm_xyz.wav")
         assert not os.path.exists(sfx_path) and not os.path.exists(bgm_path)  # 前置条件
 
         output_path = audio_mixer.mix_chapter(

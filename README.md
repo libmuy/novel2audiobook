@@ -8,7 +8,7 @@
 raw.txt → script_draft.json → script_final.json → 增量 TTS → timeline.json → <novel_id>_ch_XXXX.mp3
 ```
 
-章节都在 `library/<novel_id>/chapters/ch_XXXX/` 下。所有命令都通过根目录唯一的入口脚本
+章节都在 `data/library/<novel_id>/chapters/ch_XXXX/` 下。所有命令都通过根目录唯一的入口脚本
 `./run.sh` 执行（自动使用项目 venv，见「环境」）。
 
 | 阶段 | 命令 | 说明 |
@@ -20,9 +20,10 @@ raw.txt → script_draft.json → script_final.json → 增量 TTS → timeline.
 | 状态 | `./run.sh status [--novel <novel_id>]` | 查看各章节各阶段产物是否齐全，及是否存在"上游更新但下游未重跑"的陈旧状态 |
 | 自检 | `./run.sh test --module {llm,tts,audio,assets,all,dry-run}` | 隔离临时工作区跑通全链路（Mock 引擎，不依赖网络/GPU），用于快速回归验证 |
 | 界面 | `./run.sh webui` | 启动 FastAPI + Vue3 管理界面（小说库、配音工作台、音效库、系统配置）。监听地址/端口取自 `config/global_config.yaml` 的 `server.host`/`server.port`（默认 `0.0.0.0:7860`，监听所有网卡；只想本机访问就把 `server.host` 改为 `127.0.0.1`），可用 `--host`/`--port` 覆盖 |
-| 素材 | `./run.sh assets [list\|gen] [--kind ambience\|sfx] [--only a,b] [--force]` | 管理/按 `assets/asset_specs.yaml` 增量生成环境音与音效素材库 |
+| 素材 | `./run.sh assets [list\|gen] [--kind ambience\|sfx] [--only a,b] [--force]` | 管理/按 `data/assets/asset_specs.yaml` 增量生成环境音与音效素材库 |
 | 常驻 TTS | `./run.sh tts-serve {start,stop,status}` | 常驻 IndexTTS 推理服务（试听用，避免每次重载模型）；启动会与 llama-server 争抢显存 |
 | 管理 | `./run.sh novel\|node\|chapter ...` | 小说/部卷/章节的增删改（见 `./run.sh --help`） |
+| 第三方仓库 | `./run.sh repos {status\|setup} [--only indextts\|acestep]` | 管理 index-tts / ACE-Step 的源码仓库（不随项目分发，见「环境」） |
 
 ## 环境
 
@@ -34,7 +35,7 @@ uv pip install --python /srv/unsafe/dev-env/venvs/novel2audiobook/bin/python -r 
 
 在 `config/local_config.yaml` 里把 `tools.project_python` 指向这个 venv 的 python 之后，直接用
 根目录唯一的入口 `./run.sh <子命令>` 即可，它会自己找到 venv，无需先 activate、也不受当前目录影响。
-需要交互式使用 venv 时：`source scripts/activate.sh`。
+需要交互式使用 venv 时：`source src/scripts/activate.sh`。
 
 外部依赖（不在 `requirements.txt` 里，均通过配置指向）：
 
@@ -46,7 +47,9 @@ uv pip install --python /srv/unsafe/dev-env/venvs/novel2audiobook/bin/python -r 
   llama-server 互斥调度等注意事项）。
 - **AudioLDM / TangoFlux / ACE-Step 独立环境**：环境音与音效生成，见
   [`docs/audioldm_setup.md`](docs/audioldm_setup.md)、[`docs/audiogen_setup.md`](docs/audiogen_setup.md)。
-- **espeak-ng**：仅 `tools/generate_seed_reference.py` 生成种子参考音频时需要，路径见 `tools.espeak_*`。
+  index-tts / ACE-Step 的源码仓库不随项目分发，`./run.sh repos setup` 按
+  `config/local_config.yaml` 里配置的 repo_dir 克隆到固定提交。
+- **espeak-ng**：仅 `src/tools/generate_seed_reference.py` 生成种子参考音频时需要，路径见 `tools.espeak_*`。
 
 这些依赖任一未就绪时，管线自动降级为规则/Mock 占位实现，保证 `./run.sh test` 之类的自检不因
 外部依赖而失败；正式产出前请用 `./run.sh status` 和 `timeline.json` 里的
@@ -54,9 +57,9 @@ uv pip install --python /srv/unsafe/dev-env/venvs/novel2audiobook/bin/python -r 
 
 ## 角色管理
 
-`roles/roles_manifest.json` 是全项目共享的角色清单。`parse` **不会**自动注册角色：
+`data/roles/roles_manifest.json` 是全项目共享的角色清单。`parse` **不会**自动注册角色：
 清单外的说话人会被标记为 `speaker: null`，需在配音工作台里指派（或新建角色）后才能执行
-TTS。新角色的 `roles/<role_id>/` 下可手动替换更贴合角色气质的 `reference.wav` 并调整
+TTS。新角色的 `data/roles/<role_id>/` 下可手动替换更贴合角色气质的 `reference.wav` 并调整
 `config.json` 的 `speed`/`pitch`。
 
 ## 配置

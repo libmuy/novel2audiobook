@@ -8,7 +8,10 @@ import argparse
 import shutil
 import tempfile
 
-from src.utils import get_chapter_dir, normalize_chapter_id, get_project_root, load_global_config
+from src.utils import (
+    get_chapter_dir, normalize_chapter_id, get_project_root, load_global_config,
+    roles_dir as default_roles_dir,
+)
 from src.status_tracker import print_status_table, get_novel_status_summary
 from src.llm_parser import process_chapter_parse, HeuristicBackend
 from src.tts_engine import process_chapter_tts, generate_tts_incremental, MockTTSBackend
@@ -17,6 +20,7 @@ from src.asset_gen import (
     generate_assets, load_asset_specs, print_asset_status_table,
     MockAudioGenBackend, VALID_KINDS, ASSET_BACKENDS, build_asset_gen_backend,
 )
+from src.third_party import REPOS as THIRD_PARTY_REPOS, print_status_table as print_repos_status_table, setup as setup_repos
 from src import library
 
 
@@ -36,7 +40,7 @@ def _make_isolated_test_workspace() -> tuple:
     shutil.copyfile(src_raw, os.path.join(chapter_dir, "raw.txt"))
 
     roles_dir = os.path.join(tmp_root, "roles")
-    shutil.copytree(os.path.join(root, "roles"), roles_dir)
+    shutil.copytree(default_roles_dir(), roles_dir)
 
     return chapter_dir, roles_dir, tmp_root
 
@@ -133,8 +137,8 @@ def run_test_module(module_name: str):
             )
             assert not summary["error"], f"素材生成出现错误: {summary['error']}"
             total = len(summary["generated"]) + len(summary["fallback"])
-            assert total > 0, "未生成任何素材（assets/asset_specs.yaml 是否为空？）"
-            print(f"  ✓ 生成素材库：{total} 条（隔离目录，不影响真实 assets/）")
+            assert total > 0, "未生成任何素材（data/assets/asset_specs.yaml 是否为空？）"
+            print(f"  ✓ 生成素材库：{total} 条（隔离目录，不影响真实 data/assets/）")
 
             # 增量性回归：同一份 spec 第二次生成应全部命中缓存
             summary_2 = generate_assets(
@@ -163,7 +167,7 @@ def _release_tts_daemon_if_running(auto_yes: bool) -> bool:
     正占着显存，交互式终端下先问一句是否释放，非交互式（管道/脚本/CI）或
     传了 --yes 则直接释放，不阻塞。返回 False 表示用户拒绝，调用方应中止。
     """
-    from tools import gpu_arbiter
+    from src.tools import gpu_arbiter
     if not gpu_arbiter.is_tts_daemon_running():
         return True
     if sys.stdin.isatty() and not auto_yes:
@@ -180,15 +184,15 @@ def _release_tts_daemon_if_running(auto_yes: bool) -> bool:
 def _confirm_batch_llm_swap(auto_yes: bool) -> bool:
     """
     B5 换手策略之二：`tts` 命令的批量链路本身就会通过
-    tools.gpu_arbiter.LlmSuspendedForGpu 自动停/起 llama-server（这条路径不变，
+    src.tools.gpu_arbiter.LlmSuspendedForGpu 自动停/起 llama-server（这条路径不变，
     见 src/tts_engine.IndexTTSBackend）；这里只是在交互式终端下、真的会发生
     换手时先告知一声，避免用户在不知情的情况下让 llama-server 被停用一整个
-    批次的时长（单章可能耗时 65-70 分钟，见 global_config.yaml 的 timeout_sec
+    批次的时长（单章可能耗时 65-70 分钟，见 config/global_config.yaml 的 timeout_sec
     注释）。非交互式/--yes 直接放行，不阻塞、不改变已有的自动换手行为。
     """
     if auto_yes or not sys.stdin.isatty():
         return True
-    from tools import gpu_arbiter
+    from src.tools import gpu_arbiter
     if gpu_arbiter.get_current_owner() != gpu_arbiter.OWNER_LLM:
         return True  # llama-server 本来就没在跑，不会产生换手代价
     stop_eta = gpu_arbiter.get_expected_swap_seconds("llm_stop")
@@ -235,7 +239,7 @@ def main():
     parser_mix.add_argument("--novel", required=True, help="小说 ID")
     parser_mix.add_argument("--chapter", required=True, help="章节 ID (如 0001 或 ch_0001)")
     parser_mix.add_argument("--with-assets", action="store_true",
-                             help="包含环境音/音效的完整闪避混音（覆盖 global_config.yaml 的 mixing.voice_only）")
+                             help="包含环境音/音效的完整闪避混音（覆盖 config/global_config.yaml 的 mixing.voice_only）")
 
     # 5. test
     parser_test = subparsers.add_parser("test", help="内置自检脚本")
@@ -249,7 +253,7 @@ def main():
     parser_assets.add_argument("--kind", choices=list(VALID_KINDS), help="仅处理 ambience（BGM）或 sfx 一类")
     parser_assets.add_argument("--only", help="逗号分隔的素材名列表，仅生成/刷新指定几条")
     parser_assets.add_argument("--force", action="store_true", help="忽略增量缓存，全部重新生成")
-    parser_assets.add_argument("--backend", choices=list(ASSET_BACKENDS), help="强制使用指定引擎（覆盖 global_config.yaml 里的 asset_gen.*_engine；mock 用于离线自检/占位铺库）")
+    parser_assets.add_argument("--backend", choices=list(ASSET_BACKENDS), help="强制使用指定引擎（覆盖 config/global_config.yaml 里的 asset_gen.*_engine；mock 用于离线自检/占位铺库）")
 
     # 7. tts-serve
     parser_tts_serve = subparsers.add_parser(
@@ -305,6 +309,17 @@ def main():
     parser_ch_reimport.add_argument("--chapter", required=True, help="章节 ID")
     parser_ch_reimport.add_argument("--raw", required=True, help="新的正文文件路径")
     parser_ch_reimport.add_argument("--yes", action="store_true", help="跳过确认")
+
+    # 11. repos
+    parser_repos = subparsers.add_parser(
+        "repos", help="管理 index-tts / ACE-Step-1.5 第三方源码仓库（不随项目分发，见 docs）"
+    )
+    repos_sub = parser_repos.add_subparsers(dest="repos_action")
+    parser_repos_status = repos_sub.add_parser("status", help="查看仓库路径/提交/软链接/venv editable 安装状态")
+    parser_repos_setup = repos_sub.add_parser(
+        "setup", help="按 config/local_config.yaml 的 repo_dir 克隆到固定提交，并修好软链接与 venv editable 安装"
+    )
+    parser_repos_setup.add_argument("--only", choices=list(THIRD_PARTY_REPOS), help="只处理指定的一个仓库")
 
     args = parser.parse_args()
 
@@ -401,7 +416,7 @@ def main():
                 sys.exit(1)
 
     elif args.command == "tts-serve":
-        from tools import gpu_arbiter
+        from src.tools import gpu_arbiter
         from src.tts_daemon import IndexTTSDaemon
         daemon = IndexTTSDaemon()
 
@@ -515,6 +530,26 @@ def main():
             print(f"已重新导入 {ch_display}，清除: {result['removed']}，保留缓存: {result['kept_cache_count']} 条")
         else:
             parser_chapter.print_help()
+
+    elif args.command == "repos":
+        if args.repos_action == "status":
+            print_repos_status_table()
+        elif args.repos_action == "setup":
+            only = [args.only] if args.only else None
+            results = setup_repos(only=only)
+            ok = True
+            for name, r in results.items():
+                label = THIRD_PARTY_REPOS[name]["label"]
+                print(f"[{label}]")
+                for step in r["steps"]:
+                    print(f"  - {step}")
+                if not r["ok"]:
+                    ok = False
+                    print(f"  ✗ 失败: {r['error']}")
+            if not ok:
+                sys.exit(1)
+        else:
+            parser_repos.print_help()
 
 
 if __name__ == "__main__":

@@ -7,8 +7,8 @@ import json
 from datetime import datetime
 import yaml
 
-# 项目根目录：src/utils.py 的上一级目录。所有“公共资产”（assets/、roles/、
-# global_config.yaml）一律基于此路径解析，避免因运行时 CWD 不同而找不到文件。
+# 项目根目录：src/utils.py 的上一级目录。所有“公共资产”（data/assets/、data/roles/、
+# config/global_config.yaml）一律基于此路径解析，避免因运行时 CWD 不同而找不到文件。
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -28,6 +28,23 @@ def resolve_optional_path(path) -> str:
     """resolve_path 的可缺省版：配置里没给（None/空串）就返回 None，而不是回落到某台机器的
     路径字面量。调用方据此判定"环境未配置"并降级（is_available() 判假）。"""
     return resolve_path(path) if path else None
+
+
+DATA_DIR_NAME = "data"
+
+
+def data_path(*parts: str) -> str:
+    """解析项目公共数据目录（data/）下的路径。故意做成函数而不是模块级绝对路径常量：
+    常量会在 import 时把 PROJECT_ROOT 冻结下来，测试里 monkeypatch PROJECT_ROOT 就不生效了。"""
+    return resolve_path(os.path.join(DATA_DIR_NAME, *parts))
+
+
+def roles_dir() -> str:
+    return data_path("roles")
+
+
+def assets_dir() -> str:
+    return data_path("assets")
 
 
 def calculate_md5(key_string: str) -> str:
@@ -78,11 +95,11 @@ def read_yaml_dict(path: str) -> dict:
 
 
 def load_global_config(config_path: str = None, local_path: str = None) -> dict:
-    """读取全局配置：global_config.yaml（入库、与机器无关的参数），再用 local_config.yaml
+    """读取全局配置：config/global_config.yaml（入库、与机器无关的参数），再用 config/local_config.yaml
     （gitignore、本机专属的路径/外部命令）按键深合并覆盖。
 
     只有**不传 config_path** 时才叠加 local 层：显式指定配置文件的调用方（测试用的临时
-    配置等）要的就是那一个文件，不该被本机的 local_config.yaml 悄悄改写。需要叠加时
+    配置等）要的就是那一个文件，不该被本机的 config/local_config.yaml 悄悄改写。需要叠加时
     显式传 local_path。
     """
     if config_path is None:
@@ -117,8 +134,8 @@ def list_available_assets() -> dict:
     供 LLM 解析提示词与混音器做“词表约束”校验，避免生成引用不存在文件的 sfx/bgm。
     """
     result = {"sfx": [], "bgm": []}
-    sfx_dir = os.path.join(PROJECT_ROOT, "assets", "sfx")
-    bgm_dir = os.path.join(PROJECT_ROOT, "assets", "ambience")
+    sfx_dir = os.path.join(assets_dir(), "sfx")
+    bgm_dir = os.path.join(assets_dir(), "ambience")
     if os.path.isdir(sfx_dir):
         result["sfx"] = sorted(
             os.path.splitext(f)[0] for f in os.listdir(sfx_dir) if f.endswith(".wav")

@@ -9,14 +9,14 @@
 那套坑）。模型仅约 0.2B 参数，直接用 **CPU** 推理即可，规避 ROCm 兼容性风险。
 
 音效（sfx）仍由 TangoFlux 生成，见 `docs/audiogen_setup.md`；ACE-Step 相关代码/
-环境未删除（`AceStepBackend`、`tools/acestep_*`），只是不再被
+环境未删除（`AceStepBackend`、`src/tools/acestep_infer.py`），只是不再被
 `src/asset_gen.build_asset_gen_backend()` 默认选用。
 
 ## 目录结构
 
 ```
-tools/
-├── audioldm_infer.py     # 批量推理脚本，被 src/asset_gen.AudioLDMBackend 子进程调用
+src/tools/
+└── audioldm_infer.py     # 批量推理脚本，被 src/asset_gen.AudioLDMBackend 子进程调用
 ```
 
 独立 venv（Python 3.11 + CPU torch + diffusers）：`/srv/unsafe/dev-env/venvs/audioldm`
@@ -55,7 +55,7 @@ mkdir -p /srv/unsafe/dev-env/models/audiogen/audioldm
 `src/audio_mixer.py` 的 `_build_scene_bgm_track()` 本来就会把 ambience 素材
 按 `loop_count = ceil(scene_duration / len(bgm_seg))` 循环拼接铺满整个场景时长
 （见该函数第 152-153 行），素材本身不需要是完整的 45-60 秒。AudioLDM 类扩散
-模型在训练时长范围（约 10 秒量级）内保真度最好，`assets/asset_specs.yaml`
+模型在训练时长范围（约 10 秒量级）内保真度最好，`data/assets/asset_specs.yaml`
 里 ambience 各条的 `duration_sec` 因此统一定为 10 秒，靠
 `src/asset_gen._post_process_ambience()` 已有的等功率交叉淡化循环拼接
 （裁掉首尾各 `ambience_loop_crossfade_ms`，落盘时长约 8 秒）+ 混音阶段的循环
@@ -64,16 +64,16 @@ mkdir -p /srv/unsafe/dev-env/models/audiogen/audioldm
 ### 1. `negative_prompt` 这次真正生效
 `diffusers.AudioLDMPipeline.__call__()` 原生支持 `negative_prompt` 参数，走
 classifier-free guidance；这是相对 ACE-Step 的实质性修复——ACE-Step 的
-`GenerationParams` 根本没有负向提示词槽位，`asset_specs.yaml` 里写的
+`GenerationParams` 根本没有负向提示词槽位，`data/assets/asset_specs.yaml` 里写的
 `negative_prompt` 之前从未真正传给模型。
 
 ### 2. CPU 推理速度参考
 本机实测：10 秒音频、10 步扩散，单条约 78 秒（含首次调用的模型加载时间不算
-在内，模型只需加载一次，`tools/audioldm_infer.py` 设计为单次加载、批量循环，
-同 `tools/tangoflux_infer.py`）。6 条 ambience 素材全量生成约 8-9 分钟，可以
+在内，模型只需加载一次，`src/tools/audioldm_infer.py` 设计为单次加载、批量循环，
+同 `src/tools/tangoflux_infer.py`）。6 条 ambience 素材全量生成约 8-9 分钟，可以
 接受，不需要上 GPU；如果后续素材条目变多、CPU 速度不够用，可以评估切
 `--device cuda`（ROCm 下未测试，需注意与 llama-server/ACE-Step 的显存互斥，
-复用 `tools/gpu_arbiter.LlmSuspendedForGpu`）。
+复用 `src/tools/gpu_arbiter.LlmSuspendedForGpu`）。
 
 ### 3. `AudioLDMPipeline` 已被 diffusers 标为 deprecated
 首次运行会打印 `The AudioLDMPipeline has been deprecated and will not receive
@@ -83,7 +83,7 @@ bug fixes...`——这是 diffusers 后续推荐迁移到 `AudioLDM2Pipeline`（
 
 ### 4. 原生采样率是 16kHz
 `pipe.vocoder.config.sampling_rate` 为 16000（比 TangoFlux/ACE-Step 的 44.1kHz
-低），`tools/audioldm_infer.py` 按此采样率写出原始 wav；后续
+低），`src/tools/audioldm_infer.py` 按此采样率写出原始 wav；后续
 `_post_process_ambience()` 统一重采样到 `target_sample_rate`（24kHz）时是
 上采样，不会引入额外失真，环境音以中低频内容为主，实测频谱分析未发现问题。
 

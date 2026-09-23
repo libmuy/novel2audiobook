@@ -4,9 +4,9 @@ TTS 推理模块 (支持基于 MD5 的哈希增量合成)
 架构：TTSBackend 抽象出两种实现——
 - MockTTSBackend：生成占位波形，无外部依赖，供离线自检 (`cli.py test`) 使用。
 - IndexTTSBackend：通过子进程调用独立部署的 IndexTTS-2.5 推理环境（见
-  tools/indextts_infer.py 与 docs/indextts_setup.md），按角色参考音频克隆音色、
+  src/tools/indextts_infer.py 与 docs/indextts_setup.md），按角色参考音频克隆音色、
   按 emotion 映射情感向量、按角色 speed 配置换算语速。GPU 显存与 llama-server
-  的 Qwen 模型互斥占用，见 tools/gpu_arbiter.py 的调度逻辑。
+  的 Qwen 模型互斥占用，见 src/tools/gpu_arbiter.py 的调度逻辑。
 
 无论使用哪种后端，MD5(speaker + text + emotion) 增量缓存逻辑保持不变；
 IndexTTS 合成失败时自动降级为 Mock 占位音，保证管线不中断（并记录警告）。
@@ -146,15 +146,16 @@ class IndexTTSBackend:
         self.config = config
         tts_cfg = config.get("tts", {}).get("index_tts", {})
         self.python_bin = resolve_optional_path(tts_cfg.get("python_bin"))
-        self.infer_script = resolve_path(tts_cfg.get("infer_script", "tools/indextts_infer.py"))
-        self.repo_dir = resolve_path(tts_cfg.get("repo_dir", "tools/indextts_repo"))
+        self.infer_script = resolve_path(tts_cfg.get("infer_script", "src/tools/indextts_infer.py"))
+        self.repo_dir = resolve_optional_path(tts_cfg.get("repo_dir"))
         self.checkpoints_dir = resolve_optional_path(tts_cfg.get("checkpoints_dir"))
         self.timeout = tts_cfg.get("timeout_sec", 1800)
 
     def is_available(self) -> bool:
-        # python_bin / checkpoints_dir 是本机专属路径，没配（local_config.yaml）就视为环境未就绪
+        # python_bin / repo_dir / checkpoints_dir 是本机专属路径，没配（config/local_config.yaml）
+        # 就视为环境未就绪；index-tts 源码仓库不再随项目分发，见 `./run.sh repos setup`
         return bool(
-            self.python_bin and self.checkpoints_dir
+            self.python_bin and self.repo_dir and self.checkpoints_dir
             and os.path.exists(self.python_bin)
             and os.path.exists(self.infer_script)
             and os.path.isdir(self.repo_dir)
@@ -207,7 +208,7 @@ class IndexTTSBackend:
                 "--jobs-file", jobs_file,
                 "--result-file", result_file,
             ]
-            from tools.gpu_arbiter import LlmSuspendedForTts  # 延迟导入，避免无网络场景下的循环依赖
+            from src.tools.gpu_arbiter import LlmSuspendedForTts  # 延迟导入，避免无网络场景下的循环依赖
 
             self._current_proc = None
             try:
@@ -456,7 +457,7 @@ def process_chapter_tts(chapter_dir: str, roles_dir: str = None, backend=None,
     基于 script_final.json 执行哈希增量 TTS，如果 script_final.json 不存在则抛出错误。
 
     backend 默认为 None——生产路径下由 generate_tts_incremental 按
-    global_config.yaml 的配置选择真实引擎；测试/自检必须显式传入
+    config/global_config.yaml 的配置选择真实引擎；测试/自检必须显式传入
     backend=MockTTSBackend()，避免意外触发真实 GPU 推理。
     """
     script_final_path = os.path.join(chapter_dir, "script_final.json")

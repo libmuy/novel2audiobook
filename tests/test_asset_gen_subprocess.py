@@ -65,7 +65,7 @@ def env(monkeypatch):
             events.append("arbiter_exit")
             return False
 
-    import tools.gpu_arbiter as ga
+    import src.tools.gpu_arbiter as ga
     monkeypatch.setattr(ga, "LlmSuspendedForGpu", RecordingArbiter)
     monkeypatch.setattr(asset_gen.subprocess, "Popen", FakePopen)
     monkeypatch.setattr(os, "getpgid", lambda pid: 900000 + pid)

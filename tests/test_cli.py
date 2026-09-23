@@ -70,7 +70,7 @@ class TestRunTestModule:
         import subprocess
 
         root = get_project_root()
-        library_dir = os.path.join(root, "library")
+        library_dir = os.path.join(root, "data", "library")
 
         # 获取测试前的小说列表
         if os.path.exists(library_dir):
@@ -90,17 +90,17 @@ class TestRunTestModule:
         else:
             after_novels = set()
 
-        # 自检不应在真实 library/ 下创建任何内容
+        # 自检不应在真实 data/library/ 下创建任何内容
         new_entries = after_novels - before_novels
         for entry in new_entries:
-            pytest.fail(f"测试污染了真实 library 目录: {entry}")
+            pytest.fail(f"测试污染了真实 data/library 目录: {entry}")
 
     def test_run_test_module_assets_does_not_pollute_real_assets_dir(self):
-        """assets 自检模块只写隔离临时目录，不应在真实 assets/ 下新增任何文件"""
+        """assets 自检模块只写隔离临时目录，不应在真实 data/assets/ 下新增任何文件"""
         from src.utils import get_project_root
 
         root = get_project_root()
-        assets_dir = os.path.join(root, "assets")
+        assets_dir = os.path.join(root, "data", "assets")
         before = set()
         for kind_dir in ("ambience", "sfx"):
             kind_path = os.path.join(assets_dir, kind_dir)

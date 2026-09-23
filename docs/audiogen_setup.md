@@ -1,7 +1,7 @@
 # 音效 / 背景音本地生成环境搭建（RX 7900XTX / ROCm）
 
-本项目的 BGM（环境音）与音效由本地模型批量生成，产物落在 `assets/ambience/`、
-`assets/sfx/` 下供 `./run.sh assets gen` 增量生成、`src/audio_mixer.py`
+本项目的 BGM（环境音）与音效由本地模型批量生成，产物落在 `data/assets/ambience/`、
+`data/assets/sfx/` 下供 `./run.sh assets gen` 增量生成、`src/audio_mixer.py`
 直接使用（见 `src/asset_gen.py` 的模块说明）。两类素材各用一个专门模型，均运行在
 **独立于项目主 venv 的隔离环境**中，理由与 `docs/indextts_setup.md` 相同：
 依赖版本（尤其 `torch` 的 ROCm 构建）互相冲突，通过子进程 + `jobs.json` ⇄
@@ -15,7 +15,7 @@
 > **ambience 模型变更说明**：下方 ACE-Step 1.5 相关内容（环境搭建、已知坑）**保留
 > 作参考，但已不是默认引擎**——它本质是音乐生成模型，生成写实环境音会带出音乐化
 > 调性，换引擎的诊断数据与理由见 `docs/audioldm_setup.md`。`AceStepBackend`、
-> `tools/acestep_*` 代码/环境未删除，`config/global_config.yaml` 的 `ace_step:` 配置段
+> `src/tools/acestep_infer.py` 代码/环境未删除，`config/global_config.yaml` 的 `ace_step:` 配置段
 > 也原样保留，如需切回可以直接改 `src/asset_gen.build_asset_gen_backend()` 里
 > ambience 对应的 backend 类。
 
@@ -30,24 +30,27 @@ PyTorch（同样是 CPU 友好档位），许可是 non-commercial research，�
 
 ## 目录结构
 
+ACE-Step 的官方源码仓库**不随项目分发**，由 `./run.sh repos setup` 克隆到
+`config/local_config.yaml` 里配置的 `asset_gen.ace_step.repo_dir`，固定检出
+`config/global_config.yaml` 里 `asset_gen.ace_step.repo_commit` 锁定的提交，
+并把独立 venv 的 editable 安装指到这个位置（原理同 [`indextts_setup.md`](indextts_setup.md)，
+唯一区别是 ACE-Step 不需要 checkpoints 软链接）。TangoFlux 直接 `pip install git+...`
+装包，本来就不需要单独 clone 仓库。项目内只有：
+
 ```
-tools/
-├── acestep_repo/        # ACE-Step 官方仓库克隆
+src/tools/
 ├── acestep_infer.py     # 批量推理脚本，被 src/asset_gen.AceStepBackend 子进程调用
-├── tangoflux_env/       # 独立 venv（Python 3.11 + CPU torch），uv 创建
-│                        # （TangoFlux 直接 `pip install git+...` 装包，不需要单独 clone 仓库）
 ├── tangoflux_infer.py   # 批量推理脚本，被 src/asset_gen.TangoFluxBackend 子进程调用
 └── gpu_arbiter.py       # llama-server ⇄ ACE-Step 显存互斥调度（LlmSuspendedForGpu）
                          # TangoFlux 跑 CPU，不参与这套换卡机制
 ```
 
-独立 venv：
+独立 venv（示例路径，实际以 `config/local_config.yaml` 为准）：
 - ACE-Step（Python 3.11 + ROCm torch）：`/srv/unsafe/dev-env/venvs/acestep`
 - TangoFlux（Python 3.11 + CPU torch）：`/srv/unsafe/dev-env/venvs/tangoflux`
 
-权重目录：`/srv/unsafe/dev-env/models/audiogen/{ACE-Step-1.5,tangoflux}`（在项目 git
-仓库之外，沿用 `/srv/unsafe/dev-env/models/{llm,tts}` 的既有惯例——体积大、是本机专属
-产物，不随代码分发）。
+权重目录：`config/local_config.yaml` 的 `asset_gen.{ace_step,tangoflux}.checkpoints_dir`
+（本机专属大体积产物，不随代码分发）。
 
 ## 从零搭建步骤
 
@@ -57,39 +60,40 @@ tools/
 ```bash
 cd /home/bjn/novel2audiobook
 
-# 1. 克隆官方仓库
-git clone --depth 1 https://github.com/ace-step/ACE-Step-1.5.git tools/acestep_repo
-
-# 2. 建独立 venv（官方要求 Python 3.11-3.12；实测本机 uv 自带 3.11.15 可直接用）
+# 1. 建独立 venv（官方要求 Python 3.11-3.12；实测本机 uv 自带 3.11.15 可直接用）
 uv venv /srv/unsafe/dev-env/venvs/acestep --python 3.11
 
-# 3. 装 ROCm 版 torch（官方文档给的是 rocm6.0 索引；本机 IndexTTS 那边已验证
+# 2. 装 ROCm 版 torch（官方文档给的是 rocm6.0 索引；本机 IndexTTS 那边已验证
 #    rocm6.4 wheel 在本机 RX 7900XTX 上可正常跑，直接用 rocm6.4）
 uv pip install --python /srv/unsafe/dev-env/venvs/acestep/bin/python \
     torch --index-url https://download.pytorch.org/whl/rocm6.4
 
-# 4. 装 ACE-Step 本体依赖（会把上一步装的 ROCm torch 覆盖成它 pyproject.toml
-#    里硬编码的 CUDA 版，见下方已知坑 §0，必须紧跟着做第 5 步修复）
-uv pip install --python /srv/unsafe/dev-env/venvs/acestep/bin/python -e tools/acestep_repo
+# 3. 在 config/local_config.yaml 里填好 asset_gen.ace_step 的
+#    python_bin/repo_dir/checkpoints_dir（模板见 config/local_config.example.yaml），
+#    然后一条命令克隆到固定提交并 -e 安装（会把上一步装的 ROCm torch 覆盖成
+#    仓库 pyproject.toml 里硬编码的 CUDA 版，见下方已知坑 §0，必须紧跟着做第 4 步修复）：
+./run.sh repos setup --only acestep
+./run.sh repos status   # 确认提交号匹配、editable 安装指向正确
 
-# 5. 【必做】把 torch/torchaudio 强制换回 ROCm 版——不加 --reinstall-package
+# 4. 【必做】把 torch/torchaudio 强制换回 ROCm 版——不加 --reinstall-package
 #    uv 会因为"同名包已安装"直接跳过，不会真的切换 index/build variant
 uv pip install --python /srv/unsafe/dev-env/venvs/acestep/bin/python \
     --reinstall-package torch --reinstall-package torchaudio \
     torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.4
 
-# 6. 验证
+# 5. 验证
 /srv/unsafe/dev-env/venvs/acestep/bin/python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 # 期望输出: 2.9.1+rocm6.4 True
 
-# 7. RX 7900 XTX 是 RDNA3（gfx1100），若第 6 步 cuda.is_available() 为 False，
+# 6. RX 7900 XTX 是 RDNA3（gfx1100），若第 5 步 cuda.is_available() 为 False，
 #    先跑官方诊断脚本，多半需要设置 HSA_OVERRIDE_GFX_VERSION
-/srv/unsafe/dev-env/venvs/acestep/bin/python tools/acestep_repo/scripts/check_gpu.py
+#    （<repo_dir> 是 config/local_config.yaml 里 asset_gen.ace_step.repo_dir 的值）
+/srv/unsafe/dev-env/venvs/acestep/bin/python <repo_dir>/scripts/check_gpu.py
 export HSA_OVERRIDE_GFX_VERSION=11.0.0   # RX 7900 XT/XTX、RX 9070 XT 专用值
 
-# 8. 下载权重到项目外的共享目录，并用官方支持的环境变量指向它
+# 7. 下载权重到项目外的共享目录，并用官方支持的环境变量指向它
 #    （ACE-Step 用 config_path 这个"模型名"定位权重，不接受直接路径参数，
-#    实际目录由 ACESTEP_CHECKPOINTS_DIR 决定——见 tools/acestep_infer.py 顶部注释）
+#    实际目录由 ACESTEP_CHECKPOINTS_DIR 决定——见 src/tools/acestep_infer.py 顶部注释）
 mkdir -p /srv/unsafe/dev-env/models/audiogen/ACE-Step-1.5
 ACESTEP_CHECKPOINTS_DIR=/srv/unsafe/dev-env/models/audiogen/ACE-Step-1.5 \
     /srv/unsafe/dev-env/venvs/acestep/bin/python -m acestep.model_downloader --all
@@ -99,11 +103,11 @@ ACESTEP_CHECKPOINTS_DIR=/srv/unsafe/dev-env/models/audiogen/ACE-Step-1.5 \
 ## 已知坑与应对
 
 ### 0. `pip install -e .` 会把 ROCm torch 换回 CUDA 版（实测踩到）
-`tools/acestep_repo/pyproject.toml` 对 Linux x86_64 硬编码了
-`torch==2.10.0+cu128`（精确版本+build 标签，不是范围约束），装 ACE-Step 本体
-依赖（步骤 4）时会**无条件覆盖**掉步骤 3 装好的 ROCm 版 torch。这与
+该仓库的 `pyproject.toml` 对 Linux x86_64 硬编码了
+`torch==2.10.0+cu128`（精确版本+build 标签，不是范围约束），`./run.sh repos setup`
+里的 `-e` 安装（步骤 3）时会**无条件覆盖**掉步骤 2 装好的 ROCm 版 torch。这与
 `docs/indextts_setup.md` 记录的坑不同：那边是版本冲突需要"先装 ROCm 版占住坑位"，
-这边是装完之后才被换掉，必须在步骤 4 **之后**再修一次（步骤 5）。
+这边是装完之后才被换掉，必须在步骤 3 **之后**再修一次（步骤 4）。
 
 **排障陷阱**：`uv pip install torch --index-url .../rocm6.4`（不带
 `--reinstall-package`）看起来会执行成功（"Checked 2 packages"），但**不会真的换**——
@@ -120,7 +124,7 @@ uv 判断"已有同名包满足未锁版本的依赖"就直接跳过，根本不
 ### 2. LM 后端优先用 `pt`，不用 `vllm`
 官方 Linux 说明：某些发行版（含 Ubuntu）自带的 Python 是 `3.11.0rc1` 预发布版，
 会导致 `vllm` 后端段错误；`nanovllm` 加速在非 NVIDIA 平台上支持也不完整。
-`tools/acestep_infer.py` 已把 `LM_BACKEND` 硬编码为 `"pt"`（对应
+`src/tools/acestep_infer.py` 已把 `LM_BACKEND` 硬编码为 `"pt"`（对应
 `LLMHandler.initialize(backend="pt")`），牺牲一点速度换稳定性，这在离线批量
 生成场景（不追求实时）里是合理取舍。如果后续验证 `vllm` 在本机 ROCm 环境下能跑，
 可以把该常量改成 `"vllm"` 提速。
@@ -129,17 +133,17 @@ uv 判断"已有同名包满足未锁版本的依赖"就直接跳过，根本不
 ROCm 版 PyTorch 复用 CUDA 的设备命名空间（`torch.cuda.*` API 在 ROCm 构建下就是
 指向 HIP 后端），`AceStepHandler.initialize_service(device="cuda")` /
 `LLMHandler.initialize(device="cuda")` 不需要改成别的字符串，这与
-`tools/indextts_infer.py`、`src/tts_engine.py` 里的既有做法一致。
+`src/tools/indextts_infer.py`、`src/tts_engine.py` 里的既有做法一致。
 
 ### 4. 首次运行会下载模型，超时要给够
-`tools/acestep_infer.py` 只负责推理，不负责下载——权重必须在步骤 7 里**预先**
+`src/tools/acestep_infer.py` 只负责推理，不负责下载——权重必须在步骤 7 里**预先**
 下载完整，否则子进程内 `initialize_service()` 触发的按需下载会撞上
 `config/global_config.yaml:asset_gen.ace_step.timeout_sec`（默认 3600 秒）而被杀掉，
 留下不完整目录。若怀疑目录不完整，删掉对应子目录重新跑步骤 7（同
 `docs/indextts_setup.md` 已知坑 §2 的排障思路）。
 
 ### 5. 模型选型对齐显存档位
-`tools/acestep_infer.py` 里 `DIT_CONFIG_PATH = "acestep-v15-xl-sft"`、
+`src/tools/acestep_infer.py` 里 `DIT_CONFIG_PATH = "acestep-v15-xl-sft"`、
 `LM_MODEL_PATH = "acestep-5Hz-lm-1.7B"` 是按官方选型表里 "20-24GB 显存" 档位选的
 （停掉 llama-server 后独占 24GB）。如果生成结果质量不理想，可以换
 `acestep-v15-xl-turbo`（更快、质量略低）试一版对比。
@@ -161,7 +165,7 @@ override)"），这是保守的默认值，不是显存不够。本机 RX 7900XT
 被系统当成"内存不足"杀掉的疑似诱因之一 |
 | bfloat16 | ~17.5GB（含 LM） | max 18.5GB，VAE 解码前留 9GB 余量 | 结果正常（`success: True`），生成 8 步扩散仅 ~5 秒 |
 
-`tools/acestep_infer.py` 已经在 import 前 `os.environ.setdefault("ACESTEP_ROCM_DTYPE", "bfloat16")`，无需手动设置；如果要临时对比 fp32 效果，运行前 `unset ACESTEP_ROCM_DTYPE` 或改成 `float16`。
+`src/tools/acestep_infer.py` 已经在 import 前 `os.environ.setdefault("ACESTEP_ROCM_DTYPE", "bfloat16")`，无需手动设置；如果要临时对比 fp32 效果，运行前 `unset ACESTEP_ROCM_DTYPE` 或改成 `float16`。
 
 ### 7. `flash_attn` 装了但是 CUDA 版，会报错后自动降级（可忽略）
 日志会出现 `flash_attn is installed but failed to import: libcudart.so.12:
@@ -173,7 +177,7 @@ cannot open shared object file`——`-e .` 装依赖时把 CUDA 版 flash-attn 
 ### 8. 各阶段耗时参考（RX 7900XTX 实测，10 秒测试片段）
 首次调用一次性加载：DiT 权重（XL，4 个 safetensors 分片）约 4.5 分钟、LM
 tokenizer+约束解码器+权重约 1 分钟——这部分是子进程启动后**每次调用只付一次**
-的固定成本（`tools/acestep_infer.py` 设计成单次加载、批量循环生成，见文件顶部
+的固定成本（`src/tools/acestep_infer.py` 设计成单次加载、批量循环生成，见文件顶部
 说明），不会随素材条数线性增加。单条生成里，8 步扩散只要 ~5 秒，VAE 解码
 （tiled，本机显存档位下）约 90 秒是单条最大头的部分，60 秒长的 ambience 素材
 解码时间预计等比更长——`config/global_config.yaml:asset_gen.ace_step.timeout_sec`
@@ -202,9 +206,9 @@ tokenizer+约束解码器+权重约 1 分钟——这部分是子进程启动后
 # 2. 真实环境搭好后，去掉 --backend mock，验证会调用 ACE-Step 并自动换卡
 ./run.sh assets gen --kind ambience --only rain_heavy --force
 ./run.sh assets list   # 期望 rain_heavy 一行 engine=ace_step，used_fallback=false
-/srv/unsafe/dev-env/venvs/novel2audiobook/bin/python tools/gpu_arbiter.py status   # 确认 llama-server 已自动恢复
+/srv/unsafe/dev-env/venvs/novel2audiobook/bin/python src/tools/gpu_arbiter.py status   # 确认 llama-server 已自动恢复
 ```
-成功会在 `assets/ambience/rain_heavy.wav` 生成一段真实的雨声环境音（而非 Mock
+成功会在 `data/assets/ambience/rain_heavy.wav` 生成一段真实的雨声环境音（而非 Mock
 的滤波噪声占位），试听确认循环接缝（首尾交叉淡化后）没有明显咔哒声。
 
 ## TangoFlux（音效 sfx）环境搭建
@@ -241,15 +245,15 @@ print('OK')
 1. **不是 gated repo，无需申请** —— 这正是弃用 Stable Audio 3 Small SFX 改用
    它的原因，`snapshot_download` 直接拉取即可，不会遇到 401/403。
 2. **`generate()` 不支持 `negative_prompt`，也不暴露 `seed` 参数** ——
-   `tools/tangoflux_infer.py` 对 `negative_prompt` 直接忽略（协议里保留字段
+   `src/tools/tangoflux_infer.py` 对 `negative_prompt` 直接忽略（协议里保留字段
    只是为了跨后端一致），用 `torch.manual_seed()` 在调用前手动设种子来达到
    可复现效果。
-3. **`duration` 官方 CLI 限定 1-30 秒** —— 本项目 sfx 素材（`assets/asset_specs.yaml`
+3. **`duration` 官方 CLI 限定 1-30 秒** —— 本项目 sfx 素材（`data/assets/asset_specs.yaml`
    里的 sfx 类目）全部是几秒钟的短音效，天然在这个范围内，不构成实际约束；
    如果以后往 sfx 类目里加超过 30 秒的条目会需要另外处理。
 4. **默认 CPU** —— 和 Stable Audio Small 同样的取舍：SFX 素材生成频率低、
    单条时长短，CPU 慢一点换来不占显存、不用参与 GPU 换卡调度，简单可靠。
-   如果批量条目很多嫌慢，`tools/tangoflux_infer.py` 的 `--device` 参数可以
+   如果批量条目很多嫌慢，`src/tools/tangoflux_infer.py` 的 `--device` 参数可以
    改成 `cuda`，但需要额外验证 ROCm 下这条链路（未测试）。
 
 ## 冒烟测试（sfx / TangoFlux）

@@ -289,8 +289,8 @@ def parse_text_to_json(text: str, backend=None, roles_dir: str = None,
     - speaker: 说话人角色 ID（已归一化）；未绑定角色时为 None，由人工后续指派
     - text: 台词/旁白文本
     - emotion: 情感说明
-    - sfx: 伴随音效（assets/sfx 词表内的名称，或 None）
-    - bgm: 背景音乐（assets/ambience 词表内的名称，或 None）
+    - sfx: 伴随音效（data/assets/sfx 词表内的名称，或 None）
+    - bgm: 背景音乐（data/assets/ambience 词表内的名称，或 None）
     """
     if backend is None:
         backend = build_backend(load_global_config())

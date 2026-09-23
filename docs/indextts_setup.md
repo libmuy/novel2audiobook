@@ -7,54 +7,57 @@
 
 ## 目录结构
 
+index-tts 的官方源码仓库**不随项目分发**（几十 MB、且是外部依赖），由
+`./run.sh repos setup` 克隆到 `config/local_config.yaml` 里配置的 `tts.index_tts.repo_dir`
+（通常和 venv/权重放在一起，不在项目目录下），固定检出 `config/global_config.yaml` 里
+`tts.index_tts.repo_commit` 锁定的提交；同时会建好 `checkpoints` 软链接、把独立 venv 的
+editable 安装指到这个位置。项目内只有：
+
 ```
-tools/
-├── indextts_repo/      # 官方仓库克隆（git clone index-tts/index-tts），含 checkpoints 软链接
-│   └── checkpoints -> /srv/unsafe/dev-env/models/tts/IndexTTS-2.5   # 见下方"硬编码路径"说明
+src/tools/
 ├── indextts_infer.py   # 批量推理脚本，被 src/tts_engine.IndexTTSBackend 子进程调用
+├── precompute_embeddings.py  # 角色 speaker embedding 批量预计算脚本
 └── gpu_arbiter.py       # llama-server ⇄ IndexTTS 显存互斥调度
 ```
 
-独立 venv（Python 3.11 + ROCm torch）：`/srv/unsafe/dev-env/venvs/indextts`
+独立 venv（Python 3.11 + ROCm torch）：`/srv/unsafe/dev-env/venvs/indextts`（示例路径，
+实际以 `config/local_config.yaml` 的 `tts.index_tts.python_bin` 为准）。
 
-权重目录：`/srv/unsafe/dev-env/models/tts/IndexTTS-2.5`（在项目 git 仓库之外，因为体积大且
-是本机专属产物，不随代码分发）。
+权重目录：`config/local_config.yaml` 的 `tts.index_tts.checkpoints_dir`（本机专属大体积产物，
+不随代码分发）。
 
 ## 从零搭建步骤
 
 ```bash
 cd /home/bjn/novel2audiobook
 
-# 1. 克隆官方仓库
-git clone --depth 1 https://github.com/index-tts/index-tts.git tools/indextts_repo
-
-# 2. 下载权重主体（约 5GB，国内网络建议用镜像）
+# 1. 下载权重主体（约 5GB，国内网络建议用镜像）
 mkdir -p /srv/unsafe/dev-env/models/tts/IndexTTS-2.5
 uv pip install --python /srv/unsafe/dev-env/venvs/novel2audiobook/bin/python huggingface_hub
 HF_ENDPOINT="https://hf-mirror.com" /srv/unsafe/dev-env/venvs/novel2audiobook/bin/hf download IndexTeam/IndexTTS-2.5 \
     --local-dir /srv/unsafe/dev-env/models/tts/IndexTTS-2.5
 
-# 3. 建独立 venv（官方要求 Python 3.10/3.11，且 torch 锁定 2.8.*）
+# 2. 建独立 venv（官方要求 Python 3.10/3.11，且 torch 锁定 2.8.*）
 uv venv /srv/unsafe/dev-env/venvs/indextts --python 3.11
 
-# 4. 装 ROCm 版 torch/torchaudio（关键：必须先装，且版本要与 pyproject.toml 的
+# 3. 装 ROCm 版 torch/torchaudio（关键：必须先装，且版本要与 pyproject.toml 的
 #    torch==2.8.* 约束匹配，否则下一步会被 CPU/CUDA 版覆盖）
 uv pip install --python /srv/unsafe/dev-env/venvs/indextts/bin/python \
     torch==2.8.0+rocm6.4 torchaudio==2.8.0+rocm6.4 \
     --extra-index-url https://download.pytorch.org/whl/rocm6.4
 
-# 5. 装其余依赖（不装 webui/deepspeed/accel 这些 NVIDIA-only 或非必需 extras）
-uv pip install --python /srv/unsafe/dev-env/venvs/indextts/bin/python -e tools/indextts_repo
+# 4. 在 config/local_config.yaml 里填好 tts.index_tts 的 python_bin/repo_dir/checkpoints_dir
+#    （模板见 config/local_config.example.yaml），然后一条命令完成「克隆到固定提交 +
+#    建 checkpoints 软链接 + venv 里 uv pip install --no-deps -e」：
+./run.sh repos setup --only indextts
+./run.sh repos status   # 确认提交号匹配、软链接正常、editable 安装指向正确
 
-# 6. 验证 ROCm torch 没被上一步悄悄换回 CPU/CUDA 版
+# 5. 验证 ROCm torch 没被上一步悄悄换回 CPU/CUDA 版
 /srv/unsafe/dev-env/venvs/indextts/bin/python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 # 期望输出: 2.8.0+rocm6.4 True
 
-# 7. 官方 GPU 检测脚本
-cd tools/indextts_repo && /srv/unsafe/dev-env/venvs/indextts/bin/python tools/gpu_check.py
-
-# 8. 关键：建 checkpoints 软链接（见下方说明），否则辅助模型缓存路径会错乱
-ln -sfn /srv/unsafe/dev-env/models/tts/IndexTTS-2.5 tools/indextts_repo/checkpoints
+# 6. 官方 GPU 检测脚本（repo_dir 以 config/local_config.yaml 里的实际路径为准）
+cd <tts.index_tts.repo_dir> && /srv/unsafe/dev-env/venvs/indextts/bin/python tools/gpu_check.py
 ```
 
 ## 已知坑与应对
@@ -66,10 +69,10 @@ os.environ['HF_HUB_CACHE'] = './checkpoints/hf_cache'
 ```
 这是**无条件覆盖**，在导入该模块前设置环境变量也没用。意味着：
 - 辅助模型缓存永远落在“当前工作目录下的 `checkpoints/hf_cache`”；
-- 因此我们的批量推理脚本（`tools/indextts_infer.py`）**必须 `os.chdir()` 到
-  `indextts_repo` 目录**再 import，且该目录下要有 `checkpoints` 软链接指向真正的
-  权重目录，这样辅助模型缓存才会落在 `/srv/unsafe/dev-env/models/tts/IndexTTS-2.5/hf_cache/`
-  而不是散落在每次调用时的临时 CWD 里（导致重复下载）。
+- 因此我们的批量推理脚本（`src/tools/indextts_infer.py`）**必须 `os.chdir()` 到
+  仓库目录**再 import，且该目录下要有 `checkpoints` 软链接指向真正的
+  权重目录（`./run.sh repos setup` 会建好），这样辅助模型缓存才会落在权重目录下的
+  `hf_cache/` 而不是散落在每次调用时的临时 CWD 里（导致重复下载）。
 
 ### 2. 辅助模型不在主仓库里，首次运行自动下载
 `w2v-bert-2.0`（语义特征提取，~4.3GB）、MaskGCT 语义编解码器、CAMPPlus、BigVGAN
@@ -93,7 +96,7 @@ rm -rf /srv/unsafe/dev-env/models/tts/IndexTTS-2.5/hf_cache/<有问题的子目�
 USE_MODELSCOPE=true <indextts_env python> your_script.py
 ```
 `indextts/utils/model_download.py` 会自动改用 ModelScope 镜像（`AI-ModelScope/w2v-bert-2.0`
-等）下载，实测更稳定。`tools/indextts_infer.py` 未强制设置该变量，如遇下载问题可在
+等）下载，实测更稳定。`src/tools/indextts_infer.py` 未强制设置该变量，如遇下载问题可在
 调用环境中导出 `USE_MODELSCOPE=true`。
 
 ### 4. BigVGAN 自定义 CUDA/HIP 内核加载失败
@@ -112,7 +115,7 @@ uv pip install --python /srv/unsafe/dev-env/venvs/indextts/bin/python ninja
 
 RX 7900XTX 共 24GB 显存，`llama-server`（Qwen3.8-27B-UD-Q4_K_M）常驻占用约 22GB，
 留给 IndexTTS 的空间不足其所需的 ~6GB。`src/tts_engine.IndexTTSBackend.synthesize_batch()`
-通过 `tools/gpu_arbiter.py` 的 `LlmSuspendedForGpu` 上下文管理器自动处理（本节是
+通过 `src/tools/gpu_arbiter.py` 的 `LlmSuspendedForGpu` 上下文管理器自动处理（本节是
 GPU 换手机制的权威说明，`audiogen_setup.md` 的 ACE-Step 复用同一套；旧名
 `LlmSuspendedForTts` 保留为别名，`src/tts_engine.py` 仍在用）：
 
@@ -125,14 +128,14 @@ GPU 换手机制的权威说明，`audiogen_setup.md` 的 ACE-Step 复用同一�
 即：`./run.sh tts --novel <novel_id> --chapter XXXX` 期间 Qwen 服务会短暂不可用，命令结束后自动恢复，
 无需手动干预。若要单独查看/控制：
 ```bash
-python tools/gpu_arbiter.py status   # 查看 llama-server 是否在跑
-python tools/gpu_arbiter.py stop     # 手动停止
-python tools/gpu_arbiter.py start    # 手动拉起
+python src/tools/gpu_arbiter.py status   # 查看 llama-server 是否在跑
+python src/tools/gpu_arbiter.py stop     # 手动停止
+python src/tools/gpu_arbiter.py start    # 手动拉起
 ```
 
 ## 角色参考音频（reference.wav）
 
-项目脚手架自带的 `roles/narrator/reference.wav`、`roles/lin_dong/reference.wav`
+项目脚手架自带的 `data/roles/narrator/reference.wav`、`data/roles/lin_dong/reference.wav`
 实测是 **0.5 秒纯静音**占位文件——零样本声音克隆完全依赖参考音频里的真实音色，
 喂静音会导致克隆失败或产出垃圾音频。本机没有录音设备，也不适合未经许可
 爬取网络上的真人声音去克隆（IndexTTS 官方声明不核验参考音频授权，获取
@@ -140,24 +143,24 @@ python tools/gpu_arbiter.py start    # 手动拉起
 不涉及任何真实个人声音授权问题）朗读一段带角色气质的文本，生成种子参考音频：
 
 ```bash
-python tools/generate_seed_reference.py           # 只处理静音/过短的占位角色
-python tools/generate_seed_reference.py --force   # 强制重新生成全部角色
+python src/tools/generate_seed_reference.py           # 只处理静音/过短的占位角色
+python src/tools/generate_seed_reference.py --force   # 强制重新生成全部角色
 ```
 
 espeak-ng 本身通过 `apt-get download` 提取 .deb（`espeak-ng` +
 `libespeak-ng1` + `espeak-ng-data` + `libpcaudio0` + `libsonic0`）后用
 `dpkg-deb -x` 解包到 `/srv/unsafe/dev-env/other/espeak_ng/`，未做系统级安装（无 root）。
-后续若有真人配音/已授权样本，直接替换对应 `roles/<role_id>/reference.wav`
+后续若有真人配音/已授权样本，直接替换对应 `data/roles/<role_id>/reference.wav`
 即可，IndexTTS 合成质量会显著提升；种子音频只是让管线能先跑通真实克隆流程。
 
 ## 冒烟测试
 
 ```bash
-cd tools/indextts_repo
+cd <tts.index_tts.repo_dir>   # config/local_config.yaml 里配置的路径
 /srv/unsafe/dev-env/venvs/indextts/bin/python -c "
 from indextts.infer_v2_5 import IndexTTS2
 tts = IndexTTS2(cfg_path='checkpoints/config.yaml', model_dir='checkpoints', use_bf16=True)
-tts.infer(spk_audio_prompt='../../roles/narrator/reference.wav', text='测试文本。',
+tts.infer(spk_audio_prompt='/home/bjn/novel2audiobook/data/roles/narrator/reference.wav', text='测试文本。',
           lang='ZH', output_path='/tmp/out.wav')
 "
 ```

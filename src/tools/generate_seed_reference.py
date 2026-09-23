@@ -26,8 +26,8 @@ import sys
 
 from pydub import AudioSegment
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# 直接 `python tools/generate_seed_reference.py` 运行时 sys.path[0] 是 tools/，需手动补项目根才能 import src
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# 直接 `python src/tools/generate_seed_reference.py` 运行时 sys.path[0] 是 src/tools/，需手动补项目根才能 import src
 sys.path.insert(0, PROJECT_ROOT)
 from src.utils import load_global_config, resolve_path  # noqa: E402
 
@@ -76,7 +76,7 @@ def is_placeholder(wav_path: str, min_duration_ms: int = 2000) -> bool:
 
 
 def load_espeak_paths(config: dict = None) -> tuple:
-    """从配置 tools.espeak_bin / espeak_data / espeak_lib_dir（local_config.yaml）读 espeak-ng
+    """从配置 tools.espeak_bin / espeak_data / espeak_lib_dir（config/local_config.yaml）读 espeak-ng
     的三条路径，返回 (bin, data, lib_dir)。缺任何一项就抛 RuntimeError 指明补哪个键——
     这些是本机专属路径（含 CPU 架构名），不在代码里留默认值。"""
     if config is None:
@@ -86,7 +86,7 @@ def load_espeak_paths(config: dict = None) -> tuple:
     if missing:
         raise RuntimeError(
             "配置缺少 " + "、".join(f"tools.{k}" for k in missing)
-            + "：请在 local_config.yaml 里补上（模板见 local_config.example.yaml）"
+            + "：请在 config/local_config.yaml 里补上（模板见 config/local_config.example.yaml）"
         )
     return tuple(resolve_path(tools_cfg[k]) for k in ESPEAK_CONFIG_KEYS)
 

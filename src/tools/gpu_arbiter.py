@@ -97,7 +97,7 @@ DEFAULT_SERVE_COMMAND = "ai"
 
 
 def serve_command_from_config(config: dict) -> str:
-    """拉起 llama-server 的外部命令名，取配置 tools.llm_serve_command（local_config.yaml），缺省 ai"""
+    """拉起 llama-server 的外部命令名，取配置 tools.llm_serve_command（config/local_config.yaml），缺省 ai"""
     return (config.get("tools") or {}).get("llm_serve_command") or DEFAULT_SERVE_COMMAND
 
 
@@ -361,9 +361,9 @@ def plan_swap(target_owner: str, config: dict = None) -> dict:
 
 
 if __name__ == "__main__":
-    # 允许直接 `python tools/gpu_arbiter.py` 运行（而非 `python -m tools.gpu_arbiter`），
+    # 允许直接 `python src/tools/gpu_arbiter.py` 运行（而非 `python -m src.tools.gpu_arbiter`），
     # 需手动把项目根目录加入 sys.path 才能找到 src 包。
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
     from src.utils import load_global_config  # noqa: E402
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")

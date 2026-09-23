@@ -18,10 +18,10 @@ import threading
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
 
-from src.utils import load_global_config, resolve_path
+from src.utils import load_global_config, resolve_path, assets_dir as default_assets_dir
 
 VALID_KINDS = ("ambience", "sfx")
-DEFAULT_SPEC_PATH = "assets/asset_specs.yaml"
+DEFAULT_SPEC_PATH = "data/assets/asset_specs.yaml"
 
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_]{0,47}$")
 _SPEC_FIELDS = ("description", "prompt", "negative_prompt", "duration_sec", "seed",
@@ -219,7 +219,7 @@ def delete_spec(kind: str, name: str, delete_files: bool = False, path: str = No
 
     files_deleted = False
     if delete_files:
-        base = assets_dir or resolve_path("assets")
+        base = assets_dir or default_assets_dir()
         for ext in (".wav", ".meta.json"):
             fp = os.path.join(base, kind, f"{name}{ext}")
             if os.path.exists(fp):

@@ -2,9 +2,9 @@
 """
 AudioLDM 批量推理脚本（环境音 ambience，替换 ACE-Step 1.5）。
 
-运行环境：独立的 /srv/unsafe/dev-env/venvs/audioldm venv，不与项目主 venv/tools/acestep_env 混用
+运行环境：独立的 audioldm venv，不与项目主 venv/src/tools/acestep 环境混用
 （理由同 docs/indextts_setup.md）。由 src/asset_gen.py 的 AudioLDMBackend 通过
-子进程调用，协议与 tools/tangoflux_infer.py 一致（单次加载、批量循环、
+子进程调用，协议与 src/tools/tangoflux_infer.py 一致（单次加载、批量循环、
 jobs.json -> result.json）。
 
 选型背景：ACE-Step 1.5 本质是音乐生成模型（text2music），用来生成"雨声/矿洞/
@@ -19,7 +19,7 @@ guidance），这是相对 ACE-Step 的实质性修复——之前 negative_prom
 真正传给模型。
 
 用法：
-    python tools/audioldm_infer.py \
+    python src/tools/audioldm_infer.py \
         --checkpoints-dir <HF 缓存根目录（HF_HOME），见下方说明> \
         --jobs-file <输入任务 JSON 路径> \
         --result-file <输出结果 JSON 路径>

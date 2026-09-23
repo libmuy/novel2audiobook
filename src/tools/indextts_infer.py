@@ -2,7 +2,7 @@
 """
 IndexTTS-2.5 批量推理脚本。
 
-运行环境：独立的 /srv/unsafe/dev-env/venvs/indextts venv（Python 3.11 + ROCm torch），
+运行环境：独立的 indextts venv（Python 3.11 + ROCm torch，路径见 config/local_config.yaml 的 tts.index_tts.python_bin），
 不与项目主 venv 混用。由 src/tts_engine.py 的 IndexTTSBackend 通过子进程调用。
 
 设计为“单次加载、批量合成”：模型加载（GPT/语义编解码器/s2mel/BigVGAN/参考音色

@@ -88,7 +88,7 @@ def env(monkeypatch, tmp_path):
             events.append("arbiter_exit")
             return False
 
-    import tools.gpu_arbiter as ga
+    import src.tools.gpu_arbiter as ga
     monkeypatch.setattr(ga, "LlmSuspendedForTts", RecordingArbiter)
     monkeypatch.setattr(tts_engine.subprocess, "Popen", FakePopen)
     monkeypatch.setattr(os, "getpgid", lambda pid: 900000 + pid)

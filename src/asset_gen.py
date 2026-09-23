@@ -5,15 +5,15 @@
 - MockAudioGenBackend：程序化占位音频，无外部依赖，供 `cli.py test` 与无 GPU 环境使用。
 - AceStepBackend（ambience/BGM，GPU）、TangoFluxBackend（sfx，CPU）：通过子进程
   调用独立部署的推理环境（各自独立 venv + jobs.json -> result.json 协议，见
-  tools/indextts_infer.py 的先例）。ACE-Step 走 GPU，与 llama-server 显存互斥，
+  src/tools/indextts_infer.py 的先例）。ACE-Step 走 GPU，与 llama-server 显存互斥，
   通过 tools/gpu_arbiter.LlmSuspendedForGpu 上下文管理器自动换卡；TangoFlux 跑在
-  CPU 上（模型选型见 tools/tangoflux_infer.py 顶部说明——原计划用 Stable Audio 3
+  CPU 上（模型选型见 src/tools/tangoflux_infer.py 顶部说明——原计划用 Stable Audio 3
   Small SFX，但它是 HuggingFace gated repo 且审批不顺畅，改用公开、无需申请的
   TangoFlux），不占显存，可以和前两者同时跑，但仍统一走同一套 subprocess 协议
   （多余的换卡暂停/恢复只是几秒钟开销，不值得为此分叉逻辑）。
 
-素材以 assets/asset_specs.yaml 为唯一真相源（prompt/负向提示/时长/种子），按影响
-生成结果的字段计算 spec_hash 做增量生成缓存；结果落到 assets/ambience/、assets/sfx/
+素材以 data/assets/asset_specs.yaml 为唯一真相源（prompt/负向提示/时长/种子），按影响
+生成结果的字段计算 spec_hash 做增量生成缓存；结果落到 data/assets/ambience/、data/assets/sfx/
 下的具名 24kHz 单声道 wav（src/audio_mixer.py 直接可用）及同名 .meta.json 旁挂文件
 （记录生成溯源：引擎/是否回退/生成时间等，list_available_assets() 只 glob *.wav，
 不会把 meta 文件当成素材）。
@@ -34,13 +34,13 @@ import numpy as np
 import yaml
 from pydub import AudioSegment
 
-from src.utils import calculate_md5, load_global_config, resolve_path
+from src.utils import calculate_md5, load_global_config, resolve_path, assets_dir as default_assets_dir
 from src.killable_proc import kill_on_cancel, terminate_process_group
 
 logger = logging.getLogger(__name__)
 
 VALID_KINDS = ("ambience", "sfx")
-DEFAULT_SPEC_PATH = "assets/asset_specs.yaml"
+DEFAULT_SPEC_PATH = "data/assets/asset_specs.yaml"
 
 
 # --------------------------------------------------------------------------
@@ -238,7 +238,7 @@ class SubprocessAudioGenBackend:
     """
     通过子进程调用独立部署的推理环境：独立 venv + jobs.json -> result.json 协议，
     结构与 src/tts_engine.IndexTTSBackend 完全一致（单次加载模型、批量生成，
-    逐条任务失败不影响其余任务）。子类只需指定 name 与 global_config.yaml 里
+    逐条任务失败不影响其余任务）。子类只需指定 name 与 config/global_config.yaml 里
     `asset_gen.<config_key>` 对应的配置段。
     """
 
@@ -306,7 +306,7 @@ class SubprocessAudioGenBackend:
             if self.repo_dir:
                 cmd += ["--repo-dir", self.repo_dir]
 
-            from tools.gpu_arbiter import LlmSuspendedForGpu  # 延迟导入，避免无网络场景下的循环依赖
+            from src.tools.gpu_arbiter import LlmSuspendedForGpu  # 延迟导入，避免无网络场景下的循环依赖
 
             self._current_proc = None
             try:
@@ -386,7 +386,7 @@ DEFAULT_ENGINES = {"ambience": "audioldm", "sfx": "tangoflux"}
 def resolve_engine_id(name) -> str:
     """把配置里的引擎名解析成注册表 id；认不出返回 None。
     既接受 id（audioldm / tangoflux / ace_step / mock），也接受配置里一直在用的展示串
-    （"AudioLDM-S-Full-v2"、"TangoFlux"、"ACE-Step 1.5"）——现有 global_config.yaml 零迁移。
+    （"AudioLDM-S-Full-v2"、"TangoFlux"、"ACE-Step 1.5"）——现有 config/global_config.yaml 零迁移。
     比较前去掉大小写和所有非字母数字字符。"""
     key = re.sub(r"[^a-z0-9]", "", str(name or "").lower())
     if not key:
@@ -445,7 +445,7 @@ def generate_assets(specs: dict = None, assets_dir: str = None, kinds: list = No
     按 spec_hash 增量生成素材库。
 
     - specs 缺省时从 asset_specs.yaml 加载
-    - assets_dir 缺省时为项目根目录下的 assets/（`cli.py test` 会传入隔离临时目录，
+    - assets_dir 缺省时为项目根目录下的 data/assets/（`run.sh test` 会传入隔离临时目录，
       与 generate_tts_incremental() 的 roles_dir 参数化同理，保证自检不污染共享目录）
     - backend_map: {"ambience": backend实例, "sfx": backend实例}，缺省按配置选择
       真实后端，环境未就绪自动回退 Mock
@@ -462,7 +462,7 @@ def generate_assets(specs: dict = None, assets_dir: str = None, kinds: list = No
     if specs is None:
         specs = load_asset_specs()
     if assets_dir is None:
-        assets_dir = resolve_path("assets")
+        assets_dir = default_assets_dir()
 
     gen_cfg = config.get("asset_gen", {})
     target_sample_rate = gen_cfg.get("target_sample_rate", 24000)
@@ -600,7 +600,7 @@ def get_asset_status_list(specs: dict = None, assets_dir: str = None, config: di
     自己的 OK(占位/Mock) 状态）、也不是缺失（旧 meta 没这个字段）→ STALE(引擎已变更)。
     显式把引擎配成 mock 时不判漂移——没人想把真实素材换成占位音。"""
     specs = specs if specs is not None else load_asset_specs()
-    assets_dir = assets_dir or resolve_path("assets")
+    assets_dir = assets_dir or default_assets_dir()
     if config is None:
         config = load_global_config()
 
@@ -649,7 +649,7 @@ def print_asset_status_table(specs: dict = None, assets_dir: str = None):
     """格式化打印素材库状态表"""
     rows = get_asset_status_list(specs, assets_dir)
     if not rows:
-        print("assets/asset_specs.yaml 中未定义任何素材。")
+        print("data/assets/asset_specs.yaml 中未定义任何素材。")
         return
 
     print("=" * 80)

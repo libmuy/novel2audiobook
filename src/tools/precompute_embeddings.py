@@ -2,19 +2,19 @@
 """
 IndexTTS-2.5 speaker embedding 批量预计算脚本（计划 001）。
 
-运行环境同 tools/indextts_infer.py：独立的 /srv/unsafe/dev-env/venvs/indextts venv
-（Python 3.11 + ROCm torch），不与项目主 venv 混用。
+运行环境同 src/tools/indextts_infer.py：独立的 indextts venv（Python 3.11 + ROCm torch，
+路径见 config/local_config.yaml 的 tts.index_tts.python_bin），不与项目主 venv 混用。
 
-对 roles/roles_manifest.json 中登记的角色逐个提取参考音频（reference.wav）的
-speaker embedding，落盘为 roles/<role_id>/speaker_embeddings.pt。
-后续 tools/indextts_infer.py 的批量合成、以及常驻 TTS 服务都会自动检测并复用
+对 data/roles/roles_manifest.json 中登记的角色逐个提取参考音频（reference.wav）的
+speaker embedding，落盘为 data/roles/<role_id>/speaker_embeddings.pt。
+后续 src/tools/indextts_infer.py 的批量合成、以及常驻 TTS 服务都会自动检测并复用
 这份缓存，跳过 Wav2Vec2Bert + CAMPPlus + length_regulator 的在线提取步骤。
 
 用法：
-    /srv/unsafe/dev-env/venvs/indextts/bin/python tools/precompute_embeddings.py \
-        --repo-dir tools/indextts_repo \
-        --checkpoints-dir /srv/unsafe/dev-env/models/tts/IndexTTS-2.5 \
-        --roles-dir roles \
+    <indextts venv 的 python> src/tools/precompute_embeddings.py \
+        --repo-dir <index-tts 源码仓库目录> \
+        --checkpoints-dir <IndexTTS-2.5 权重目录> \
+        --roles-dir data/roles \
         [--role lin_dong] [--force]
 
 --role 不指定时处理清单中所有角色；--force 忽略已有 .pt，强制重新计算。
@@ -31,7 +31,7 @@ def main():
     parser = argparse.ArgumentParser(description="IndexTTS-2.5 speaker embedding 预计算")
     parser.add_argument("--repo-dir", required=True, help="index-tts 源码仓库目录")
     parser.add_argument("--checkpoints-dir", required=True, help="IndexTTS-2.5 权重目录")
-    parser.add_argument("--roles-dir", required=True, help="roles/ 目录（含 roles_manifest.json）")
+    parser.add_argument("--roles-dir", required=True, help="data/roles/ 目录（含 roles_manifest.json）")
     parser.add_argument("--role", help="仅处理单个角色 ID；不指定则处理清单中所有角色")
     parser.add_argument("--force", action="store_true", help="忽略已有 .pt，强制重新计算")
     parser.add_argument("--use-bf16", action="store_true", default=True)
