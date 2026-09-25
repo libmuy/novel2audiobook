@@ -74,6 +74,15 @@ server:
   task_retention_days: 7      # 任务记录保留天数
   drm_card: null              # null = 自动探测；本机是 /sys/class/drm/card1
 
+logging:
+  # 详情见 docs/superpowers/specs/2026-09-25-logging-design.md；改后需重启生效
+  level: "INFO"               # DEBUG/INFO/WARNING/ERROR。DEBUG 下可见静态/SSE 请求、
+                              # 请求体摘要、逐段解析耗时等细节
+  file: ".cache/logs/n2a.log" # 相对项目根；null = 只打终端不落盘。print() 与
+                              # logging 输出都进这个文件（轮转，终端所见即文件所有）
+  max_bytes: 5242880          # 单文件 5MB
+  backup_count: 3             # 保留 n2a.log.1 ~ .3
+
 mixing:
   voice_only: true          # 当前阶段先只做旁白/角色人声成片，跳过环境音/音效
                              # 叠加与自动闪避（效果音流水线待后续阶段再打通）；

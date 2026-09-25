@@ -327,6 +327,12 @@ def main():
         parser.print_help()
         sys.exit(1)
 
+    # 日志装配放在参数解析之后（--help 不落盘）：文件轮转 sink + print/stderr tee +
+    # request/task 归因过滤器，webui 与全部子命令统一走这一处（见
+    # docs/superpowers/specs/2026-09-25-logging-design.md）
+    from src.runtime.log_setup import setup_logging
+    setup_logging()
+
     if args.command == "status":
         if args.novel:
             summary = get_novel_status_summary(args.novel)
@@ -461,7 +467,9 @@ def main():
         from src.api.app import create_app
         host, port = resolve_webui_bind(args.host, args.port, load_global_config())
         print(f"--> 启动管理界面: http://{host}:{port}/ (Ctrl+C 停止)")
-        uvicorn.run(create_app(), host=host, port=port)
+        # log_config=None：不让 uvicorn 用它自带的 LOGGING_CONFIG 覆盖我们已装配的
+        # root handlers，否则 access/error 日志进不了 .cache/logs/n2a.log
+        uvicorn.run(create_app(), host=host, port=port, log_config=None)
 
     elif args.command == "novel":
         if args.novel_action == "list":

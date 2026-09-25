@@ -30,3 +30,6 @@ data/library/*/.trash/
 # 不随代码分发
 .cache/tts_daemon/
 .cache/gpu_arbiter/
+
+# 运行期日志（logging 落盘 + print tee），机器本地，不随代码分发
+.cache/logs/

@@ -229,6 +229,109 @@
     };
     const TASK_STATE_LABEL = { queued: '排队中', running: '运行中', succeeded: '已完成', failed: '失败', cancelled: '已取消' };
 
+    // ---------------------------------------------------------------------
+    // 前端错误收集：window error / unhandledrejection / console.error 包装，
+    // 批量 POST /api/frontend-logs，后端以 logger("frontend") 写进统一日志
+    // （行首 FRONTEND）。去重合并（同消息计数、distinct≤50）、≥10 条或 2 秒
+    // flush、每批 ≤20、msg≤500 字 stack≤1000 字；上报端点自身出错直接丢（防
+    // 递归）；连续 5 次失败冷却 60 秒（熔断）。
+    // ---------------------------------------------------------------------
+    const FL_ENDPOINT = '/api/frontend-logs';
+    const FL_MAX_DISTINCT = 50;
+    const FL_FLUSH_COUNT = 10;
+    const FL_FLUSH_MS = 2000;
+    const FL_BATCH = 20;
+    const FL_MSG_LIMIT = 500;
+    const FL_STACK_LIMIT = 1000;
+    const FL_CIRCUIT_FAILS = 5;
+    const FL_CIRCUIT_COOLDOWN_MS = 60000;
+
+    const _flEntries = new Map(); // message -> {message, stack, level, url, count}
+    let _flTimer = null;
+    let _flFails = 0;
+    let _flCircuitUntil = 0;
+    let _flInFlight = false; // 防递归：上报期间的 console.error 一律丢弃
+
+    function _flTruncate(s, limit) {
+        const str = String(s == null ? '' : s);
+        return str.length > limit ? `${str.slice(0, limit)}…[截断]` : str;
+    }
+
+    function _flReport(level, message, stack, url) {
+        if (_flInFlight || Date.now() < _flCircuitUntil) return;
+        const msg = _flTruncate(message, FL_MSG_LIMIT);
+        if (!msg) return;
+        const existing = _flEntries.get(msg);
+        if (existing) {
+            existing.count += 1;
+        } else {
+            if (_flEntries.size >= FL_MAX_DISTINCT) return; // distinct 封顶，丢新的
+            _flEntries.set(msg, {
+                message: msg,
+                stack: _flTruncate(stack, FL_STACK_LIMIT),
+                level, url: url || '', count: 1,
+            });
+        }
+        let total = 0;
+        for (const e of _flEntries.values()) total += e.count;
+        if (total >= FL_FLUSH_COUNT) _flFlush();
+        else if (!_flTimer) _flTimer = setTimeout(_flFlush, FL_FLUSH_MS);
+    }
+
+    function _flFlush() {
+        if (_flTimer) { clearTimeout(_flTimer); _flTimer = null; }
+        if (!_flEntries.size || Date.now() < _flCircuitUntil) return;
+        while (_flEntries.size) {
+            const batch = [];
+            for (const key of Array.from(_flEntries.keys())) {
+                if (batch.length >= FL_BATCH) break;
+                batch.push(_flEntries.get(key));
+                _flEntries.delete(key);
+            }
+            _flSend(batch);
+        }
+    }
+
+    function _flSend(batch) {
+        _flInFlight = true;
+        fetch(FL_ENDPOINT, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ entries: batch }),
+            keepalive: true,
+        }).then((res) => {
+            if (res.ok) _flFails = 0;
+            else _flOnFail();
+        }).catch(() => _flOnFail())
+            .finally(() => { _flInFlight = false; });
+    }
+
+    function _flOnFail() {
+        // 失败的批次已丢（不回填、不上报自身错误——防递归）
+        _flFails += 1;
+        if (_flFails >= FL_CIRCUIT_FAILS) {
+            _flCircuitUntil = Date.now() + FL_CIRCUIT_COOLDOWN_MS;
+            _flFails = 0;
+        }
+    }
+
+    window.addEventListener('error', (e) => {
+        _flReport('error', e.message || String(e.error || 'Error'),
+            (e.error && e.error.stack) || '',
+            e.filename ? `${e.filename}:${e.lineno}` : '');
+    });
+    window.addEventListener('unhandledrejection', (e) => {
+        const r = e.reason;
+        _flReport('error', (r && r.message) || String(r), (r && r.stack) || '', '');
+    });
+    const _origConsoleError = console.error;
+    console.error = function (...args) {
+        const err = args.find((a) => a instanceof Error);
+        _flReport('error', args.map((a) => String(a && a.message ? a.message : a)).join(' '),
+            (err && err.stack) || '', '');
+        _origConsoleError.apply(console, args); // 保留原行为
+    };
+
     window.N2A = {
         toasts, toast,
         modal, openModal, confirmModal, closeModal, confirmDialog, promptDialog, addModalTag, removeModalTag,

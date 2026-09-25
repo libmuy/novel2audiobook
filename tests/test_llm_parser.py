@@ -351,3 +351,30 @@ class TestBuildSystemPromptAssetDescriptions:
             assets={"sfx": ["sword_clash"], "bgm": []},
         )
         assert "sword_clash" in prompt  # 退化为裸名字，不应抛异常中断解析
+
+
+class TestParseLogging:
+    """解析过程埋点：backend 选中、段落/分块/耗时摘要、章节级起止（排查解析质量的第一现场）"""
+
+    def test_parse_text_logs_start_and_summary(self, tmp_roles_dir, sample_raw_text, caplog):
+        import logging
+        with caplog.at_level(logging.INFO):
+            segments = llm_parser.parse_text_to_json(
+                sample_raw_text, backend=llm_parser.HeuristicBackend(), roles_dir=tmp_roles_dir)
+        msgs = [r.getMessage() for r in caplog.records]
+        assert any(m.startswith("解析开始") and "backend=HeuristicBackend" in m for m in msgs)
+        assert any(m.startswith("解析完成") and f"分块={len(segments)}" in m
+                   and "段异常回退=0" in m for m in msgs)
+
+    def test_chapter_parse_logs_and_status_transition(self, tmp_chapter_dir, tmp_roles_dir,
+                                                      sample_raw_text, caplog):
+        import logging
+        with open(os.path.join(tmp_chapter_dir, "raw.txt"), "w", encoding="utf-8") as f:
+            f.write(sample_raw_text)
+        with caplog.at_level(logging.INFO):
+            llm_parser.process_chapter_parse(tmp_chapter_dir, roles_dir=tmp_roles_dir)
+        msgs = [r.getMessage() for r in caplog.records]
+        assert any(m.startswith("章节解析开始") for m in msgs)
+        assert any(m.startswith("章节解析完成") and "分块=" in m for m in msgs)
+        # 状态流转日志由 src.utils.update_chapter_status 单一收口点产出
+        assert any("章节状态流转" in m and "→ parsed_draft" in m for m in msgs)

@@ -1,8 +1,11 @@
 """小说路由"""
+import logging
 from fastapi import APIRouter, HTTPException
 from src.domain import library
 from src.api.schemas import NovelCreate, NovelUpdate, NodeCreate, NodeUpdate, NodeReorder
 import os
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/novels", tags=["novels"])
 
@@ -40,6 +43,7 @@ def update_novel(nid: str, data: NovelUpdate):
 @router.delete("/{nid}")
 def delete_novel(nid: str):
     library.delete_novel(nid)
+    logger.info("删除小说 novel=%s（小说目录移入 .trash/）", nid)
     return {"ok": True}
 
 
@@ -192,4 +196,6 @@ def delete_node(nid: str, node_id: str, confirm: bool = False):
 
     # 确认删除：从树里摘掉节点并把每个受影响章节目录移到 .trash/（不用 rmtree）
     affected = library.delete_node(nid, node_id)
+    logger.info("删除节点 novel=%s node=%s 受影响章节=%d（章节目录移入 .trash/）",
+                nid, node_id, len(affected))
     return {"ok": True, "confirmed": True, "affected_chapters": len(affected)}

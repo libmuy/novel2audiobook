@@ -14,6 +14,7 @@ import os
 import re
 import json
 import logging
+import time
 
 import requests
 
@@ -274,7 +275,9 @@ def build_backend(config: dict):
     """优先尝试真实 Qwen LLM 后端；不可达时返回启发式回退后端"""
     qwen_backend = QwenLLMBackend(config)
     if qwen_backend.is_available():
+        logger.info("解析 backend=QwenLLM api_base=%s", qwen_backend.api_base)
         return qwen_backend
+    # 降级告警：质量下降的第一现场，必须落日志（历史上因无 logging 配置被静默丢弃）
     logger.warning("Qwen LLM 服务 (%s) 不可达，回退到启发式解析器", qwen_backend.api_base)
     return HeuristicBackend()
 
@@ -298,17 +301,29 @@ def parse_text_to_json(text: str, backend=None, roles_dir: str = None,
     manifest = roles_mod.load_manifest(roles_dir)
     assets = list_available_assets()
     paragraphs = split_paragraphs(text)
+    backend_name = type(backend).__name__
+    logger.info("解析开始 backend=%s 段落=%d 字数=%d", backend_name, len(paragraphs), len(text))
 
     script_segments = []
     seg_id = 1
+    fallback_count = 0
+    parse_started = time.perf_counter()
     for idx, para in enumerate(paragraphs):
         if should_cancel and should_cancel():
             raise TaskCancelled(f"用户取消（已完成 {idx}/{len(paragraphs)} 段）")
+        para_started = time.perf_counter()
+        fell_back = False
         try:
             raw_segments = backend.parse_paragraph(para, manifest, assets)
         except Exception as e:  # noqa: BLE001 - 单段失败不应中断整章解析
             logger.warning("段落解析失败，改用启发式回退处理该段: %s", e)
             raw_segments = HeuristicBackend().parse_paragraph(para, manifest, assets)
+            fell_back = True
+            fallback_count += 1
+        # 逐段细节放 DEBUG：默认 INFO 下安静，logging.level=DEBUG 时能看到哪段慢/哪段回退
+        logger.debug("解析段落 %d/%d 用时=%.2fs 分块=%d%s",
+                     idx + 1, len(paragraphs), time.perf_counter() - para_started,
+                     len(raw_segments), "（异常回退启发式）" if fell_back else "")
 
         for seg in raw_segments:
             raw_speaker = seg.get("speaker")
@@ -332,6 +347,9 @@ def parse_text_to_json(text: str, backend=None, roles_dir: str = None,
         if progress_cb:
             progress_cb(idx + 1, len(paragraphs), f"已解析 {idx + 1}/{len(paragraphs)} 段")
 
+    logger.info("解析完成 backend=%s 段落=%d 分块=%d 耗时=%.1fs 段异常回退=%d",
+                backend_name, len(paragraphs), len(script_segments),
+                time.perf_counter() - parse_started, fallback_count)
     return script_segments
 
 
@@ -346,6 +364,7 @@ def process_chapter_parse(chapter_dir: str, roles_dir: str = None,
 
     with open(raw_path, "r", encoding="utf-8") as f:
         text = f.read()
+    logger.info("章节解析开始 dir=%s 字数=%d", chapter_dir, len(text))
 
     script_draft = parse_text_to_json(text, roles_dir=roles_dir,
                                       progress_cb=progress_cb, should_cancel=should_cancel)
@@ -354,5 +373,6 @@ def process_chapter_parse(chapter_dir: str, roles_dir: str = None,
     with open(draft_path, "w", encoding="utf-8") as f:
         json.dump(script_draft, f, ensure_ascii=False, indent=2)
 
-    update_chapter_status(chapter_dir, "parsed_draft")
+    update_chapter_status(chapter_dir, "parsed_draft")  # 变化时自动记"章节状态流转"
+    logger.info("章节解析完成 draft=%s 分块=%d", draft_path, len(script_draft))
     return draft_path

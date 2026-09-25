@@ -7,7 +7,8 @@ from fastapi.staticfiles import StaticFiles
 
 from src.utils import resolve_path
 from src.api.deps import get_config, get_queue, set_queue
-from src.api.routers import novels, chapters, segments, roles, tasks, system, events, assets
+from src.api.middleware import RequestLoggingMiddleware
+from src.api.routers import novels, chapters, segments, roles, tasks, system, events, assets, logs
 
 
 @asynccontextmanager
@@ -32,6 +33,10 @@ async def lifespan(app):
 def create_app():
     app = FastAPI(title="小说有声书生成流水线", lifespan=lifespan)
 
+    # 请求日志（元数据 + 体摘要 + request_id 归因，纯 ASGI 不碰 SSE 流式），
+    # 见 docs/superpowers/specs/2026-09-25-logging-design.md
+    app.add_middleware(RequestLoggingMiddleware)
+
     # 注册路由
     app.include_router(novels.router, prefix="/api")
     app.include_router(chapters.router, prefix="/api")
@@ -42,6 +47,7 @@ def create_app():
     app.include_router(events.router, prefix="/api")
     app.include_router(assets.router, prefix="/api")
     app.include_router(assets.meta_router, prefix="/api")
+    app.include_router(logs.router, prefix="/api")
 
     # 静态文件（所有 /api 路由之后）；resolve_path 动态读取 PROJECT_ROOT，
     # 见 src/api/routers/chapters.py 里的详细注释

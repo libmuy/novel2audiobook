@@ -7,6 +7,7 @@
 import os
 import re
 import json
+import logging
 import shutil
 import threading
 from datetime import datetime
@@ -23,6 +24,8 @@ try:
     from pypinyin import lazy_pinyin
 except ImportError:
     lazy_pinyin = None
+
+logger = logging.getLogger(__name__)
 
 LIBRARY_DIR_NAME = os.path.join("data", "library")
 NOVEL_FILE_NAME = "novel.yaml"
@@ -486,6 +489,8 @@ def promote_draft_to_final(novel_id: str, chapter_id: str, library_dir: str = No
         with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(data)
         os.replace(tmp_path, final_path)
+    logger.info("剧本草稿转正 script_draft.json → script_final.json novel=%s chapter=%s",
+                novel_id, chapter_id)
     return True
 
 
@@ -519,6 +524,12 @@ def import_chapter_raw(novel_id: str, chapter_id: str, raw_text: str,
         if os.path.isdir(cache_dir):
             kept = len([f for f in os.listdir(cache_dir) if f.endswith(".wav")])
 
+    # 关键业务事件：事后排查"剧本为什么没了/文本怎么变的"全靠这条
+    logger.info(
+        "章节正文重导入 novel=%s chapter=%s 删除下游产物=%s 保留缓存=%d 写入=%d字节",
+        novel_id, chapter_id, ",".join(removed) if removed else "无",
+        kept, len(raw_text.encode("utf-8")),
+    )
     return {"removed": removed, "kept_cache_count": kept}
 
 

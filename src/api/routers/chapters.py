@@ -1,12 +1,15 @@
 """章节路由"""
 import os
 import json
+import logging
 from fastapi import APIRouter, HTTPException, UploadFile, File, Response
 from fastapi.responses import FileResponse
 from src.domain import library, status_tracker
 from src.api.deps import get_config
 from src.domain import derived_index
 from src.utils import calculate_md5
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/novels/{nid}/chapters", tags=["chapters"])
 
@@ -43,6 +46,7 @@ def upload_raw(nid: str, cid: str, file: UploadFile = File(...), confirm: bool =
         content = file.file.read()
         with open(raw_path, "wb") as f:
             f.write(content)
+        logger.info("章节正文首次写入 novel=%s chapter=%s %d字节", nid, cid, len(content))
         return {"ok": True, "confirmed": True}
 
     # 已有 raw.txt：这是"重新导入"，会清空下游产物（保留 audio_cache）

@@ -439,3 +439,69 @@ class TestPrecomputeEmbeddingHandler:
         done = isolated_queue.get(task.id)
         assert done.state == "failed"
         assert "未就绪" in done.error
+
+
+class TestTaskQueueLogging:
+    """方案 A：任务生命周期/归因/日志路径派生（排查"任务卡住/失败"的第一现场）"""
+
+    def test_read_log_ignores_stale_absolute_log_path(self, isolated_queue):
+        """旧记录存的绝对路径失效后（项目搬过家），read_log 按当前 tasks_dir 现算"""
+        task = isolated_queue.submit("parse", "nv_test")
+        derived = isolated_queue._task_log_path(task.id)
+        with open(derived, "w", encoding="utf-8") as f:
+            f.write("日志内容\n")
+        task.log_path = "/srv/unsafe/old_project/.cache/tasks/stale.log"
+
+        text, offset = isolated_queue.read_log(task.id)
+        assert text == "日志内容\n"
+        assert offset > 0
+
+    def test_load_from_disk_normalizes_stale_log_path(self, isolated_queue):
+        """启动加载时，旧记录里的搬家前路径按当前 tasks_dir 归一"""
+        task = isolated_queue.submit("parse", "nv_test")
+        path = os.path.join(isolated_queue.tasks_dir, f"{task.id}.json")
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        data["log_path"] = "/srv/unsafe/old_project/.cache/tasks/stale.log"
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+
+        fresh = TaskQueue(config={"server": {"cpu_workers": 2}},
+                          tasks_dir=isolated_queue.tasks_dir,
+                          library_dir=isolated_queue.library_dir)
+        fresh._load_tasks_from_disk()
+        loaded = fresh.get(task.id)
+        assert loaded.log_path == fresh._task_log_path(task.id)
+
+    def test_lifecycle_and_attribution_to_unified_log(self, isolated_queue, monkeypatch, tmp_path):
+        """提交/开始/完成落统一日志；handler 子模块日志带 [tsk_...] 归因；ctx.log 镜像"""
+        import logging
+        from src.runtime import log_setup
+        unified = tmp_path / "n2a.log"
+        log_setup.setup_logging({"logging": {"level": "INFO", "file": str(unified)}})
+        try:
+            def handler(task, ctx):
+                logging.getLogger("src.pipeline.some_step").info("子模块进度消息")
+                ctx.log("任务自述消息")
+
+            monkeypatch.setitem(task_queue.TASK_HANDLERS, "parse", handler)
+            task = isolated_queue.submit("parse", "nv_test")
+            isolated_queue.start()
+            for _ in range(100):
+                if isolated_queue.get(task.id).state in ("succeeded", "failed", "cancelled"):
+                    break
+                time.sleep(0.05)
+            isolated_queue.stop()
+
+            content = unified.read_text(encoding="utf-8")
+            assert f"任务提交 id={task.id}" in content
+            assert f"任务开始 id={task.id}" in content
+            assert f"任务完成 id={task.id}" in content
+            # contextvar 归因：worker 线程里子模块的日志也挂上 task id
+            assert f"[src.pipeline.some_step] [{task.id}] 子模块进度消息" in content
+            # ctx.log 同时进统一日志与任务私有日志
+            assert f"[{task.id}] 任务自述消息" in content
+            text, _ = isolated_queue.read_log(task.id)
+            assert "任务自述消息" in text
+        finally:
+            log_setup.reset_logging()

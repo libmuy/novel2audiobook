@@ -1,11 +1,14 @@
 """分块路由"""
 import json
+import logging
 import os
 from fastapi import APIRouter, HTTPException
 from src.domain import library
 from src.pipeline.llm_parser import VALID_EMOTIONS
 from src.api.schemas import SegmentUpdate, SegmentBatch
 from src.utils import list_available_assets
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/novels/{nid}/chapters/{cid}/segments", tags=["segments"])
 
@@ -77,6 +80,12 @@ def update_segment(nid: str, cid: str, seg_id: str, data: SegmentUpdate):
             if "bgm" in updates:
                 seg["bgm"] = updates["bgm"]
             _save_script(nid, cid, script)
+            # 只记变更字段与 text 前 80 字摘要（正文全文不进日志，避免文件重复两份）
+            text_hint = ""
+            if updates.get("text"):
+                text_hint = f" text前80字={str(updates['text'])[:80]}"
+            logger.info("分块编辑 novel=%s chapter=%s seg=%s 变更=%s%s",
+                        nid, cid, seg_id, ",".join(updates.keys()), text_hint)
             return {"ok": True}
     raise HTTPException(404, f"分块 {seg_id} 不存在")
 
@@ -105,4 +114,6 @@ def batch_update_segments(nid: str, cid: str, data: SegmentBatch):
                 seg["bgm"] = updates["bgm"]
             updated += 1
     _save_script(nid, cid, script)
+    logger.info("分块批量编辑 novel=%s chapter=%s 更新分块数=%d 变更=%s",
+                nid, cid, updated, ",".join(updates.keys()))
     return {"ok": True, "updated": updated}

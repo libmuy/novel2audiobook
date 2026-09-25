@@ -19,6 +19,7 @@ from dataclasses import dataclass, field, asdict
 from typing import Callable, Optional
 
 from src.runtime import cancel_scope
+from src.runtime.log_setup import task_id_var
 from src.utils import PROJECT_ROOT, load_global_config
 
 logger = logging.getLogger(__name__)
@@ -319,6 +320,8 @@ class TaskQueue:
         self._tasks[task_id] = task
         self._persist_task(task)
         self._emit_event("task_update", {"task": asdict(task)})
+        logger.info("任务提交 id=%s type=%s lane=%s novel=%s chapter=%s group=%s",
+                    task_id, type, lane, novel_id, chapter_id, group_id)
 
         with self._queue_condition:
             if lane == "gpu":
@@ -353,6 +356,7 @@ class TaskQueue:
                 task.finished_at = time.strftime("%Y-%m-%d %H:%M:%S")
                 self._persist_task(task)
                 self._emit_event("task_update", {"task": asdict(task)})
+                logger.info("任务取消（仍在排队） id=%s type=%s", task_id, task.type)
                 return True
 
             if task.state != STATE_RUNNING:
@@ -392,12 +396,20 @@ class TaskQueue:
                 break
         return results
 
+    def _task_log_path(self, task_id: str) -> str:
+        """任务日志路径一律按 tasks_dir 现算，不信任 Task JSON 里序列化的 log_path：
+        旧记录存的是写入时的绝对路径，项目搬目录/换 tasks_dir 后会失效（真实踩过）。"""
+        return os.path.join(self.tasks_dir, f"{task_id}.log")
+
     def read_log(self, task_id: str, offset: int = 0) -> tuple:
         task = self._tasks.get(task_id)
-        if not task or not task.log_path or not os.path.exists(task.log_path):
+        if not task:
+            return ("", offset)
+        log_path = self._task_log_path(task_id)
+        if not os.path.exists(log_path):
             return ("", offset)
         try:
-            with open(task.log_path, "r", encoding="utf-8") as f:
+            with open(log_path, "r", encoding="utf-8") as f:
                 f.seek(offset)
                 text = f.read()
                 new_offset = f.tell()
@@ -423,7 +435,10 @@ class TaskQueue:
                 task.finished_at = time.strftime("%Y-%m-%d %H:%M:%S")
                 self._persist_task(task)
                 self._emit_event("task_update", {"task": asdict(task)})
+                logger.warning("服务重启，运行中任务标记为失败 id=%s type=%s", task.id, task.type)
                 count += 1
+        if count:
+            logger.warning("启动恢复: %d 个中断任务标记为失败", count)
         return count
 
     def cleanup_old_tasks(self, max_age_days: int = 7):
@@ -442,9 +457,10 @@ class TaskQueue:
 
         for task_id in to_remove:
             task = self._tasks.pop(task_id, None)
-            if task and task.log_path and os.path.exists(task.log_path):
+            log_path = self._task_log_path(task_id)
+            if os.path.exists(log_path):
                 try:
-                    os.remove(task.log_path)
+                    os.remove(log_path)
                 except OSError:
                     pass
             state_path = os.path.join(self.tasks_dir, f"{task_id}.json")
@@ -463,6 +479,10 @@ class TaskQueue:
             if not data:
                 continue
             task = Task(**{k: v for k, v in data.items() if k in Task.__dataclass_fields__})
+            # 旧记录可能存着搬家前的绝对路径：已有日志的按当前 tasks_dir 归一；
+            # 从没写过日志的保持 None，不把"有日志"的假信号带给前端
+            if task.log_path:
+                task.log_path = self._task_log_path(task.id)
             self._tasks[task.id] = task
 
     # ----------------------------------------------------------------
@@ -525,8 +545,11 @@ class TaskQueue:
         else:
             self._cpu_semaphore.acquire()
 
-        scope = cancel_scope.CancelScope()
+        # 本线程后续所有日志行都带上 [tsk_...]：llm_parser/tts 等子模块不用各自传 task_id
+        ctx_token = task_id_var.set(task_id)
+        task_started = time.perf_counter()
         try:
+            scope = cancel_scope.CancelScope()
             with self._transition_lock:
                 if task.state == STATE_CANCELLED:
                     return
@@ -537,11 +560,11 @@ class TaskQueue:
                 task.started_at = time.strftime("%Y-%m-%d %H:%M:%S")
                 self._persist_task(task)
                 self._emit_event("task_update", {"task": asdict(task)})
+            logger.info("任务开始 id=%s type=%s lane=%s", task.id, task.type, task.lane)
 
-            # 创建日志文件
-            log_dir = os.path.join(self.tasks_dir)
-            os.makedirs(log_dir, exist_ok=True)
-            task.log_path = os.path.join(log_dir, f"{task.id}.log")
+            # 创建日志文件（路径现算，不信任历史序列化值）
+            os.makedirs(self.tasks_dir, exist_ok=True)
+            task.log_path = self._task_log_path(task.id)
 
             handler = TASK_HANDLERS.get(task.type)
             if not handler:
@@ -583,9 +606,21 @@ class TaskQueue:
                 self._task_log(task, f"任务异常: {e}")
                 logger.exception("任务 %s 执行异常", task_id)
         finally:
-            self._cancel_scopes.pop(task.id, None)
-            self._persist_task(task)
-            self._emit_event("task_update", {"task": asdict(task)})
+            try:
+                self._cancel_scopes.pop(task.id, None)
+                self._persist_task(task)
+                self._emit_event("task_update", {"task": asdict(task)})
+                # 终态各一行（崩溃的 traceback 已由上面的 logger.exception 记过）
+                elapsed = time.perf_counter() - task_started
+                if task.state == STATE_SUCCEEDED:
+                    logger.info("任务完成 id=%s type=%s 耗时=%.1fs", task.id, task.type, elapsed)
+                elif task.state == STATE_CANCELLED:
+                    logger.info("任务取消 id=%s type=%s 耗时=%.1fs", task.id, task.type, elapsed)
+                elif task.state == STATE_FAILED:
+                    logger.error("任务失败 id=%s type=%s 耗时=%.1fs error=%s",
+                                 task.id, task.type, elapsed, task.error)
+            finally:
+                task_id_var.reset(ctx_token)
 
             if task.lane == "gpu":
                 self._gpu_lock.release()
@@ -593,13 +628,11 @@ class TaskQueue:
                 self._cpu_semaphore.release()
 
     def _task_log(self, task: Task, msg: str):
-        if not task.log_path:
-            return
-        ts = time.strftime("%H:%M:%S")
-        line = f"[{ts}] {msg}\n"
+        # 统一日志镜像一份（自动带 [tsk_...] 归因）；任务私有文件仍在 tasks_dir
+        logger.info(msg)
         try:
-            with open(task.log_path, "a", encoding="utf-8") as f:
-                f.write(line)
+            with open(self._task_log_path(task.id), "a", encoding="utf-8") as f:
+                f.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
         except OSError:
             pass
 

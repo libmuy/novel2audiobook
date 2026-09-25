@@ -4,8 +4,11 @@
 import os
 import hashlib
 import json
+import logging
 from datetime import datetime
 import yaml
+
+logger = logging.getLogger(__name__)
 
 # 项目根目录：src/utils.py 的上一级目录。所有“公共资产”（data/assets/、data/roles/、
 # config/global_config.yaml）一律基于此路径解析，避免因运行时 CWD 不同而找不到文件。
@@ -151,6 +154,14 @@ def update_chapter_status(chapter_dir: str, status: str, chapter_id: str = None)
     """更新章节工作区内的 .status.json 标记"""
     status_file = os.path.join(chapter_dir, ".status.json")
     ch_id = chapter_id or os.path.basename(os.path.abspath(chapter_dir))
+    # 状态流转是排查"这章为什么是这个状态"的单一事实线，只在标签真的变化时记一条
+    old_status = None
+    if os.path.exists(status_file):
+        try:
+            with open(status_file, "r", encoding="utf-8") as f:
+                old_status = json.load(f).get("status")
+        except Exception:
+            old_status = "?"
     data = {
         "chapter_id": ch_id,
         "status": status,
@@ -158,3 +169,5 @@ def update_chapter_status(chapter_dir: str, status: str, chapter_id: str = None)
     }
     with open(status_file, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+    if old_status != status:
+        logger.info("章节状态流转 chapter=%s %s → %s", ch_id, old_status or "(无)", status)

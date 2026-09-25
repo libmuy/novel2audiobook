@@ -211,3 +211,20 @@ class TestLoadGlobalConfig:
             f.write("test_key: test_value\n")
         result = utils.load_global_config(config_file)
         assert result.get("test_key") == "test_value"
+
+
+class TestUpdateChapterStatusLogging:
+    """状态流转日志是“这章为什么是这个状态”的单一事实线，且只在变化时记录"""
+
+    def test_logs_transition_only_on_change(self, tmp_chapter_dir, caplog):
+        import logging
+        with caplog.at_level(logging.INFO, logger="src.utils"):
+            utils.update_chapter_status(tmp_chapter_dir, "parsed_draft")   # (无) → parsed_draft
+            utils.update_chapter_status(tmp_chapter_dir, "parsed_draft")   # 相同：不记
+            utils.update_chapter_status(tmp_chapter_dir, "tts_completed")  # 变化
+
+        lines = [r.getMessage() for r in caplog.records if "章节状态流转" in r.getMessage()]
+        assert len(lines) == 2, "只有状态真正变化时才记（重复写同值不刷屏）"
+        assert "(无) → parsed_draft" in lines[0]
+        assert "parsed_draft → tts_completed" in lines[1]
+        assert f"chapter={os.path.basename(tmp_chapter_dir)}" in lines[0]

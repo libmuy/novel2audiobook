@@ -358,3 +358,26 @@ class TestValidateTreeVsDisk:
         result = validate_tree_vs_disk(nid, library_dir=lib)
         assert "ch_0099" in result["orphans"]
         assert "ch_0002" in result["missing"]
+
+
+class TestImportChapterRawLogging:
+    """重导入是排查“剧本为什么没了”的关键业务事件，必须落日志"""
+
+    def test_logs_removed_downstream_and_bytes(self, tmp_path, caplog):
+        import logging
+        lib = str(tmp_path / "library")
+        nid = create_novel("日志测试小说", library_dir=lib)
+        ch_id = add_chapter(nid, "第一章", "原文", library_dir=lib)
+        ch_dir = get_chapter_dir(nid, ch_id, library_dir=lib)
+        with open(os.path.join(ch_dir, "script_draft.json"), "w") as f:
+            f.write("{}")
+
+        new_text = "新正文内容"
+        with caplog.at_level(logging.INFO, logger="src.domain.library"):
+            import_chapter_raw(nid, ch_id, new_text, library_dir=lib)
+
+        lines = [r.getMessage() for r in caplog.records if "章节正文重导入" in r.getMessage()]
+        assert lines, "import_chapter_raw 应记录重导入事件"
+        assert "script_draft.json" in lines[0]
+        assert f"{len(new_text.encode('utf-8'))}字节" in lines[0]
+        assert f"chapter={ch_id}" in lines[0]
